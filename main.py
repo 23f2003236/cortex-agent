@@ -1145,6 +1145,12 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
 
     extracted_text = ""
 
+    if ext in (".xls", ".doc"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Legacy binary format '{ext}' is not supported for security and reliability reasons. Please convert to modern '{ext}x' or CSV before uploading.",
+        )
+
     if ext == ".pdf":
         import io
         import pypdf
@@ -1154,8 +1160,10 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
             pages_text = []
             total_substantive_words = 0
             raw_page_count = len(reader.pages)
+            pages_to_process = reader.pages[:50]  # Hard limit: maximum 50 pages
 
-            for i, page in enumerate(reader.pages):
+            total_extracted_chars = 0
+            for i, page in enumerate(pages_to_process):
                 page_content = page.extract_text() or ""
                 clean_lines = []
                 for line in page_content.splitlines():
@@ -1171,7 +1179,16 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
                 if clean_page:
                     words = len(clean_page.split())
                     total_substantive_words += words
+                    if total_extracted_chars + len(clean_page) > 500000:
+                        remaining_budget = max(0, 500000 - total_extracted_chars)
+                        pages_text.append(f"--- Page {i + 1} (Truncated) ---\n{clean_page[:remaining_budget]}")
+                        pages_text.append("\n[Extraction reached maximum text limit of 500,000 characters]")
+                        break
                     pages_text.append(f"--- Page {i + 1} ---\n{clean_page}")
+                    total_extracted_chars += len(clean_page)
+
+            if raw_page_count > 50:
+                pages_text.append(f"\n[Note: Document has {raw_page_count} pages; processed first 50 pages]")
 
             is_scanned_or_low_text = (total_substantive_words < 60 and raw_page_count >= 2) or not pages_text
 
@@ -1191,7 +1208,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
                 )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to parse PDF: {exc}")
-    elif ext in [".xlsx", ".xls"]:
+    elif ext == ".xlsx":
         import io
         import openpyxl
 
@@ -1202,8 +1219,10 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
                 sheet = wb[sheet_name]
                 rows = []
                 for r_idx, row in enumerate(sheet.iter_rows(values_only=True)):
-                    if r_idx > 60:
+                    if r_idx > 5000:
                         break
+                    if r_idx > 60:
+                        continue
                     row_vals = [str(cell if cell is not None else "") for cell in row]
                     if any(row_vals):
                         rows.append(row_vals)
@@ -1230,25 +1249,31 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to parse Excel spreadsheet: {exc}")
-    elif ext in [".docx", ".doc"]:
+    elif ext == ".docx":
         import io
         import docx
 
         try:
             doc = docx.Document(io.BytesIO(raw_content))
             sections_text = []
-            for p in doc.paragraphs:
+            total_doc_chars = 0
+            for p_idx, p in enumerate(doc.paragraphs):
+                if p_idx > 2000 or total_doc_chars > 500000:
+                    sections_text.append("\n[Document truncated to 500,000 characters / 2,000 paragraphs]")
+                    break
                 text_strip = p.text.strip()
                 if not text_strip:
                     continue
                 if p.style and p.style.name.startswith("Heading 1"):
-                    sections_text.append(f"\n# {text_strip}")
+                    formatted = f"\n# {text_strip}"
                 elif p.style and p.style.name.startswith("Heading 2"):
-                    sections_text.append(f"\n## {text_strip}")
+                    formatted = f"\n## {text_strip}"
                 elif p.style and p.style.name.startswith("Heading 3"):
-                    sections_text.append(f"\n### {text_strip}")
+                    formatted = f"\n### {text_strip}"
                 else:
-                    sections_text.append(text_strip)
+                    formatted = text_strip
+                sections_text.append(formatted)
+                total_doc_chars += len(formatted)
 
             for t_idx, table in enumerate(doc.tables[:5]):
                 t_rows = []
@@ -1273,17 +1298,19 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
         import io
 
         try:
-            raw_decoded = raw_content.decode("utf-8")
+            raw_decoded = raw_content[:500000].decode("utf-8")
         except UnicodeDecodeError:
-            raw_decoded = raw_content.decode("latin-1", errors="replace")
+            raw_decoded = raw_content[:500000].decode("latin-1", errors="replace")
 
         delimiter = "\t" if ext == ".tsv" else ","
         try:
             reader = csv.reader(io.StringIO(raw_decoded), delimiter=delimiter)
             rows = []
             for r_idx, r in enumerate(reader):
-                if r_idx > 60:
+                if r_idx > 5000:
                     break
+                if r_idx > 60:
+                    continue
                 if any(c.strip() for c in r):
                     rows.append([c.strip() for c in r])
 
@@ -1304,21 +1331,48 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
                 extracted_text = raw_decoded
         except Exception:
             extracted_text = raw_decoded
-    elif ext in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"]:
+    elif ext in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]:
+        import io
+        from PIL import Image
+
+        try:
+            with Image.open(io.BytesIO(raw_content)) as img:
+                width, height = img.size
+                if width > 4096 or height > 4096:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Image dimensions {width}x{height} exceed maximum permitted size (4096 x 4096 px).",
+                    )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid image file: {exc}")
+
         kb = max(1, len(raw_content) // 1024)
-        mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else ("image/svg+xml" if ext == ".svg" else f"image/{ext.lstrip('.')}")
+        mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else f"image/{ext.lstrip('.')}"
         b64_str = base64.b64encode(raw_content).decode("ascii")
         data_url = f"data:{mime};base64,{b64_str}"
         extracted_text = (
-            f"[Attached Image: {filename} ({kb} KB)]\n"
+            f"[Attached Image: {filename} ({kb} KB, {width}x{height} px)]\n"
+            f"(Visual Image Base64: {data_url})"
+        )
+    elif ext == ".svg":
+        svg_text = raw_content[:100000].decode("utf-8", errors="replace")
+        if re.search(r"<\s*script", svg_text, re.IGNORECASE):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SVG file contains forbidden script elements.")
+        kb = max(1, len(raw_content) // 1024)
+        b64_str = base64.b64encode(raw_content).decode("ascii")
+        data_url = f"data:image/svg+xml;base64,{b64_str}"
+        extracted_text = (
+            f"[Attached SVG Vector: {filename} ({kb} KB)]\n"
             f"(Visual Image Base64: {data_url})"
         )
     else:
         # Plain text, HTML, JSON, Markdown, Python, JS, etc.
         try:
-            extracted_text = raw_content.decode("utf-8")
+            extracted_text = raw_content[:500000].decode("utf-8")
         except UnicodeDecodeError:
-            extracted_text = raw_content.decode("latin-1", errors="replace")
+            extracted_text = raw_content[:500000].decode("latin-1", errors="replace")
 
     is_img = ext in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"]
     if is_img:
