@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -834,37 +835,104 @@ def check_daily_uploads(user_id: str, additional: int = 1) -> tuple[bool, int, i
 
 # ---------------- Claude-Style Artifacts Harvesting ----------------
 
+def is_continuation_prompt(text: str) -> bool:
+    """Check if a prompt is requesting the LLM to resume/continue a cut-off response."""
+    if not text:
+        return False
+    t = text.strip().lower()
+    if "please continue directly from where you left off" in t:
+        return True
+    if re.search(r"^(?:continue|carry on|continue generating|keep going|aage bolo|aage batao|next)\b", t):
+        return True
+    return False
+
+
+def extract_document_title(text: str, conv_title: str = "") -> str:
+    """Extract a human-friendly document title from markdown, ignoring code comments and dividers."""
+    # 1. Strip markdown code blocks so comments like '# ---' aren't picked as headings
+    text_without_code = re.sub(r"```[\s\S]*?```", "", text)
+    lines = text_without_code.split("\n")
+    for line in lines:
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+        is_heading = bool(re.match(r"^#{1,3}\s+", trimmed))
+        is_bold_title = trimmed.startswith("**") and trimmed.endswith("**") and 4 < len(trimmed) < 80
+        if is_heading or is_bold_title:
+            raw_title = re.sub(r"^#{1,3}\s+", "", trimmed)
+            raw_title = re.sub(r"^\*\*|\*\*$", "", raw_title).strip()
+            # Ignore separators or dashes
+            if re.match(r"^[-_#=\*\s]+$", raw_title):
+                continue
+            # Remove markdown formatting characters
+            clean_title = re.sub(r"[`*_\~#]+", "", raw_title).strip()
+            if len(clean_title) >= 3:
+                return clean_title[:80]
+
+    # 2. Check for attached document indicator
+    doc_m = re.search(r"\[Attached Document:\s*([^\]]+)\]", text)
+    if doc_m:
+        return doc_m.group(1).strip()[:80]
+
+    return (conv_title or "Generated Document")[:80]
+
+
 def get_user_artifacts(user_id: str) -> list[dict]:
-    """Scan and return all markdown documents, code files, and reports across user conversations."""
-    import re
+    """Scan and return all markdown documents, code files, and reports across user conversations,
+    seamlessly stitching multi-turn continuation chunks into unified complete artifacts."""
     artifacts = []
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT m.id, m.conversation_id, m.content, m.created_at, c.title as conv_title
+            SELECT m.id, m.conversation_id, m.role, m.content, m.created_at, c.title as conv_title
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
-            WHERE c.user_id = ? AND m.role = 'assistant'
-            ORDER BY m.created_at DESC
+            WHERE c.user_id = ?
+            ORDER BY m.conversation_id, m.created_at ASC
             """,
             (user_id,),
         ).fetchall()
 
-        seen_titles = set()
+        # Stitch continuation assistant messages into their parent message
+        stitched_messages = []
+        last_user_prompt = ""
+
         for r in rows:
-            text = (r["content"] or "").strip()
+            role = r["role"]
+            content = (r["content"] or "").strip()
+            if role == "user":
+                last_user_prompt = content
+            elif role == "assistant":
+                if (
+                    is_continuation_prompt(last_user_prompt)
+                    and stitched_messages
+                    and stitched_messages[-1]["conversation_id"] == r["conversation_id"]
+                ):
+                    # Seamlessly stitch continuation content
+                    stitched_messages[-1]["content"] += "\n\n" + content
+                    stitched_messages[-1]["created_at"] = r["created_at"]
+                    stitched_messages[-1]["id"] = r["id"]
+                else:
+                    stitched_messages.append(dict(r))
+                last_user_prompt = ""
+
+        # Process newest first
+        stitched_messages.reverse()
+
+        seen_titles = set()
+        for item in stitched_messages:
+            text = (item["content"] or "").strip()
             if not text:
                 continue
 
-            has_h1 = bool(re.search(r"^#\s+(.+)$", text, re.MULTILINE))
-            has_h2 = bool(re.search(r"^##\s+(.+)$", text, re.MULTILINE))
+            text_without_code = re.sub(r"```[\s\S]*?```", "", text)
+            has_heading = bool(re.search(r"^#{1,3}\s+\S+", text_without_code, re.MULTILINE))
             has_doc_attach = "[Attached Document:" in text or "[Structured Tabular Data:" in text
             has_table = "| --- |" in text or "|:---:|" in text
             has_code = "```python" in text or "```javascript" in text or "```html" in text or "```sql" in text
 
             is_artifact = (
-                has_h1
-                or (has_h2 and len(text) > 300)
+                has_heading
                 or has_doc_attach
                 or (has_table and len(text) > 300)
                 or (has_code and len(text) > 400)
@@ -873,41 +941,30 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             if not is_artifact:
                 continue
 
-            title = None
-            h1_m = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
-            if h1_m:
-                title = re.sub(r"[`*_\~#]+", "", h1_m.group(1)).strip()
-            if not title:
-                h2_m = re.search(r"^##\s+(.+)$", text, re.MULTILINE)
-                if h2_m:
-                    title = re.sub(r"[`*_\~#]+", "", h2_m.group(1)).strip()
-            if not title:
-                doc_m = re.search(r"\[Attached Document:\s*([^\]]+)\]", text)
-                if doc_m:
-                    title = doc_m.group(1).strip()
-            if not title:
-                title = r["conv_title"] or "Generated Document"
-
-            title = title[:60].strip()
+            title = extract_document_title(text, item["conv_title"])
             if title in seen_titles:
                 continue
             seen_titles.add(title)
 
-            safe_slug = re.sub(r"[^a-zA-Z0-9_\-\.]+", "_", title.lower()).strip("_")
+            # Generate safe slug without leading/trailing underscores or emojis
+            clean_title_ascii = re.sub(r"[^\w\s-]", "", title).strip()
+            safe_slug = re.sub(r"[-\s]+", "_", clean_title_ascii.lower()).strip("_")
+            if not safe_slug or len(safe_slug) < 3:
+                safe_slug = "document"
             if not safe_slug.endswith(".md"):
                 safe_slug += ".md"
 
             size_bytes = len(text.encode("utf-8"))
 
             artifacts.append({
-                "id": r["id"],
-                "conversation_id": r["conversation_id"],
-                "conversation_title": r["conv_title"] or "Chat",
+                "id": item["id"],
+                "conversation_id": item["conversation_id"],
+                "conversation_title": item["conv_title"] or "Chat",
                 "title": title,
                 "filename": safe_slug,
                 "content": text,
                 "size_bytes": size_bytes,
-                "created_at": r["created_at"],
+                "created_at": item["created_at"],
             })
 
     return artifacts

@@ -599,7 +599,7 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
     model_max = get_model_max_tokens(model_id)
 
     if (mode or "").lower() == "fast":
-        return min(model_max, 4096)
+        return min(model_max, 16384)
 
     lower = (prompt or "").lower().strip()
 

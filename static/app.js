@@ -447,7 +447,8 @@ function extractDocumentFilename(text) {
   }
 
   // 3. Search markdown headings (# Title, ## Title) or top bold title
-  const lines = text.split("\n");
+  const textWithoutCode = text.replace(/```[\s\S]*?```/g, "");
+  const lines = textWithoutCode.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
@@ -3529,7 +3530,15 @@ function setToolBadges(badgesEl, toolsUsed) {
     .join("");
 }
 
-function renderStreamedText(bubbleEl, fullText, done) {
+function isContinuationPrompt(text) {
+  if (!text) return false;
+  const t = text.trim().toLowerCase();
+  if (t.includes("please continue directly from where you left off")) return true;
+  if (/^(?:continue|carry on|continue generating|keep going|aage bolo|aage batao|next)\b/i.test(t)) return true;
+  return false;
+}
+
+function renderStreamedText(bubbleEl, fullText, done, options = {}) {
   let cleanText = (fullText || "")
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
     .replace(/<tool_call>[\s\S]*$/gi, "")
@@ -3549,68 +3558,90 @@ function renderStreamedText(bubbleEl, fullText, done) {
   if (done) {
     cleanText = healMarkdownPlots(cleanText.trim());
     bubbleEl._rawFullText = cleanText;
+
+    const isTruncated = Boolean(options.isTruncated);
+    const docTextToUse = (options.documentText || cleanText).trim();
+
     const { html: rendered, mathMap } = renderMarkdownWithMath(cleanText);
     let finalHtml = rendered;
 
     // Auto-detect if message is an explicit standalone document or structured report
-    const hasCodeOrPlot =
-      /(?:plt\.|matplotlib|execute_python|data:image\/|```python|```js|```html|def\s+|import\s+)/i.test(cleanText);
+    // If response was truncated, DO NOT render an incomplete document card preview (render plain markdown)
+    if (!isTruncated) {
+      const checkText = docTextToUse;
+      const textWithoutCode = checkText.replace(/```[\s\S]*?```/g, "");
+      const hasHeadings = /^#{1,3}\s+\S+/m.test(textWithoutCode);
+      const hasTables = checkText.includes("| --- |") || checkText.includes("|:---:|");
+      const hasCodeGuide =
+        (checkText.includes("```python") ||
+         checkText.includes("```js") ||
+         checkText.includes("```html") ||
+         checkText.includes("```sql")) &&
+        checkText.length > 400;
+      const isLongSubstantive =
+        checkText.length > 500 &&
+        (checkText.includes("##") || checkText.includes("- ") || checkText.includes("1. "));
 
-    const isExplicitDocument =
-      /^#\s+[A-Za-z0-9]/.test(cleanText.trim()) ||
-      (/^##\s+[A-Za-z0-9]/.test(cleanText.trim()) && cleanText.length > 600);
+      const isReport = (hasHeadings || hasTables || hasCodeGuide || isLongSubstantive) && checkText.length > 250;
 
-    const isReport =
-      !hasCodeOrPlot &&
-      isExplicitDocument &&
-      (cleanText.includes("##") || cleanText.includes("| --- |") || cleanText.length > 750);
+      if (isReport && !rendered.includes('class="document-card"')) {
+        docIdCounter++;
+        const docId = "doc-" + docIdCounter;
+        const filename = extractDocumentFilename(checkText);
+        docRegistry.set(docId, { filename, text: checkText });
+        const sizeStr = formatBytes(new Blob([checkText]).size);
 
-    if (isReport && !rendered.includes('class="document-card"')) {
-      docIdCounter++;
-      const docId = "doc-" + docIdCounter;
-      const filename = extractDocumentFilename(cleanText);
-      docRegistry.set(docId, { filename, text: cleanText });
-      const sizeStr = formatBytes(new Blob([cleanText]).size);
+        let docRenderedHtml = rendered;
+        if (options.documentText) {
+          const { html: stitchedHtml, mathMap: stitchedMathMap } = renderMarkdownWithMath(docTextToUse);
+          docRenderedHtml = stitchedHtml;
+          if (stitchedMathMap && mathMap) {
+            for (const [k, v] of stitchedMathMap.entries()) {
+              mathMap.set(k, v);
+            }
+          }
+        }
 
-      finalHtml = `
-        <div class="document-card" data-doc-id="${docId}">
-          <div class="document-header">
-            <div class="document-file-info">
-              <div class="document-icon">${ICONS.file}</div>
-              <div class="document-titles">
-                <span class="document-filename">${escapeHtml(filename)}</span>
-                <div class="document-meta">
-                  <span>MARKDOWN DOCUMENT</span>
-                  <span>•</span>
-                  <span>${sizeStr}</span>
+        finalHtml = `
+          <div class="document-card" data-doc-id="${docId}">
+            <div class="document-header">
+              <div class="document-file-info">
+                <div class="document-icon">${ICONS.file}</div>
+                <div class="document-titles">
+                  <span class="document-filename">${escapeHtml(filename)}</span>
+                  <div class="document-meta">
+                    <span>MARKDOWN DOCUMENT</span>
+                    <span>•</span>
+                    <span>${sizeStr}</span>
+                  </div>
                 </div>
               </div>
+              <div class="document-actions">
+                <button type="button" class="document-btn document-preview-split-btn" title="Open in Split Panel">
+                  ${ICONS.eye}
+                  <span>Split Preview</span>
+                </button>
+                <button type="button" class="document-btn document-view-btn" title="Toggle Raw / Rendered">
+                  ${ICONS.code}
+                  <span>View Raw</span>
+                </button>
+                <button type="button" class="document-btn document-copy-btn" title="Copy Document Content">
+                  ${ICONS.copy}
+                  <span>Copy</span>
+                </button>
+                <button type="button" class="document-btn document-download-btn" title="Download ${escapeHtml(filename)}">
+                  ${ICONS.download}
+                  <span>Download .md</span>
+                </button>
+              </div>
             </div>
-            <div class="document-actions">
-              <button type="button" class="document-btn document-preview-split-btn" title="Open in Split Panel">
-                ${ICONS.eye}
-                <span>Split Preview</span>
-              </button>
-              <button type="button" class="document-btn document-view-btn" title="Toggle Raw / Rendered">
-                ${ICONS.code}
-                <span>View Raw</span>
-              </button>
-              <button type="button" class="document-btn document-copy-btn" title="Copy Document Content">
-                ${ICONS.copy}
-                <span>Copy</span>
-              </button>
-              <button type="button" class="document-btn document-download-btn" title="Download ${escapeHtml(filename)}">
-                ${ICONS.download}
-                <span>Download .md</span>
-              </button>
+            <div class="document-body">
+              <div class="document-rendered-view">${docRenderedHtml}</div>
+              <div class="document-raw-view" style="display:none;"><pre><code>${escapeHtml(checkText)}</code></pre></div>
             </div>
           </div>
-          <div class="document-body">
-            <div class="document-rendered-view">${rendered}</div>
-            <div class="document-raw-view" style="display:none;"><pre><code>${escapeHtml(cleanText)}</code></pre></div>
-          </div>
-        </div>
-      `;
+        `;
+      }
     }
 
     bubbleEl.innerHTML = finalHtml;
@@ -3826,9 +3857,43 @@ function rebuildChatFromMessages() {
       if (displayedTools.length) {
         setToolBadges(shell.badgesEl, displayedTools);
       }
-      renderStreamedText(shell.bubbleEl, msg.content, true);
+      // Check if this message was truncated (i.e. followed by a user continuation prompt)
+      const nextMsg = idx + 1 < messages.length ? messages[idx + 1] : null;
+      const isFollowedByContinuation =
+        nextMsg && nextMsg.role === "user" && isContinuationPrompt(nextMsg.content);
+
+      // Check if this message is a continuation of prior assistant responses
+      let fullStitchedDoc = msg.content;
+      const prevMsg = idx > 0 ? messages[idx - 1] : null;
+      const isContinuation = prevMsg && prevMsg.role === "user" && isContinuationPrompt(prevMsg.content);
+
+      if (isContinuation) {
+        const parts = [];
+        let walk = idx;
+        while (walk >= 0) {
+          if (messages[walk]?.role === "assistant") {
+            parts.unshift(messages[walk].content);
+            const priorUser = walk > 0 ? messages[walk - 1] : null;
+            if (priorUser && priorUser.role === "user" && isContinuationPrompt(priorUser.content)) {
+              walk -= 2;
+            } else {
+              break;
+            }
+          } else {
+            break;
+          }
+        }
+        if (parts.length > 1) {
+          fullStitchedDoc = parts.join("\n\n");
+        }
+      }
+
+      renderStreamedText(shell.bubbleEl, msg.content, true, {
+        isTruncated: Boolean(isFollowedByContinuation),
+        documentText: fullStitchedDoc,
+      });
       attachActions(shell.actionsEl, {
-        getText: () => msg.content,
+        getText: () => fullStitchedDoc,
         showRetry: true,
         onRetry: () => retryFromMessage(idx - 1),
         messageId: msg.id,
@@ -4006,7 +4071,33 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       ? cleanFullText
       : "*(The AI model did not return any tokens. The provider may be temporarily overloaded or rate-limited. Please click Retry below.)*";
 
-    renderStreamedText(shell.bubbleEl, displayText, true);
+    const isContinuation = isContinuationPrompt(lastUserMsg);
+    let fullDocText = cleanFullText;
+    if (isContinuation && cleanFullText) {
+      const parts = [];
+      let walk = messages.length - 1;
+      while (walk >= 0) {
+        if (messages[walk]?.role === "assistant") {
+          parts.unshift(messages[walk].content);
+          const priorUser = walk > 0 ? messages[walk - 1] : null;
+          if (priorUser && priorUser.role === "user" && isContinuationPrompt(priorUser.content)) {
+            walk -= 2;
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
+      }
+      if (parts.length > 0) {
+        fullDocText = [...parts, cleanFullText].join("\n\n");
+      }
+    }
+
+    renderStreamedText(shell.bubbleEl, displayText, true, {
+      isTruncated,
+      documentText: fullDocText,
+    });
     if (hasReply) {
       messages.push({
         id: shell.row.dataset.messageId || undefined,
@@ -4052,7 +4143,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     }
 
     attachActions(shell.actionsEl, {
-      getText: () => cleanFullText || fullText,
+      getText: () => fullDocText || cleanFullText || fullText,
       showRetry: true,
       onRetry: () => retryFromMessage(retryUserIndex ?? messages.length - 2),
       isTruncated,
