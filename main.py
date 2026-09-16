@@ -281,6 +281,84 @@ async def get_current_user(
     return user
 
 
+DEFAULT_TRUSTED_PROXIES = {
+    "127.0.0.1",
+    "::1",
+    "localhost",
+    "testclient",
+}
+
+
+def is_ip_in_network(ip_str: str, net_or_ip: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if "/" in net_or_ip:
+            return ip in ipaddress.ip_network(net_or_ip, strict=False)
+        return ip == ipaddress.ip_address(net_or_ip)
+    except ValueError:
+        return ip_str.lower() == net_or_ip.lower()
+
+
+def is_trusted_proxy(host: str) -> bool:
+    if not host:
+        return False
+    host_clean = host.strip().lower()
+    if host_clean in DEFAULT_TRUSTED_PROXIES:
+        return True
+
+    env_proxies = os.getenv("TRUSTED_PROXIES", "").strip()
+    if env_proxies:
+        for p in env_proxies.split(","):
+            p_clean = p.strip()
+            if p_clean and is_ip_in_network(host_clean, p_clean):
+                return True
+    return False
+
+
+def get_client_ip(request: Request) -> str:
+    """Safely extract the client IP address.
+
+    Only trusts proxy headers (CF-Connecting-IP, X-Forwarded-For) if the immediate
+    peer connection originates from a configured TRUSTED_PROXIES host (e.g. Nginx,
+    Cloudflare, ALB, or localhost). If the peer is not trusted, returns the direct
+    socket IP to prevent header spoofing.
+    """
+    direct_ip = request.client.host.strip() if request.client and request.client.host else "127.0.0.1"
+
+    # If connection is not from a trusted proxy, ignore all forwarded headers
+    if not is_trusted_proxy(direct_ip):
+        return direct_ip
+
+    # 1. Cloudflare header (if present and valid)
+    cf_ip = request.headers.get("CF-Connecting-IP", "").strip()
+    if cf_ip:
+        try:
+            ipaddress.ip_address(cf_ip)
+            return cf_ip
+        except ValueError:
+            pass
+
+    # 2. X-Forwarded-For header
+    xff = request.headers.get("X-Forwarded-For", "").strip()
+    if xff:
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        for ip_candidate in reversed(parts):
+            try:
+                ipaddress.ip_address(ip_candidate)
+                if not is_trusted_proxy(ip_candidate):
+                    return ip_candidate
+            except ValueError:
+                continue
+        if parts:
+            try:
+                ipaddress.ip_address(parts[0])
+                return parts[0]
+            except ValueError:
+                pass
+
+    return direct_ip
+
+
 class RegisterPayload(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=128)
@@ -294,7 +372,7 @@ class LoginPayload(BaseModel):
 
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterPayload, request: Request):
-    client_ip = request.client.host if request.client else "127.0.0.1"
+    client_ip = get_client_ip(request)
     allowed, wait_sec = database.check_and_record_auth_attempt(
         f"register:{client_ip}", max_attempts=5, window_seconds=3600
     )
@@ -333,7 +411,7 @@ def register(payload: RegisterPayload, request: Request):
 
 @app.post("/api/auth/login")
 def login(payload: LoginPayload, request: Request):
-    client_ip = request.client.host if request.client else "127.0.0.1"
+    client_ip = get_client_ip(request)
     clean_user = payload.username.strip().lower()
 
     # 1. IP-level rate limiting (max 30 attempts per 15 min)
@@ -379,7 +457,7 @@ def login(payload: LoginPayload, request: Request):
 @app.post("/api/auth/guest")
 def guest_auth(request: Request):
     """Create an anonymous ephemeral guest session with isolated data and quota."""
-    client_ip = request.client.host if request.client else "127.0.0.1"
+    client_ip = get_client_ip(request)
     allowed, wait_sec = database.check_and_record_auth_attempt(
         f"guest:{client_ip}", max_attempts=10, window_seconds=900
     )
