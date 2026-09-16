@@ -2505,6 +2505,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         full_text = ""
         tools_used = []
         quota_reserved = False
+        provider_usage = None
         estimated_tokens = 1500
         stream_start_time = time.time()
         last_lease_renew = stream_start_time
@@ -2708,6 +2709,10 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                         if fr:
                             last_finish_reason = fr
 
+                        chunk_usage = getattr(chunk, "usage_metadata", None) or meta.get("usage") or meta.get("token_usage")
+                        if chunk_usage and isinstance(chunk_usage, dict):
+                            provider_usage = chunk_usage
+
                         text = _chunk_to_text(chunk.content)
                         if not text:
                             continue
@@ -2859,6 +2864,9 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     ]
                     fallback_llm = make_llm(model_override=effective_model, streaming=False, max_tokens=budget_tokens)
                     res = fallback_llm.invoke(fallback_messages)
+                    fb_usage = getattr(res, "usage_metadata", None) or getattr(res, "response_metadata", {}).get("token_usage") or getattr(res, "response_metadata", {}).get("usage")
+                    if fb_usage and isinstance(fb_usage, dict):
+                        provider_usage = fb_usage
                     fallback_text = _chunk_to_text(res.content).strip()
                     if fallback_text:
                         clean_text = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", fallback_text).strip()
@@ -2921,12 +2929,25 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if is_truncated:
                 yield event({"type": "truncated", "reason": "length", "conversation_id": conv_id})
 
-            # Calculate consumed tokens excluding massive base64 image data and increment daily token usage
+            # Calculate consumed tokens: reconcile with provider-reported token usage when available; fallback conservatively to character heuristic
             has_image_b64 = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content))
-            clean_raw_text = re.sub(r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)", "", raw_content).strip()
-            # Standard multi-modal vision token budget (~800 tokens per image tile in modern vision LLMs)
             image_token_cost = 800 if has_image_b64 else 0
-            consumed_tokens = max(1, (len(clean_raw_text) + len(full_text)) // 4 + image_token_cost)
+            consumed_tokens = None
+
+            if provider_usage and isinstance(provider_usage, dict):
+                total_tokens = provider_usage.get("total_tokens")
+                if total_tokens and isinstance(total_tokens, (int, float)) and total_tokens > 0:
+                    consumed_tokens = int(total_tokens) + image_token_cost
+                else:
+                    in_tok = provider_usage.get("input_tokens", provider_usage.get("prompt_tokens", 0))
+                    out_tok = provider_usage.get("output_tokens", provider_usage.get("completion_tokens", 0))
+                    if isinstance(in_tok, (int, float)) and isinstance(out_tok, (int, float)) and (in_tok + out_tok) > 0:
+                        consumed_tokens = int(in_tok + out_tok) + image_token_cost
+
+            if consumed_tokens is None:
+                clean_raw_text = re.sub(r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)", "", raw_content).strip()
+                consumed_tokens = max(1, (len(clean_raw_text) + len(full_text)) // 4 + image_token_cost)
+
             current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
             quota_reserved = False
 
