@@ -4,13 +4,18 @@ import base64
 import contextvars
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import operator
 import os
 import re
 import secrets
+import socket
 import time
+import urllib.error
+import urllib.request
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -443,6 +448,84 @@ def web_search(query: str) -> str:
     return f"No search results found for '{query}'."
 
 
+def is_safe_url(url: str) -> tuple[bool, str]:
+    """Validate that a URL is safe to fetch and does not target internal / loopback / private IP addresses (SSRF protection)."""
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        return False, f"Malformed URL: {e}"
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return False, f"Disallowed scheme '{scheme}'. Only HTTP and HTTPS are permitted."
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "Missing hostname in URL."
+
+    hostname_lower = hostname.lower().strip(".")
+
+    # Block localhost and local names directly
+    if hostname_lower in ("localhost", "127.0.0.1", "::1") or hostname_lower.endswith(".local") or hostname_lower.endswith(".internal"):
+        return False, f"Access to local or internal domain '{hostname}' is forbidden."
+
+    # Validate port if specified
+    port = parsed.port
+    if port is not None and port not in (80, 443, 8080, 8443):
+        return False, f"Access to port {port} is not permitted. Only standard web ports (80, 443) are allowed."
+
+    # Resolve domain to IP addresses and verify none are private/loopback/link-local/reserved
+    try:
+        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False, f"Could not resolve hostname '{hostname}'."
+    except Exception as e:
+        return False, f"DNS resolution failed: {e}"
+
+    if not addr_info:
+        return False, f"Could not resolve hostname '{hostname}' to any IP."
+
+    for item in addr_info:
+        sockaddr = item[4]
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_loopback
+                or ip.is_private
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+                or (hasattr(ip, "is_carrier_grade_nat") and ip.is_carrier_grade_nat)
+            ):
+                return False, f"Access to private/loopback IP {ip_str} is strictly forbidden."
+
+            # Check IPv4 mapped in IPv6
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+                mapped_v4 = ip.ipv4_mapped
+                if mapped_v4.is_loopback or mapped_v4.is_private or mapped_v4.is_link_local:
+                    return False, f"Access to mapped private IPv4 {mapped_v4} is strictly forbidden."
+
+            if ip_str.startswith("169.254."):
+                return False, f"Access to link-local metadata IP {ip_str} is strictly forbidden."
+
+        except ValueError:
+            return False, f"Invalid resolved IP '{ip_str}'."
+
+    return True, ""
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        is_safe, err = is_safe_url(newurl)
+        if not is_safe:
+            raise urllib.error.HTTPError(
+                newurl, 403, f"SSRF Block: Redirect target is not safe: {err}", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 @tool
 def fetch_webpage(url: str) -> str:
     """Fetch and read the readable text content of a specific web URL (up to 9,000 characters).
@@ -457,6 +540,10 @@ def fetch_webpage(url: str) -> str:
         if not clean_url.startswith(("http://", "https://")):
             clean_url = "https://" + clean_url
 
+        is_safe, sec_err = is_safe_url(clean_url)
+        if not is_safe:
+            return f"Security Error (SSRF Guard): Access to '{clean_url}' is blocked: {sec_err}"
+
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -467,7 +554,8 @@ def fetch_webpage(url: str) -> str:
         }
 
         req = urllib.request.Request(clean_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=6) as response:
+        opener = urllib.request.build_opener(SafeRedirectHandler())
+        with opener.open(req, timeout=6) as response:
             content_type = response.headers.get_content_type()
             if "text" not in content_type and "html" not in content_type and "json" not in content_type:
                 return f"Cannot read URL: unsupported content-type '{content_type}'."
@@ -1230,9 +1318,14 @@ def scrape_url_endpoint(payload: UrlScrapePayload, current_user: dict = Depends(
     url = payload.url.strip()
     if not url.startswith("http://") and not url.startswith("https://"):
         url = "https://" + url
+
+    is_safe, sec_err = is_safe_url(url)
+    if not is_safe:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"SSRF Security Violation: {sec_err}")
+
     content = fetch_webpage.func(url)
-    if not content or "Error fetching" in content or "Cannot read URL" in content:
-        raise HTTPException(status_code=400, detail="Failed to fetch webpage content from the provided URL.")
+    if not content or content.startswith("Security Error (SSRF Guard):") or content.startswith("Cannot read URL:"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=content or "Failed to fetch webpage content.")
 
     max_len = 14000
     is_truncated = len(content) > max_len
