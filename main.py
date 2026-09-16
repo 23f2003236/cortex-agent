@@ -345,17 +345,18 @@ async def get_current_user(
     authorization: Optional[str] = Header(None),
 ) -> dict[str, Any]:
     raw_token = None
-    # 1. Primary auth vector: HttpOnly SameSite cookie
-    cookie_token = request.cookies.get("cortex_session")
-    if cookie_token:
-        raw_token = cookie_token.strip()
-
-    # 2. Backward-compatible fallback: Authorization Bearer header
-    if not raw_token and authorization:
+    # 1. Explicit Authorization Bearer header takes precedence
+    if authorization:
         if authorization.startswith("Bearer "):
             raw_token = authorization[7:].strip()
         else:
             raw_token = authorization.strip()
+
+    # 2. Ambient session cookie for browser requests
+    if not raw_token:
+        cookie_token = request.cookies.get("cortex_session")
+        if cookie_token:
+            raw_token = cookie_token.strip()
 
     if not raw_token:
         raise HTTPException(

@@ -14,8 +14,10 @@ Covers:
 """
 
 import os
+import sqlite3
 import sys
 import unittest
+import uuid
 from pathlib import Path
 
 # Ensure repository root is on sys.path
@@ -50,8 +52,9 @@ class TestProductionReadiness(unittest.TestCase):
             pass
 
     def setUp(self):
+        # Reset cookies for clean per-test isolation
+        self.client.cookies.clear()
         # Create unique user for each test
-        import uuid
         self.test_username = f"test_user_{uuid.uuid4().hex[:8]}"
         self.user = database.create_user(self.test_username, "SecurePassword123!")
 
@@ -247,8 +250,10 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertIn("default-src 'self'", csp)
         self.assertIn("object-src 'none'", csp)
         self.assertIn("connect-src 'self'", csp)
+        self.assertNotIn("'unsafe-eval'", csp, "CSP must not allow unsafe-eval")
+        self.assertIn("frame-ancestors 'none'", csp, "CSP must enforce frame-ancestors 'none'")
         self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
-        self.assertEqual(headers.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
 
     # ---------------- 7. Model & Mode Governance ----------------
 
@@ -276,9 +281,9 @@ class TestProductionReadiness(unittest.TestCase):
     # ---------------- 9. Database Versioning ----------------
 
     def test_schema_version_tracking(self):
-        """Verify schema migration tracking is at version >= 4."""
+        """Verify schema migration tracking is at version >= 5."""
         version = database.get_schema_version()
-        self.assertGreaterEqual(version, 4)
+        self.assertGreaterEqual(version, 5)
 
     # ---------------- 10. Minimal Public Health ----------------
 
@@ -437,6 +442,120 @@ class TestProductionReadiness(unittest.TestCase):
         locked_resp = self.client.post("/api/auth/login", json={"username": username, "password": "WrongPassword!"})
         self.assertEqual(locked_resp.status_code, 429)
         self.assertIn("locked", locked_resp.json().get("detail", "").lower())
+
+    # ---------------- 18. Schema v5 FK Cleanliness ----------------
+
+    def test_schema_v5_fk_integrity_and_cleanliness(self):
+        """Verify database passes foreign key integrity check with 0 violations."""
+        with database.get_connection() as conn:
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            self.assertEqual(len(violations), 0, f"Expected 0 foreign key violations, found: {violations}")
+
+    # ---------------- 19. HttpOnly Cookie Auth Flow ----------------
+
+    def test_httponly_session_cookie_auth_flow(self):
+        """Verify registration, authentication, and logout via HttpOnly SameSite secure cookie."""
+        uname = f"cookie_user_{uuid.uuid4().hex[:8]}"
+        reg_resp = self.client.post("/api/auth/register", json={"username": uname, "password": "StrongPassword123!"})
+        self.assertEqual(reg_resp.status_code, 201)
+        self.assertIn("cortex_session", reg_resp.cookies)
+        session_cookie = reg_resp.cookies.get("cortex_session")
+        self.assertTrue(bool(session_cookie))
+
+        # Access /api/auth/me using ONLY the session cookie (no Authorization header)
+        me_resp = self.client.get("/api/auth/me", cookies={"cortex_session": session_cookie})
+        self.assertEqual(me_resp.status_code, 200)
+        self.assertEqual(me_resp.json()["username"], uname)
+
+        # Logout with cookie
+        logout_resp = self.client.post("/api/auth/logout", cookies={"cortex_session": session_cookie})
+        self.assertEqual(logout_resp.status_code, 200)
+
+        # Revoked session should now be rejected
+        revoked_resp = self.client.get("/api/auth/me", cookies={"cortex_session": session_cookie})
+        self.assertEqual(revoked_resp.status_code, 401)
+
+    # ---------------- 20. Multi-Factor Turn Quota Reservation ----------------
+
+    @patch("main.make_llm")
+    def test_multi_factor_turn_quota_reservation_rejection(self, mock_make_llm):
+        """Verify chat stream rejects early if remaining allowance cannot support input context + response."""
+        user_id = self.user["id"]
+        # Consume almost all quota so remaining allowance is 200 tokens
+        limit = database.DAILY_TOKEN_LIMIT
+        database.release_quota(user_id, estimated_tokens=0, actual_tokens=limit - 200)
+
+        token = main.generate_token(self.user["id"], self.user["username"])
+        # Send a prompt whose input context alone is ~1000 tokens (4000 characters)
+        large_prompt = "Explain quantum cryptography in detail. " * 100
+        payload = {
+            "model": "nvidia/nemotron-3-super-120b-a12b",
+            "messages": [{"role": "user", "content": large_prompt}],
+        }
+        resp = self.client.post(
+            "/api/chat/stream",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        # Should stream a quota reached error token event, not crash or invoke LLM provider
+        body = resp.text
+        self.assertIn("Daily token quota reached", body)
+        mock_make_llm.assert_not_called()
+
+    # ---------------- 21. Online Database Backup API ----------------
+
+    def test_online_database_backup_api(self):
+        """Verify point-in-time consistent online backup of the SQLite database."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            backup_file = Path(tf.name)
+
+        try:
+            res_path = database.backup_db(target_path=backup_file)
+            self.assertEqual(res_path, backup_file)
+            self.assertTrue(backup_file.exists())
+            self.assertGreater(backup_file.stat().st_size, 0)
+            # Verify backup is a valid SQLite DB with integrity check passing
+            conn = sqlite3.connect(str(backup_file))
+            try:
+                row = conn.execute("PRAGMA integrity_check").fetchone()
+                self.assertEqual(row[0], "ok")
+                schema_v = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+                self.assertGreaterEqual(schema_v, 5)
+            finally:
+                conn.close()
+        finally:
+            if backup_file.exists():
+                try:
+                    backup_file.unlink()
+                except Exception:
+                    pass
+
+    # ---------------- 22. Stream Lease Release Precision ----------------
+
+    def test_stream_lease_release_precision(self):
+        """Verify releasing a stream lease by stream_id only releases that specific lease."""
+        user_id = self.user["id"]
+        ok1, sid1 = main.acquire_user_stream(user_id)
+        ok2, sid2 = main.acquire_user_stream(user_id)
+        self.assertTrue(ok1)
+        self.assertTrue(ok2)
+
+        # Release specifically sid1
+        database.release_stream_lease(sid1)
+
+        # sid2 must still be active in active_stream_leases
+        with database.get_connection() as conn:
+            active_leases = [
+                r["stream_id"]
+                for r in conn.execute(
+                    "SELECT stream_id FROM active_stream_leases WHERE user_id = ?", (user_id,)
+                ).fetchall()
+            ]
+            self.assertNotIn(sid1, active_leases)
+            self.assertIn(sid2, active_leases)
+
+        database.release_stream_lease(sid2)
 
 
 if __name__ == "__main__":
