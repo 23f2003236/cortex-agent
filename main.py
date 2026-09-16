@@ -2337,7 +2337,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             usage_info = database.get_daily_usage(current_user["id"])
             current_used = usage_info.get("tokens_used", 0)
             current_reserved = usage_info.get("reserved_tokens", 0)
-            tok_limit = usage_info.get("token_limit", 100000)
+            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 100000))
             remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
 
             if remaining_allowance <= 0:
@@ -2354,8 +2354,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 return
 
             raw_requested_budget = estimate_response_tokens(effective_model, raw_content, mode=mode)
-            # Reserve full generation budget, capped by user's remaining allowance
-            budget_tokens = min(raw_requested_budget, remaining_allowance)
+            # Reserve full generation budget, strictly capped by user's remaining allowance
+            budget_tokens = max(1, min(raw_requested_budget, remaining_allowance))
             estimated_tokens = budget_tokens
 
             yield event({

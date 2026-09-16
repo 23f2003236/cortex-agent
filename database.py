@@ -379,11 +379,18 @@ def cleanup_expired_guests() -> int:
         return cursor.rowcount
 
 
+def _begin_immediate(conn: sqlite3.Connection) -> None:
+    """Explicitly acquire an exclusive write lock in SQLite if not in transaction."""
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+
+
 def check_and_record_auth_attempt(key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
-    """Rate limit authentication attempts using SQLite.
+    """Rate limit authentication attempts using SQLite with atomic write lock.
     Returns (is_allowed, remaining_attempts_or_wait_seconds)."""
     now = time.time()
     with get_connection() as conn:
+        _begin_immediate(conn)
         row = conn.execute(
             "SELECT attempts, reset_at FROM auth_rate_limits WHERE key = ?",
             (key,),
@@ -416,15 +423,17 @@ def check_and_record_auth_attempt(key: str, max_attempts: int, window_seconds: i
 def reset_auth_attempts(key: str) -> None:
     """Clear failed attempt counters for a specific rate limit key."""
     with get_connection() as conn:
+        _begin_immediate(conn)
         conn.execute("DELETE FROM auth_rate_limits WHERE key = ?", (key,))
         conn.commit()
 
 
 def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, ttl_seconds: int = 300) -> bool:
-    """Acquire a multi-worker resilient stream concurrency lease in SQLite."""
+    """Acquire a multi-worker resilient stream concurrency lease in SQLite with atomic lock."""
     now = time.time()
     expires_at = now + ttl_seconds
     with get_connection() as conn:
+        _begin_immediate(conn)
         # Purge expired leases first
         conn.execute("DELETE FROM active_stream_leases WHERE expires_at <= ?", (now,))
         active_count = conn.execute(
@@ -443,9 +452,24 @@ def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, 
         return True
 
 
+def renew_stream_lease(stream_id: str, ttl_seconds: int = 300) -> bool:
+    """Renew the TTL on an active stream lease to prevent expiration during long streams."""
+    now = time.time()
+    new_expires_at = now + ttl_seconds
+    with get_connection() as conn:
+        _begin_immediate(conn)
+        cursor = conn.execute(
+            "UPDATE active_stream_leases SET expires_at = ? WHERE stream_id = ? AND expires_at > ?",
+            (new_expires_at, stream_id, now),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
 def release_stream_lease(stream_id: str) -> None:
     """Release an active stream concurrency lease."""
     with get_connection() as conn:
+        _begin_immediate(conn)
         conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ? OR user_id = ?", (stream_id, stream_id))
         conn.commit()
 
@@ -1067,6 +1091,7 @@ def reserve_quota(user_id: str, estimated_tokens: int = 1500) -> tuple[bool, int
         estimated_tokens = 500
     d = _today_str()
     with get_connection() as conn:
+        _begin_immediate(conn)
         u_row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
         is_guest = bool(u_row and u_row["is_guest"])
         tok_limit = GUEST_DAILY_TOKEN_LIMIT if is_guest else DAILY_TOKEN_LIMIT
@@ -1098,6 +1123,7 @@ def release_quota(user_id: str, estimated_tokens: int, actual_tokens: int = 0) -
     """Atomically release reserved quota and commit actual consumed tokens."""
     d = _today_str()
     with get_connection() as conn:
+        _begin_immediate(conn)
         conn.execute(
             """
             INSERT INTO daily_usage (user_id, usage_date, tokens_used, uploads_count, reserved_tokens)
