@@ -2517,8 +2517,37 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 100000))
             remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
 
-            if remaining_allowance <= 0:
-                err_msg = f"Daily token quota reached ({current_used:,} / {tok_limit:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
+            # Determine whether tools should be executed early to account for tool rounds in quota reservation
+            tools_subset = None
+            max_rounds = None
+            if has_image and mode != "thinking":
+                run_tools = False
+            elif mode == "fast":
+                run_tools = should_run_fast_tools(raw_content)
+                if run_tools:
+                    tools_subset = [remember, calculator]
+                    max_rounds = 2
+            elif mode == "thinking":
+                run_tools = True
+            else:
+                run_tools = should_run_tools(raw_content, messages)
+
+            # Multi-factor token estimation:
+            # 1) Context prompt input tokens
+            total_input_chars = sum(len(getattr(m, "content", "")) for m in messages if isinstance(getattr(m, "content", ""), str))
+            estimated_input_tokens = max(1, total_input_chars // 4)
+            # 2) Image input overhead
+            has_image_b64 = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content)) or has_image
+            image_token_cost = 800 if has_image_b64 else 0
+            # 3) Minimum viable turn threshold (input context + image + minimum response tokens)
+            min_viable_turn = estimated_input_tokens + image_token_cost + 100
+
+            if remaining_allowance < min_viable_turn:
+                err_msg = (
+                    f"Daily token quota reached ({current_used:,} / {tok_limit:,} tokens). "
+                    f"Remaining allowance ({remaining_allowance:,}) is insufficient for this request (~{min_viable_turn:,} tokens required). "
+                    f"Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
+                )
                 yield event({"type": "token", "text": err_msg})
                 yield event({
                     "type": "done",
@@ -2530,10 +2559,20 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 })
                 return
 
+            # 4) Tool allowance: if remaining quota is tight, scale down or disable tools so user can still receive a response
+            tool_allowance = 2000 if run_tools else 0
+            if run_tools and (estimated_input_tokens + image_token_cost + tool_allowance + 100 > remaining_allowance):
+                remaining_for_tools = remaining_allowance - (estimated_input_tokens + image_token_cost)
+                if remaining_for_tools < 600:
+                    run_tools = False
+                    tool_allowance = 0
+                else:
+                    tool_allowance = min(1000, remaining_for_tools - 200)
+
             raw_requested_budget = estimate_response_tokens(effective_model, raw_content, mode=mode)
-            # Reserve full generation budget, strictly capped by user's remaining allowance
-            budget_tokens = max(1, min(raw_requested_budget, remaining_allowance))
-            estimated_tokens = budget_tokens
+            available_output = max(100, remaining_allowance - (estimated_input_tokens + image_token_cost + tool_allowance))
+            budget_tokens = max(100, min(raw_requested_budget, available_output))
+            estimated_tokens = min(remaining_allowance, estimated_input_tokens + image_token_cost + tool_allowance + budget_tokens)
 
             yield event({
                 "type": "init",
@@ -2585,25 +2624,6 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     raw_memory_cat = "rule"
                 else:
                     raw_memory_cat = "preference"
-
-            # Determine whether tools should be executed based on mode:
-            # - For visual screenshots: stream visual inspection directly without blocking on web tools
-            # - "fast": single-round local tools (remember, calculator) when requested; skips heavy web browsing
-            # - "thinking": full multi-round agentic tools & deep research
-            tools_subset = None
-            max_rounds = None
-
-            if has_image and mode != "thinking":
-                run_tools = False
-            elif mode == "fast":
-                run_tools = should_run_fast_tools(raw_content)
-                if run_tools:
-                    tools_subset = [remember, calculator]
-                    max_rounds = 2
-            elif mode == "thinking":
-                run_tools = True
-            else:
-                run_tools = should_run_tools(raw_content, messages)
 
             if run_tools:
                 for ev_type, payload in run_tool_rounds_streaming(messages, model_override=effective_model, tools_subset=tools_subset, max_rounds=max_rounds):
@@ -2727,7 +2747,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                                 full_text += clean_chunk
                                 yield event({"type": "token", "text": clean_chunk})
                                 # In-stream token guard: if generated tokens reach reserved budget, halt gracefully
-                                if (len(full_text) // 4) >= estimated_tokens:
+                                if (len(full_text) // 4) >= budget_tokens:
                                     is_truncated = True
                                     trunc_note = "\n\n[Generation completed: Reached daily token allowance limit.]"
                                     full_text += trunc_note
@@ -2946,8 +2966,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                         consumed_tokens = int(in_tok + out_tok) + image_token_cost
 
             if consumed_tokens is None:
-                clean_raw_text = re.sub(r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)", "", raw_content).strip()
-                consumed_tokens = max(1, (len(clean_raw_text) + len(full_text)) // 4 + image_token_cost)
+                tool_actual_est = (len(tools_used) * 350) if tools_used else 0
+                consumed_tokens = max(1, (total_input_chars + len(full_text)) // 4 + image_token_cost + tool_actual_est)
 
             current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
             quota_reserved = False
@@ -2998,7 +3018,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         finally:
             if quota_reserved:
                 try:
-                    partial_tokens = max(0, len(full_text) // 4) if full_text.strip() else 0
+                    partial_out = (len(full_text) // 4) if full_text.strip() else 0
+                    partial_tokens = max(0, estimated_input_tokens + image_token_cost + partial_out)
                     database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=partial_tokens)
                 except Exception as rel_err:
                     logger.error(f"Error releasing quota in finally: {rel_err}")
