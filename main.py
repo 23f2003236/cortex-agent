@@ -68,6 +68,7 @@ _current_harvested_plots_ctx: contextvars.ContextVar[list] = contextvars.Context
 
 # Multi-worker resilient stream concurrency tracking (max 2 active streams per user)
 MAX_CONCURRENT_STREAMS_PER_USER = 2
+MAX_STREAM_DURATION_SECONDS = int(os.getenv("MAX_STREAM_DURATION_SECONDS", "600"))
 
 
 def acquire_user_stream(user_id: str, stream_id: Optional[str] = None) -> tuple[bool, str]:
@@ -76,6 +77,10 @@ def acquire_user_stream(user_id: str, stream_id: Optional[str] = None) -> tuple[
         user_id, sid, max_concurrent=MAX_CONCURRENT_STREAMS_PER_USER, ttl_seconds=300
     )
     return acquired, sid
+
+
+def renew_user_stream(stream_identifier: str) -> bool:
+    return database.renew_stream_lease(stream_identifier, ttl_seconds=300)
 
 
 def release_user_stream(stream_identifier: str):
@@ -2333,6 +2338,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         tools_used = []
         quota_reserved = False
         estimated_tokens = 1500
+        stream_start_time = time.time()
+        last_lease_renew = stream_start_time
         try:
             usage_info = database.get_daily_usage(current_user["id"])
             current_used = usage_info.get("tokens_used", 0)
@@ -2430,6 +2437,9 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             if run_tools:
                 for ev_type, payload in run_tool_rounds_streaming(messages, model_override=effective_model, tools_subset=tools_subset, max_rounds=max_rounds):
+                    if time.time() - last_lease_renew >= 30:
+                        renew_user_stream(stream_id)
+                        last_lease_renew = time.time()
                     if ev_type == "tool_start":
                         yield event({"type": "tool_start", **payload})
                     elif ev_type == "tool_end":
@@ -2512,6 +2522,18 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     intercepted_tool_info = None
 
                     for chunk in llm.stream(synthesis_messages):
+                        now_ts = time.time()
+                        if now_ts - last_lease_renew >= 30:
+                            renew_user_stream(stream_id)
+                            last_lease_renew = now_ts
+
+                        if now_ts - stream_start_time >= MAX_STREAM_DURATION_SECONDS:
+                            is_truncated = True
+                            timeout_note = "\n\n[Generation stopped: Maximum server streaming duration limit reached.]"
+                            full_text += timeout_note
+                            yield event({"type": "token", "text": timeout_note})
+                            break
+
                         meta = getattr(chunk, "response_metadata", {}) or {}
                         add_kw = getattr(chunk, "additional_kwargs", {}) or {}
                         fr = meta.get("finish_reason") or add_kw.get("finish_reason")
