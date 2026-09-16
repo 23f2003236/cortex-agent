@@ -9,6 +9,7 @@ import math
 import operator
 import os
 import re
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -44,13 +45,25 @@ NVIDIA_BASE_URL = os.getenv(
     "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
 ).strip()
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "32768"))
-SECRET_KEY = os.getenv("SECRET_KEY", "cortex-agent-secure-token-secret-2026").strip()
+DEFAULT_INSECURE_SECRET = "cortex-agent-secure-token-secret-2026"
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
 
-if SECRET_KEY == "cortex-agent-secure-token-secret-2026":
-    import logging
-    logging.getLogger("uvicorn.error").info(
-        "[CORTEX NOTICE] Running with default development SECRET_KEY. In production, provide a secret key in .env."
-    )
+if not SECRET_KEY or SECRET_KEY == DEFAULT_INSECURE_SECRET:
+    # Auto-generate a high-entropy 64-character secret and persist to .env
+    generated_secret = secrets.token_hex(32)
+    env_path = BASE_DIR / ".env"
+    if env_path.exists():
+        try:
+            env_content = env_path.read_text(encoding="utf-8")
+            if "SECRET_KEY=" in env_content:
+                env_content = re.sub(r"SECRET_KEY=.*", f"SECRET_KEY={generated_secret}", env_content)
+            else:
+                env_content = env_content.rstrip() + f"\n\n# Auto-generated cryptographic session secret\nSECRET_KEY={generated_secret}\n"
+            env_path.write_text(env_content, encoding="utf-8")
+        except Exception:
+            pass
+    SECRET_KEY = generated_secret
+    os.environ["SECRET_KEY"] = generated_secret
 
 SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
