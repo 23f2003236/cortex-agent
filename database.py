@@ -14,6 +14,19 @@ DB_PATH = Path(__file__).resolve().parent / "cortex.db"
 _local = threading.local()
 
 
+def set_db_path(new_path: Path) -> None:
+    """Dynamically set DB_PATH and reset thread-local connection (useful for isolated tests)."""
+    global DB_PATH
+    DB_PATH = Path(new_path)
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
 def get_connection() -> sqlite3.Connection:
     """Return a thread-local SQLite connection with WAL mode and foreign keys enabled."""
     conn = getattr(_local, "conn", None)
@@ -27,7 +40,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def init_db() -> None:
@@ -42,7 +55,8 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                is_guest INTEGER DEFAULT 0
+                is_guest INTEGER DEFAULT 0,
+                expires_at TEXT
             )
             """
         )
@@ -113,12 +127,15 @@ def init_db() -> None:
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id)")
 
-        # Migrate existing users table for custom_instructions and is_guest
+        # Migrate existing users table for custom_instructions, is_guest, and expires_at
         user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         if "custom_instructions" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
         if "is_guest" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN is_guest INTEGER DEFAULT 0")
+        if "expires_at" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at)")
 
         # Migrate existing messages table for feedback column
         msg_cols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
@@ -159,6 +176,28 @@ def init_db() -> None:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS active_stream_leases (
+                stream_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                expires_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_stream_leases_user ON active_stream_leases(user_id, expires_at)")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auth_rate_limits (
+                key TEXT PRIMARY KEY,
+                attempts INTEGER NOT NULL,
+                reset_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_rate_reset ON auth_rate_limits(reset_at)")
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL,
@@ -181,6 +220,8 @@ def init_db() -> None:
             conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (2, ?, 'Guest accounts, token revocation, message feedback')", (now_iso,))
         if current_v < 3:
             conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (3, ?, 'Atomic quota reservation with reserved_tokens')", (now_iso,))
+        if current_v < 4:
+            conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (4, ?, 'Guest session expiration, active stream leases, and distributed auth rate limits')", (now_iso,))
 
         conn.commit()
 
@@ -276,6 +317,9 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
         ).fetchone()
         if not row:
             return None
+        # Guest accounts cannot authenticate via password credentials
+        if bool(row["is_guest"]) or row["password_hash"] == "GUEST_ANONYMOUS":
+            return None
         if verify_password(password, row["password_hash"], row["salt"]):
             # Transparently upgrade legacy 100k hashes to 600k rounds on login
             if "$" not in (row["salt"] or ""):
@@ -296,19 +340,20 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
         return None
 
 
-def create_guest_user() -> dict[str, Any]:
-    """Create an anonymous, isolated ephemeral guest account."""
+def create_guest_user(ttl_hours: int = 24) -> dict[str, Any]:
+    """Create an anonymous, isolated ephemeral guest account without expensive PBKDF2 hashing."""
+    from datetime import timedelta
     uid = str(uuid.uuid4())
     guest_suffix = uid[:8]
     username = f"guest_{guest_suffix}"
-    raw_pwd = secrets.token_urlsafe(24)
-    pw_hash, salt = hash_password(raw_pwd)
-    now = _utc_now_iso()
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
+    expires_at = (now_dt + timedelta(hours=ttl_hours)).isoformat()
 
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 1)",
-            (uid, username, "", pw_hash, salt, now),
+            "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest, expires_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (uid, username, "", "GUEST_ANONYMOUS", "", now, expires_at),
         )
         conn.commit()
 
@@ -318,7 +363,91 @@ def create_guest_user() -> dict[str, Any]:
         "email": "",
         "is_guest": True,
         "created_at": now,
+        "expires_at": expires_at,
     }
+
+
+def cleanup_expired_guests() -> int:
+    """Delete all expired guest accounts and cascade their associated data."""
+    now = _utc_now_iso()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM users WHERE is_guest = 1 AND expires_at IS NOT NULL AND expires_at < ?",
+            (now,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def check_and_record_auth_attempt(key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
+    """Rate limit authentication attempts using SQLite.
+    Returns (is_allowed, remaining_attempts_or_wait_seconds)."""
+    now = time.time()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT attempts, reset_at FROM auth_rate_limits WHERE key = ?",
+            (key,),
+        ).fetchone()
+
+        if not row or row["reset_at"] <= now:
+            reset_at = now + window_seconds
+            conn.execute(
+                "INSERT OR REPLACE INTO auth_rate_limits (key, attempts, reset_at) VALUES (?, 1, ?)",
+                (key, reset_at),
+            )
+            conn.commit()
+            return True, max(0, max_attempts - 1)
+
+        attempts = row["attempts"]
+        reset_at = row["reset_at"]
+
+        if attempts >= max_attempts:
+            wait_seconds = max(1, int(reset_at - now))
+            return False, wait_seconds
+
+        conn.execute(
+            "UPDATE auth_rate_limits SET attempts = attempts + 1 WHERE key = ?",
+            (key,),
+        )
+        conn.commit()
+        return True, max(0, max_attempts - (attempts + 1))
+
+
+def reset_auth_attempts(key: str) -> None:
+    """Clear failed attempt counters for a specific rate limit key."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM auth_rate_limits WHERE key = ?", (key,))
+        conn.commit()
+
+
+def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, ttl_seconds: int = 300) -> bool:
+    """Acquire a multi-worker resilient stream concurrency lease in SQLite."""
+    now = time.time()
+    expires_at = now + ttl_seconds
+    with get_connection() as conn:
+        # Purge expired leases first
+        conn.execute("DELETE FROM active_stream_leases WHERE expires_at <= ?", (now,))
+        active_count = conn.execute(
+            "SELECT COUNT(*) as count FROM active_stream_leases WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["count"]
+
+        if active_count >= max_concurrent:
+            return False
+
+        conn.execute(
+            "INSERT OR REPLACE INTO active_stream_leases (stream_id, user_id, expires_at) VALUES (?, ?, ?)",
+            (stream_id, user_id, expires_at),
+        )
+        conn.commit()
+        return True
+
+
+def release_stream_lease(stream_id: str) -> None:
+    """Release an active stream concurrency lease."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ?", (stream_id,))
+        conn.commit()
 
 
 def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
