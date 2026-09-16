@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -43,6 +44,27 @@ _current_harvested_plots_ctx: contextvars.ContextVar[list] = contextvars.Context
 _active_conv_user_map: dict[str, str] = {}
 _latest_active_user_id: Optional[str] = None
 _latest_harvested_plots: list[str] = []
+
+# Per-user streaming concurrency semaphore (max 2 active streams per user)
+_user_stream_semaphore: dict[str, int] = {}
+_stream_lock = threading.Lock()
+MAX_CONCURRENT_STREAMS_PER_USER = 2
+
+def acquire_user_stream(user_id: str) -> bool:
+    with _stream_lock:
+        active = _user_stream_semaphore.get(user_id, 0)
+        if active >= MAX_CONCURRENT_STREAMS_PER_USER:
+            return False
+        _user_stream_semaphore[user_id] = active + 1
+        return True
+
+def release_user_stream(user_id: str):
+    with _stream_lock:
+        active = _user_stream_semaphore.get(user_id, 0)
+        if active <= 1:
+            _user_stream_semaphore.pop(user_id, None)
+        else:
+            _user_stream_semaphore[user_id] = active - 1
 
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
 MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3-super-120b-a12b").strip()
@@ -2021,46 +2043,56 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
     - {"type": "done", "conversation_id": "..."}
     - {"type": "error", "detail": "..."}
     """
-    global _latest_active_user_id, _latest_harvested_plots
     if not request.messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
 
-    conv_id = request.conversation_id
-    raw_content = request.messages[-1].content
+    user_id = current_user["id"]
+    if not acquire_user_stream(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many concurrent streaming requests. You already have 2 active requests in progress. Please wait for one to complete.",
+        )
 
-    if not conv_id:
-        title = generate_smart_title(raw_content)
-        conv = database.create_conversation(title=title, user_id=current_user["id"], project_id=request.project_id)
-        conv_id = conv["id"]
-    else:
-        existing = database.get_conversation(conv_id, user_id=current_user["id"])
-        if not existing:
+    try:
+        conv_id = request.conversation_id
+        raw_content = request.messages[-1].content
+
+        if not conv_id:
             title = generate_smart_title(raw_content)
-            database.create_conversation(title=title, conv_id=conv_id, user_id=current_user["id"], project_id=request.project_id)
+            conv = database.create_conversation(title=title, user_id=current_user["id"], project_id=request.project_id)
+            conv_id = conv["id"]
         else:
-            if request.project_id and not existing.get("project_id"):
-                database.set_conversation_project(conv_id, request.project_id, user_id=current_user["id"])
-            existing_title = (existing.get("title") or "").strip()
-            is_placeholder = (
-                not existing_title
-                or existing_title in ("New Chat", "Casual Chat", "Untitled", "Chat")
-                or any(g in existing_title.lower() for g in ["hi bro", "hello bro", "heelllllo", "kaisa hai", "kaise ho", "how are u", "how's life"])
-            )
-            if not is_placeholder:
-                title = existing_title
+            existing = database.get_conversation(conv_id, user_id=current_user["id"])
+            if not existing:
+                title = generate_smart_title(raw_content)
+                database.create_conversation(title=title, conv_id=conv_id, user_id=current_user["id"], project_id=request.project_id)
             else:
-                new_candidate = generate_smart_title(raw_content)
-                if new_candidate != "Casual Chat":
-                    title = new_candidate
-                    database.update_conversation_title(conv_id, title, user_id=current_user["id"])
+                if request.project_id and not existing.get("project_id"):
+                    database.set_conversation_project(conv_id, request.project_id, user_id=current_user["id"])
+                existing_title = (existing.get("title") or "").strip()
+                is_placeholder = (
+                    not existing_title
+                    or existing_title in ("New Chat", "Casual Chat", "Untitled", "Chat")
+                    or any(g in existing_title.lower() for g in ["hi bro", "hello bro", "heelllllo", "kaisa hai", "kaise ho", "how are u", "how's life"])
+                )
+                if not is_placeholder:
+                    title = existing_title
                 else:
-                    title = existing_title or "Casual Chat"
+                    new_candidate = generate_smart_title(raw_content)
+                    if new_candidate != "Casual Chat":
+                        title = new_candidate
+                        database.update_conversation_title(conv_id, title, user_id=current_user["id"])
+                    else:
+                        title = existing_title or "Casual Chat"
 
-    messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id)
+        messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id)
 
-    # Save user message to persistent DB
-    user_msg = database.add_message(conv_id, role="user", content=last_user.content, user_id=current_user["id"])
-    user_msg_id = user_msg["id"]
+        # Save user message to persistent DB
+        user_msg = database.add_message(conv_id, role="user", content=last_user.content, user_id=current_user["id"])
+        user_msg_id = user_msg["id"]
+    except Exception:
+        release_user_stream(user_id)
+        raise
 
     _active_conv_user_map[conv_id] = current_user["id"]
     _latest_active_user_id = current_user["id"]
@@ -2525,6 +2557,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 _current_harvested_plots_ctx.reset(plot_token)
             except Exception:
                 _current_harvested_plots_ctx.set([])
+            release_user_stream(current_user["id"])
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
