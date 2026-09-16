@@ -174,7 +174,7 @@ let currentProjectId = ""; // Empty string means "All Chats"
 let userProjects = [];
 let editingProjectId = null;
 
-let authToken = localStorage.getItem("cortex_auth_token") || null;
+let authToken = null;
 let currentUser = null;
 let authMode = "login"; // "login" | "register"
 
@@ -5124,7 +5124,7 @@ async function handleAuthSubmit(e) {
 
     authToken = data.token;
     currentUser = data.user;
-    localStorage.setItem("cortex_auth_token", authToken);
+    localStorage.removeItem("cortex_auth_token");
     localStorage.setItem("cortex_active_conv", "new");
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);
@@ -5149,14 +5149,13 @@ async function handleAuthSubmit(e) {
 }
 
 function signOut() {
-  if (authToken) {
-    try {
-      fetch("/api/auth/logout", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-      }).catch(() => {});
-    } catch {}
-  }
+  try {
+    fetch("/api/auth/logout", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      credentials: "same-origin",
+    }).catch(() => {});
+  } catch {}
   localStorage.removeItem("cortex_auth_token");
   localStorage.setItem("cortex_active_conv", "new");
   localStorage.removeItem("cortex_username");
@@ -5179,14 +5178,11 @@ function signOut() {
 }
 
 async function checkAuth() {
-  if (!authToken) {
-    showLandingPage();
-    loadHealth();
-    return;
-  }
-
   try {
-    const res = await fetch("/api/auth/me", { headers: authHeaders() });
+    const res = await fetch("/api/auth/me", {
+      headers: authHeaders(),
+      credentials: "same-origin",
+    });
     if (res.ok) {
       currentUser = await res.json();
       if (currentUser && currentUser.username) {
@@ -5217,6 +5213,7 @@ async function checkAuth() {
       localStorage.removeItem("cortex_username");
       localStorage.setItem("cortex_active_conv", "new");
       authToken = null;
+      currentUser = null;
       showLandingPage();
       loadHealth();
     }
@@ -5228,7 +5225,7 @@ async function checkAuth() {
 
 // Landing Page & Auth Event Listeners
 function handleLaunchOrRegister() {
-  if (authToken) {
+  if (currentUser || authToken) {
     showChatApp();
     if (!currentConversationId || currentConversationId === "new") {
       startNewChat();
@@ -5407,7 +5404,7 @@ async function handleGuestTestDrive() {
 
     authToken = data.token;
     currentUser = data.user;
-    localStorage.setItem("cortex_auth_token", authToken);
+    localStorage.removeItem("cortex_auth_token");
     localStorage.setItem("cortex_active_conv", "new");
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);

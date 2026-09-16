@@ -25,7 +25,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Header, Query, status
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Depends, Header, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -261,17 +261,18 @@ app.add_middleware(
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; "
         "img-src 'self' data: blob: https:; "
         "connect-src 'self'; "
         "frame-src 'self' blob: data:; "
+        "frame-ancestors 'none'; "
         "object-src 'none'; "
         "base-uri 'self';"
     )
@@ -325,11 +326,32 @@ def verify_token(token: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def _set_auth_cookie(response: Response, token: str, request: Request, max_age: int = 60 * 60 * 24 * 30) -> None:
+    """Set an HttpOnly, SameSite secure session cookie to defend against token theft and XSS."""
+    is_secure = IS_PRODUCTION or request.url.scheme == "https"
+    response.set_cookie(
+        key="cortex_session",
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=is_secure,
+        path="/",
+    )
+
+
 async def get_current_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
 ) -> dict[str, Any]:
     raw_token = None
-    if authorization:
+    # 1. Primary auth vector: HttpOnly SameSite cookie
+    cookie_token = request.cookies.get("cortex_session")
+    if cookie_token:
+        raw_token = cookie_token.strip()
+
+    # 2. Backward-compatible fallback: Authorization Bearer header
+    if not raw_token and authorization:
         if authorization.startswith("Bearer "):
             raw_token = authorization[7:].strip()
         else:
@@ -338,7 +360,7 @@ async def get_current_user(
     if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please provide a Bearer token.",
+            detail="Authentication required. Please provide a session cookie or Bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -450,7 +472,7 @@ class LoginPayload(BaseModel):
 
 
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterPayload, request: Request):
+def register(payload: RegisterPayload, request: Request, response: Response):
     client_ip = get_client_ip(request)
     allowed, wait_sec = database.check_and_record_auth_attempt(
         f"register:{client_ip}", max_attempts=5, window_seconds=3600
@@ -476,6 +498,7 @@ def register(payload: RegisterPayload, request: Request):
         raise HTTPException(status_code=400, detail=err_str)
 
     token = generate_token(user["id"], user["username"])
+    _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     return {
         "ok": True,
         "token": token,
@@ -489,7 +512,7 @@ def register(payload: RegisterPayload, request: Request):
 
 
 @app.post("/api/auth/login")
-def login(payload: LoginPayload, request: Request):
+def login(payload: LoginPayload, request: Request, response: Response):
     client_ip = get_client_ip(request)
     clean_user = payload.username.strip().lower()
 
@@ -522,6 +545,7 @@ def login(payload: LoginPayload, request: Request):
     database.reset_auth_attempts(f"login_ip:{client_ip}")
 
     token = generate_token(user["id"], user["username"])
+    _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     return {
         "ok": True,
         "token": token,
@@ -534,7 +558,7 @@ def login(payload: LoginPayload, request: Request):
 
 
 @app.post("/api/auth/guest")
-def guest_auth(request: Request):
+def guest_auth(request: Request, response: Response):
     """Create an anonymous ephemeral guest session with isolated data and quota."""
     client_ip = get_client_ip(request)
     allowed, wait_sec = database.check_and_record_auth_attempt(
@@ -553,6 +577,7 @@ def guest_auth(request: Request):
 
     user = database.create_guest_user()
     token = generate_token(user["id"], user["username"], expires_in_seconds=60 * 60 * 24)
+    _set_auth_cookie(response, token, request, max_age=60 * 60 * 24)
     return {
         "ok": True,
         "token": token,
@@ -577,10 +602,15 @@ def auth_me(current_user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/auth/logout")
-def logout(authorization: Optional[str] = Header(None), current_user: dict = Depends(get_current_user)):
-    """Revoke the current session token."""
-    raw_token = ""
-    if authorization:
+def logout(
+    request: Request,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Revoke the current session token and clear authentication cookie."""
+    raw_token = request.cookies.get("cortex_session", "").strip()
+    if not raw_token and authorization:
         raw_token = authorization[7:].strip() if authorization.startswith("Bearer ") else authorization.strip()
     if raw_token and "." in raw_token:
         parts = raw_token.split(".")
@@ -588,6 +618,7 @@ def logout(authorization: Optional[str] = Header(None), current_user: dict = Dep
             token_data = verify_token(raw_token)
             exp = token_data.get("exp", int(time.time()) + 3600) if token_data else int(time.time()) + 3600
             database.revoke_token(parts[1], current_user["id"], exp)
+    response.delete_cookie(key="cortex_session", path="/")
     return {"ok": True, "message": "Successfully logged out."}
 
 
