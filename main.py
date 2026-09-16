@@ -94,9 +94,18 @@ NVIDIA_BASE_URL = os.getenv(
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "32768"))
 DEFAULT_INSECURE_SECRET = "cortex-agent-secure-token-secret-2026"
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+IS_PRODUCTION = (
+    os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+    or os.getenv("CORTEX_ENV", "").strip().lower() == "production"
+)
 
 if not SECRET_KEY or SECRET_KEY == DEFAULT_INSECURE_SECRET:
-    # Auto-generate a high-entropy 64-character secret and persist to .env
+    if IS_PRODUCTION:
+        raise RuntimeError(
+            "Production Security Violation: SECRET_KEY environment variable is missing or set to the default insecure secret. "
+            "A high-entropy secret must be explicitly configured in production environments."
+        )
+    # Auto-generate a high-entropy 64-character secret and persist to .env (development only)
     generated_secret = secrets.token_hex(32)
     env_path = BASE_DIR / ".env"
     if env_path.exists():
@@ -107,6 +116,8 @@ if not SECRET_KEY or SECRET_KEY == DEFAULT_INSECURE_SECRET:
             else:
                 env_content = env_content.rstrip() + f"\n\n# Auto-generated cryptographic session secret\nSECRET_KEY={generated_secret}\n"
             env_path.write_text(env_content, encoding="utf-8")
+        except OSError:
+            logger.warning("Could not persist generated SECRET_KEY to .env (filesystem may be read-only). Secret will be held in memory.")
         except Exception:
             pass
     SECRET_KEY = generated_secret
@@ -544,42 +555,53 @@ def web_search(query: str) -> str:
     return f"No search results found for '{query}'."
 
 
-def is_safe_url(url: str) -> tuple[bool, str]:
-    """Validate that a URL is safe to fetch and does not target internal / loopback / private IP addresses (SSRF protection)."""
+class SafeUrlResult(tuple):
+    def __new__(cls, is_safe: bool, error: str, pinned_ip: Optional[str] = None):
+        return super().__new__(cls, (is_safe, error))
+
+    def __init__(self, is_safe: bool, error: str, pinned_ip: Optional[str] = None):
+        self.is_safe = is_safe
+        self.error = error
+        self.pinned_ip = pinned_ip
+
+
+def is_safe_url(url: str) -> SafeUrlResult:
+    """Validate that a URL is safe to fetch and does not target internal / loopback / private IP addresses (SSRF protection).
+    Returns a SafeUrlResult tuple (is_safe, error) with pinned_ip attribute."""
     try:
         parsed = urlparse(url)
     except Exception as e:
-        return False, f"Malformed URL: {e}"
+        return SafeUrlResult(False, f"Malformed URL: {e}", None)
 
     scheme = (parsed.scheme or "").lower()
     if scheme not in ("http", "https"):
-        return False, f"Disallowed scheme '{scheme}'. Only HTTP and HTTPS are permitted."
+        return SafeUrlResult(False, f"Disallowed scheme '{scheme}'. Only HTTP and HTTPS are permitted.", None)
 
     hostname = parsed.hostname
     if not hostname:
-        return False, "Missing hostname in URL."
+        return SafeUrlResult(False, "Missing hostname in URL.", None)
 
     hostname_lower = hostname.lower().strip(".")
 
     # Block localhost and local names directly
     if hostname_lower in ("localhost", "127.0.0.1", "::1") or hostname_lower.endswith(".local") or hostname_lower.endswith(".internal"):
-        return False, f"Access to local or internal domain '{hostname}' is forbidden."
+        return SafeUrlResult(False, f"Access to local or internal domain '{hostname}' is forbidden.", None)
 
     # Validate port if specified
     port = parsed.port
     if port is not None and port not in (80, 443, 8080, 8443):
-        return False, f"Access to port {port} is not permitted. Only standard web ports (80, 443) are allowed."
+        return SafeUrlResult(False, f"Access to port {port} is not permitted. Only standard web ports (80, 443) are allowed.", None)
 
     # Resolve domain to IP addresses and verify none are private/loopback/link-local/reserved
     try:
         addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror:
-        return False, f"Could not resolve hostname '{hostname}'."
+        return SafeUrlResult(False, f"Could not resolve hostname '{hostname}'.", None)
     except Exception as e:
-        return False, f"DNS resolution failed: {e}"
+        return SafeUrlResult(False, f"DNS resolution failed: {e}", None)
 
     if not addr_info:
-        return False, f"Could not resolve hostname '{hostname}' to any IP."
+        return SafeUrlResult(False, f"Could not resolve hostname '{hostname}' to any IP.", None)
 
     for item in addr_info:
         sockaddr = item[4]
@@ -595,29 +617,30 @@ def is_safe_url(url: str) -> tuple[bool, str]:
                 or ip.is_unspecified
                 or (hasattr(ip, "is_carrier_grade_nat") and ip.is_carrier_grade_nat)
             ):
-                return False, f"Access to private/loopback IP {ip_str} is strictly forbidden."
+                return SafeUrlResult(False, f"Access to private/loopback IP {ip_str} is strictly forbidden.", None)
 
             # Check IPv4 mapped in IPv6
             if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
                 mapped_v4 = ip.ipv4_mapped
                 if mapped_v4.is_loopback or mapped_v4.is_private or mapped_v4.is_link_local:
-                    return False, f"Access to mapped private IPv4 {mapped_v4} is strictly forbidden."
+                    return SafeUrlResult(False, f"Access to mapped private IPv4 {mapped_v4} is strictly forbidden.", None)
 
             if ip_str.startswith("169.254."):
-                return False, f"Access to link-local metadata IP {ip_str} is strictly forbidden."
+                return SafeUrlResult(False, f"Access to link-local metadata IP {ip_str} is strictly forbidden.", None)
 
         except ValueError:
-            return False, f"Invalid resolved IP '{ip_str}'."
+            return SafeUrlResult(False, f"Invalid resolved IP '{ip_str}'.", None)
 
-    return True, ""
+    pinned_ip = addr_info[0][4][0]
+    return SafeUrlResult(True, "", pinned_ip)
 
 
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        is_safe, err = is_safe_url(newurl)
-        if not is_safe:
+        safe_res = is_safe_url(newurl)
+        if not safe_res.is_safe:
             raise urllib.error.HTTPError(
-                newurl, 403, f"SSRF Block: Redirect target is not safe: {err}", headers, fp
+                newurl, 403, f"SSRF Block: Redirect target is not safe: {safe_res.error}", headers, fp
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -629,16 +652,14 @@ def fetch_webpage(url: str) -> str:
     Provide a full URL starting with http:// or https://."""
     try:
         import html
+        import http.client
         import re
-        import urllib.request
+        import ssl
+        from urllib.parse import urljoin
 
         clean_url = url.strip().strip("<>\"'")
         if not clean_url.startswith(("http://", "https://")):
             clean_url = "https://" + clean_url
-
-        is_safe, sec_err = is_safe_url(clean_url)
-        if not is_safe:
-            return f"Security Error (SSRF Guard): Access to '{clean_url}' is blocked: {sec_err}"
 
         headers = {
             "User-Agent": (
@@ -649,19 +670,73 @@ def fetch_webpage(url: str) -> str:
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-        req = urllib.request.Request(clean_url, headers=headers)
-        opener = urllib.request.build_opener(SafeRedirectHandler())
-        with opener.open(req, timeout=6) as response:
-            content_type = response.headers.get_content_type()
-            if "text" not in content_type and "html" not in content_type and "json" not in content_type:
-                return f"Cannot read URL: unsupported content-type '{content_type}'."
+        current_url = clean_url
+        raw_bytes = None
+        encoding = "utf-8"
 
-            raw_bytes = response.read(600000)
-            encoding = response.headers.get_content_charset() or "utf-8"
+        for _ in range(4):  # allow up to 3 redirects safely
+            safe_res = is_safe_url(current_url)
+            if not safe_res.is_safe:
+                return f"Security Error (SSRF Guard): Access to '{current_url}' is blocked: {safe_res.error}"
+
+            pinned_ip = safe_res.pinned_ip
+            parsed = urlparse(current_url)
+            scheme = (parsed.scheme or "https").lower()
+            hostname = parsed.hostname
+            port = parsed.port or (443 if scheme == "https" else 80)
+            req_path = parsed.path or "/"
+            if parsed.query:
+                req_path += "?" + parsed.query
+
+            if scheme == "https":
+                ctx = ssl.create_default_context()
+                conn = http.client.HTTPSConnection(pinned_ip, port=port, timeout=6, context=ctx)
+                def custom_connect():
+                    conn.sock = socket.create_connection((conn.host, conn.port), conn.timeout, conn.source_address)
+                    conn.sock = conn._context.wrap_socket(conn.sock, server_hostname=hostname)
+                conn.connect = custom_connect
+            else:
+                conn = http.client.HTTPConnection(pinned_ip, port=port, timeout=6)
+
             try:
-                raw_html = raw_bytes.decode(encoding, errors="replace")
-            except Exception:
-                raw_html = raw_bytes.decode("utf-8", errors="replace")
+                conn.putrequest("GET", req_path, skip_host=True)
+                conn.putheader("Host", hostname)
+                for h_k, h_v in headers.items():
+                    conn.putheader(h_k, h_v)
+                conn.endheaders()
+
+                resp = conn.getresponse()
+                if 300 <= resp.status < 400:
+                    loc = resp.getheader("Location")
+                    conn.close()
+                    if not loc:
+                        return "Cannot read URL: redirect response missing Location header."
+                    current_url = urljoin(current_url, loc)
+                    continue
+
+                content_type = resp.getheader("Content-Type", "").lower()
+                if "text" not in content_type and "html" not in content_type and "json" not in content_type:
+                    conn.close()
+                    return f"Cannot read URL: unsupported content-type '{content_type}'."
+
+                match = re.search(r"charset=([\w-]+)", content_type)
+                if match:
+                    encoding = match.group(1)
+
+                raw_bytes = resp.read(600000)
+                conn.close()
+                break
+            except Exception as conn_err:
+                conn.close()
+                return f"Failed to connect to '{clean_url}': {conn_err}"
+
+        if raw_bytes is None:
+            return f"Cannot read URL: too many redirects from '{clean_url}'."
+
+        try:
+            raw_html = raw_bytes.decode(encoding, errors="replace")
+        except Exception:
+            raw_html = raw_bytes.decode("utf-8", errors="replace")
 
         # Strip unneeded structural and script tags
         cleaned = re.sub(
