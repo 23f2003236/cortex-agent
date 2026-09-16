@@ -446,7 +446,7 @@ def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, 
 def release_stream_lease(stream_id: str) -> None:
     """Release an active stream concurrency lease."""
     with get_connection() as conn:
-        conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ?", (stream_id,))
+        conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ? OR user_id = ?", (stream_id, stream_id))
         conn.commit()
 
 

@@ -65,26 +65,20 @@ logger.addFilter(SensitiveDataFilter())
 _current_user_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("_current_user_id_ctx", default=None)
 _current_harvested_plots_ctx: contextvars.ContextVar[list] = contextvars.ContextVar("_current_harvested_plots_ctx", default=[])
 
-# Per-user streaming concurrency semaphore (max 2 active streams per user)
-_user_stream_semaphore: dict[str, int] = {}
-_stream_lock = threading.Lock()
+# Multi-worker resilient stream concurrency tracking (max 2 active streams per user)
 MAX_CONCURRENT_STREAMS_PER_USER = 2
 
-def acquire_user_stream(user_id: str) -> bool:
-    with _stream_lock:
-        active = _user_stream_semaphore.get(user_id, 0)
-        if active >= MAX_CONCURRENT_STREAMS_PER_USER:
-            return False
-        _user_stream_semaphore[user_id] = active + 1
-        return True
 
-def release_user_stream(user_id: str):
-    with _stream_lock:
-        active = _user_stream_semaphore.get(user_id, 0)
-        if active <= 1:
-            _user_stream_semaphore.pop(user_id, None)
-        else:
-            _user_stream_semaphore[user_id] = active - 1
+def acquire_user_stream(user_id: str, stream_id: Optional[str] = None) -> tuple[bool, str]:
+    sid = stream_id or str(uuid.uuid4())
+    acquired = database.acquire_stream_lease(
+        user_id, sid, max_concurrent=MAX_CONCURRENT_STREAMS_PER_USER, ttl_seconds=300
+    )
+    return acquired, sid
+
+
+def release_user_stream(stream_identifier: str):
+    database.release_stream_lease(stream_identifier)
 
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
 MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3-super-120b-a12b").strip()
@@ -293,7 +287,17 @@ class LoginPayload(BaseModel):
 
 
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterPayload):
+def register(payload: RegisterPayload, request: Request):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, wait_sec = database.check_and_record_auth_attempt(
+        f"register:{client_ip}", max_attempts=5, window_seconds=3600
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many account registrations from this network. Please try again in {wait_sec} seconds.",
+        )
+
     clean_user = payload.username.strip().lower()
     if len(clean_user) < 3:
         raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
@@ -322,10 +326,37 @@ def register(payload: RegisterPayload):
 
 
 @app.post("/api/auth/login")
-def login(payload: LoginPayload):
+def login(payload: LoginPayload, request: Request):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    clean_user = payload.username.strip().lower()
+
+    # 1. IP-level rate limiting (max 30 attempts per 15 min)
+    allowed_ip, wait_ip = database.check_and_record_auth_attempt(
+        f"login_ip:{client_ip}", max_attempts=30, window_seconds=900
+    )
+    if not allowed_ip:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many login attempts from this network. Please try again in {wait_ip} seconds.",
+        )
+
+    # 2. Account-level brute-force lockout (max 5 failed attempts per 15 min per username)
+    allowed_user, wait_user = database.check_and_record_auth_attempt(
+        f"login_user:{clean_user}", max_attempts=5, window_seconds=900
+    )
+    if not allowed_user:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Account temporarily locked due to repeated failed login attempts. Please try again in {wait_user} seconds.",
+        )
+
     user = database.authenticate_user(payload.username, payload.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    # Successful authentication resets failed attempt counters
+    database.reset_auth_attempts(f"login_user:{clean_user}")
+    database.reset_auth_attempts(f"login_ip:{client_ip}")
 
     token = generate_token(user["id"], user["username"])
     return {
@@ -2231,7 +2262,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         )
 
     user_id = current_user["id"]
-    if not acquire_user_stream(user_id):
+    stream_ok, stream_id = acquire_user_stream(user_id)
+    if not stream_ok:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many concurrent streaming requests. You already have 2 active requests in progress. Please wait for one to complete.",
@@ -2283,7 +2315,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         user_msg = database.add_message(conv_id, role="user", content=last_user.content, user_id=current_user["id"])
         user_msg_id = user_msg["id"]
     except Exception:
-        release_user_stream(user_id)
+        release_user_stream(stream_id)
         raise
 
     def event(data: dict) -> str:
@@ -2766,7 +2798,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 _current_harvested_plots_ctx.reset(plot_token)
             except Exception:
                 _current_harvested_plots_ctx.set([])
-            release_user_stream(current_user["id"])
+            release_user_stream(stream_id)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
