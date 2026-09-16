@@ -40,7 +40,24 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
+
+
+def backup_db(target_path: Optional[Path] = None) -> Path:
+    """Create a point-in-time consistent online backup of the SQLite database without stopping traffic."""
+    if target_path is None:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        target_path = DB_PATH.parent / f"{DB_PATH.stem}_backup_{ts}.db"
+
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with get_connection() as src_conn:
+        dest_conn = sqlite3.connect(str(target_path))
+        try:
+            src_conn.backup(dest_conn)
+        finally:
+            dest_conn.close()
+    return target_path
 
 
 def init_db() -> None:
@@ -222,6 +239,23 @@ def init_db() -> None:
             conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (3, ?, 'Atomic quota reservation with reserved_tokens')", (now_iso,))
         if current_v < 4:
             conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (4, ?, 'Guest session expiration, active stream leases, and distributed auth rate limits')", (now_iso,))
+        if current_v < 5:
+            # Deterministically repair orphaned foreign key records
+            conn.execute(
+                "UPDATE conversations SET project_id = NULL WHERE project_id IS NOT NULL AND project_id NOT IN (SELECT id FROM projects)"
+            )
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id NOT IN (SELECT id FROM users))"
+            )
+            conn.execute("DELETE FROM conversations WHERE user_id NOT IN (SELECT id FROM users)")
+            conn.execute("DELETE FROM memories WHERE user_id NOT IN (SELECT id FROM users)")
+            conn.execute("DELETE FROM projects WHERE user_id NOT IN (SELECT id FROM users)")
+            conn.execute("DELETE FROM daily_usage WHERE user_id NOT IN (SELECT id FROM users)")
+            conn.execute("DELETE FROM active_stream_leases WHERE user_id NOT IN (SELECT id FROM users)")
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (5, ?, 'Deterministic foreign-key orphan remediation across conversations, memories, projects, and daily usage')",
+                (now_iso,),
+            )
 
         conn.commit()
 
@@ -470,7 +504,7 @@ def release_stream_lease(stream_id: str) -> None:
     """Release an active stream concurrency lease."""
     with get_connection() as conn:
         _begin_immediate(conn)
-        conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ? OR user_id = ?", (stream_id, stream_id))
+        conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ?", (stream_id,))
         conn.commit()
 
 
