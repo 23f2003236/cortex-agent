@@ -1054,10 +1054,14 @@ def should_run_fast_tools(raw_content: str) -> bool:
     return False
 
 
+VALID_MODEL_IDS = {m["id"] for m in AVAILABLE_MODELS}
+ALLOWED_MODES = {"auto", "fast", "thinking"}
+
+
 class ChatMessage(BaseModel):
     id: Optional[str] = None
     role: str = Field(pattern="^(user|assistant)$")
-    content: str = Field(min_length=1, max_length=15_000_000)
+    content: str = Field(min_length=1, max_length=500_000)
     tools_used: Optional[list[str]] = None
 
 
@@ -1066,7 +1070,7 @@ class ChatRequest(BaseModel):
     project_id: Optional[str] = None
     model: Optional[str] = None
     mode: Optional[str] = "auto"
-    messages: list[ChatMessage] = Field(default_factory=list, max_length=150)
+    messages: list[ChatMessage] = Field(default_factory=list, min_length=1, max_length=100)
 
 
 @app.get("/")
@@ -2041,6 +2045,20 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
     if not request.messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
 
+    mode = (request.mode or "auto").lower().strip()
+    if mode not in ALLOWED_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid mode '{request.mode}'. Allowed modes are: auto, fast, thinking.",
+        )
+
+    req_model = (request.model or MODEL_NAME).strip()
+    if req_model not in VALID_MODEL_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid model '{request.model}'. Please choose an active model from the available models list.",
+        )
+
     user_id = current_user["id"]
     if not acquire_user_stream(user_id):
         raise HTTPException(
@@ -2092,10 +2110,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
     def event(data: dict) -> str:
         return f"data: {json.dumps(data)}\n\n"
 
-    mode = (request.mode or "auto").lower().strip()
-    has_image = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content))
-    effective_model = (request.model or MODEL_NAME).strip()
-
+    effective_model = req_model
     if has_image and effective_model != "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning":
         effective_model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 
