@@ -842,9 +842,7 @@ def run_tool_rounds_streaming(
                     payload = re.sub(r"<\/(?:parameter|function|tool_call)>", "", payload).strip()
                     if fn_name in TOOLS_BY_NAME:
                         args = {}
-                        if fn_name == "execute_python":
-                            args = {"code": payload}
-                        elif fn_name == "remember":
+                        if fn_name == "remember":
                             args = {"fact": payload}
                         else:
                             try:
@@ -852,13 +850,6 @@ def run_tool_rounds_streaming(
                             except Exception:
                                 args = {"query": payload}
                         tool_calls = [{"name": fn_name, "args": args, "id": f"call-syn-{int(time.time()*1000)}"}]
-                elif any(tag in text_content for tag in ["=execute_pythoncode>", "<execute_pythoncode>"]):
-                    m_tag = re.search(r"(?:=\s*<?execute_pythoncode>?)", text_content)
-                    if m_tag:
-                        py_code = text_content[m_tag.end():].strip()
-                        py_code = re.sub(r"<\/(?:parameter|function|tool_call)>", "", py_code).strip()
-                        if py_code:
-                            tool_calls = [{"name": "execute_python", "args": {"code": py_code}, "id": f"call-syn-{int(time.time()*1000)}"}]
 
         if not tool_calls:
             break
@@ -2053,7 +2044,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             last_finish_reason = None
 
             VALID_TOOL_NAMES = {
-                "execute_python", "remember", "web_search", "fetch_webpage",
+                "remember", "web_search", "fetch_webpage",
                 "calculator", "weather_lookup", "current_datetime", "wikipedia_lookup"
             }
 

@@ -1,6 +1,6 @@
 # 🧠 Cortex Agent 3.1 — Autonomous Multi-Model Intelligence Studio
 
-> **Cortex Agent 3.1** is a production-grade, enterprise autonomous intelligence platform engineered for agentic coding, deep research, live sandboxed Python execution, and deliverable synthesis. 
+> **Cortex Agent 3.1** is a production-grade, enterprise autonomous intelligence platform engineered for agentic coding, deep research, real-time tool orchestration, and deliverable synthesis. 
 > Built with FastAPI, LangChain, NVIDIA NIM Frontier Models, and a Claude Code / Linear-inspired obsidian UI.
 
 ---
@@ -8,17 +8,19 @@
 ## ⚡ Key Architectural Capabilities
 
 - **Frontier Multi-Model Intelligence**: Seamlessly switch across 7 frontier models:
-  - **Cortex 5 Super** (`meta/llama-3.1-70b-instruct` / `nvidia/nemotron-3-super-120b`) — 120B MoE Flagship Autonomous Agent.
-  - **Cortex 5 Ultra** (`deepseek-ai/deepseek-r1`) — 550B Frontier Reasoning & Architecture PRDs.
-  - **Cortex 4 Deep** (`deepseek-ai/deepseek-r1`) — Chain-of-Thought Deduction & Proofs.
-  - **Cortex 4 Omni** (`meta/llama-3.2-11b-vision-instruct`) — Multimodal UI & Screenshot Analysis.
-  - **Cortex 3.5 Fast** (`meta/llama-3.1-8b-instruct`) — 6ms TTFT Sub-second Autocomplete.
-- **Isolated Python 3.12 Sandbox Execution**: Safe sub-process execution of Python code with automatic high-resolution Matplotlib plot harvesting (`.png`, 300 DPI) and telemetry output.
+  - **Cortex 5 Super** (`nvidia/nemotron-3-super-120b-a12b`) — 120B Flagship Autonomous Agent.
+  - **Cortex 5 Ultra** (`nvidia/nemotron-3-ultra-550b-a55b`) — 550B Frontier Reasoning & Architecture PRDs.
+  - **Cortex 4 Deep** (`openai/gpt-oss-20b`) — Chain-of-Thought Deduction & Proofs.
+  - **Cortex 4 Omni** (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`) — Multimodal UI & Screenshot Analysis.
+  - **Cortex 3.5 Fast** (`nvidia/nemotron-3.5-lightning-30b-a3b`) — Ultra-Fast Sub-second Autocomplete.
 - **Autonomous Tool Orchestration Loop**:
-  - `web_search`: Real-time internet research via DuckDuckGo.
-  - `fetch_webpage`: Deep full-page scraping and article extraction.
-  - `execute_python`: Sandboxed mathematical, data science, and plotting engine.
-  - `wikipedia_lookup` & `weather_lookup`: Live encyclopedic and atmospheric telemetry.
+  - `web_search`: Real-time internet research via DuckDuckGo with exponential backoff.
+  - `fetch_webpage`: Deep full-page scraping with SSRF guard and article extraction.
+  - `calculator`: High-precision arithmetic and scientific mathematical solver.
+  - `wikipedia_lookup`: Multilingual knowledgebase exploration (English & Hindi).
+  - `weather_lookup`: Live global weather and meteorological telemetry.
+  - `current_datetime`: Timezone-aware date & time verification.
+  - `remember`: Persistent cross-session user memory & project rules storage.
 - **Claude-Style Artifacts Library**: Centralized sidebar repository harvesting all generated Markdown specifications, architectures, and scripts with split-panel preview and 1-click downloads.
 - **Enterprise Security & Data Isolation**:
   - PBKDF2-HMAC-SHA256 password hashing with unique per-user cryptographic salts.
@@ -93,7 +95,6 @@ Open your browser at **`http://127.0.0.1:8000`**.
 cortex-agent/
 ├── main.py                  # FastAPI server, tool loop, SSE streaming & auth routes
 ├── database.py              # SQLite WAL storage, user auth, usage quotas & artifacts
-├── sandbox.py               # Isolated Python 3.12 sandbox & plot harvesting
 ├── requirements.txt         # Production dependencies
 ├── .env.example             # Clean environment variables template
 ├── .gitignore               # Airtight secrets & database exclusion rules
