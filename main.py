@@ -134,11 +134,16 @@ def verify_token(token: str) -> Optional[dict[str, Any]]:
         if not hmac.compare_digest(sig, expected_sig):
             return None
 
+        # Check if this token signature has been revoked on logout
+        if database.is_token_revoked(sig):
+            return None
+
         padded = payload_b64 + "=" * (-len(payload_b64) % 4)
         payload_json = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
         data = json.loads(payload_json)
         if data.get("exp", 0) < time.time():
             return None  # Token expired
+        data["sig"] = sig
         return data
     except Exception:
         return None
@@ -146,7 +151,6 @@ def verify_token(token: str) -> Optional[dict[str, Any]]:
 
 async def get_current_user(
     authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     raw_token = None
     if authorization:
@@ -154,13 +158,11 @@ async def get_current_user(
             raw_token = authorization[7:].strip()
         else:
             raw_token = authorization.strip()
-    elif token:
-        raw_token = token.strip()
 
     if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please sign in.",
+            detail="Authentication required. Please provide a Bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -266,6 +268,21 @@ def auth_me(current_user: dict = Depends(get_current_user)):
         "is_guest": bool(current_user.get("is_guest", False)),
         "created_at": current_user.get("created_at", ""),
     }
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: Optional[str] = Header(None), current_user: dict = Depends(get_current_user)):
+    """Revoke the current session token."""
+    raw_token = ""
+    if authorization:
+        raw_token = authorization[7:].strip() if authorization.startswith("Bearer ") else authorization.strip()
+    if raw_token and "." in raw_token:
+        parts = raw_token.split(".")
+        if len(parts) == 2:
+            token_data = verify_token(raw_token)
+            exp = token_data.get("exp", int(time.time()) + 3600) if token_data else int(time.time()) + 3600
+            database.revoke_token(parts[1], current_user["id"], exp)
+    return {"ok": True, "message": "Successfully logged out."}
 
 
 # ---------------------------------------------------------------------------

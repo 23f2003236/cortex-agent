@@ -5130,6 +5130,14 @@ async function handleAuthSubmit(e) {
 }
 
 function signOut() {
+  if (authToken) {
+    try {
+      fetch("/api/auth/logout", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+      }).catch(() => {});
+    } catch {}
+  }
   localStorage.removeItem("cortex_auth_token");
   localStorage.setItem("cortex_active_conv", "new");
   localStorage.removeItem("cortex_username");

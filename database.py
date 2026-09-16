@@ -4,6 +4,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -133,6 +134,18 @@ def init_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_usage_user ON daily_usage(user_id, usage_date)")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS revoked_tokens (
+                token_sig TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                revoked_at TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_revoked_tokens_exp ON revoked_tokens(expires_at)")
 
         conn.commit()
 
@@ -287,6 +300,28 @@ def get_user_by_username(username: str) -> Optional[dict[str, Any]]:
         d = dict(row)
         d["is_guest"] = bool(d.get("is_guest", 0))
         return d
+
+
+def revoke_token(token_sig: str, user_id: str, expires_at: int) -> None:
+    """Blacklist a token signature until its natural expiration."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO revoked_tokens (token_sig, user_id, revoked_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token_sig, user_id, _utc_now_iso(), int(expires_at)),
+        )
+        # Prune already-expired revoked tokens
+        conn.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (int(time.time()),))
+        conn.commit()
+
+
+def is_token_revoked(token_sig: str) -> bool:
+    """Check if a token signature has been revoked."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM revoked_tokens WHERE token_sig = ?",
+            (token_sig,),
+        ).fetchone()
+        return row is not None
 
 
 # ---------------- Conversation Management ----------------
