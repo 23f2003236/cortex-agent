@@ -1402,18 +1402,33 @@ function initArtifacts(containerEl) {
       previewWrap.innerHTML = "";
       const iframe = document.createElement("iframe");
       iframe.className = "artifact-iframe";
-      iframe.setAttribute("sandbox", "allow-scripts allow-popups allow-modals allow-same-origin allow-forms");
+      // CRITICAL: Omit 'allow-same-origin' to isolate untrusted HTML from parent origin, localStorage & cookies
+      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
       iframe.setAttribute("loading", "lazy");
       previewWrap.appendChild(iframe);
-      iframe.srcdoc = rawHtml;
+
+      let safeHtml = rawHtml;
+      if (!safeHtml.includes("Content-Security-Policy")) {
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
+        safeHtml = cspMeta + safeHtml;
+      }
+      iframe.srcdoc = safeHtml;
     }
 
     if (popoutBtn && rawHtml) {
+      popoutBtn.title = "Download HTML artifact";
       popoutBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         const blob = new Blob([rawHtml], { type: "text/html;charset=utf-8" });
         const url = URL.createObjectURL(blob);
-        window.open(url, "_blank");
+        const a = document.createElement("a");
+        a.href = url;
+        const titleText = (card.querySelector(".artifact-header-title")?.textContent || "artifact").trim();
+        a.download = (titleText.replace(/[^a-zA-Z0-9_\-\.]/g, "_") || "artifact") + ".html";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
       });
     }
 
@@ -1728,6 +1743,8 @@ function openArtifactPanel({ filename, content, type }) {
 
   // Populate Preview iframe
   if (artifactIframe) {
+    // CRITICAL: Omit 'allow-same-origin' to isolate from parent window and localStorage
+    artifactIframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
     const isDark = !document.body.classList.contains("light-theme");
     if (resolvedType === "html") {
       let finalDoc = resolvedContent;
@@ -1753,6 +1770,10 @@ function openArtifactPanel({ filename, content, type }) {
   ${resolvedContent}
 </body>
 </html>`;
+      }
+      if (!finalDoc.includes("Content-Security-Policy")) {
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
+        finalDoc = cspMeta + finalDoc;
       }
       artifactIframe.srcdoc = finalDoc;
     } else if (resolvedType === "svg") {
