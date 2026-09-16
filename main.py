@@ -1056,12 +1056,12 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
                 extracted_text = (
                     f"[Document Notice: '{filename}' has {raw_page_count} pages, but appears to consist of SCANNED images/photocopies with only {total_substantive_words} words of extractable digital text.]\n\n"
                     f"{joined_frags}\n\n"
-                    f"[Agent Instruction: The user uploaded a scanned PDF where pages are images with minimal selectable text. Politely clarify that the uploaded PDF consists of scanned page images, but DO NOT stop there. Actively provide the complete, authoritative summary or answers for the topic indicated by the filename/prompt ('{filename}') using your deep subject knowledge and web search.]"
+                    f"[Agent Instruction: The user uploaded a scanned PDF where pages are images with minimal selectable text. Politely clarify that the uploaded PDF consists of scanned page images, but DO NOT stop there. Actively provide the complete, authoritative, and comprehensive summary and concepts for the topic indicated by the filename/prompt ('{filename}') directly in clean, structured Markdown using your deep subject knowledge. DO NOT output any raw tool calls, function tags, or JSON.]"
                 )
             else:
                 extracted_text = (
                     f"[Document Notice: '{filename}' ({raw_page_count} pages) is a SCANNED image-only PDF with NO selectable text streams.]\n\n"
-                    f"[Agent Instruction: Politely mention that the PDF is a scanned image document, but DO NOT refuse to answer. Provide the complete summary or solution for the subject/topic indicated by the filename or prompt ('{filename}') directly from your knowledge base.]"
+                    f"[Agent Instruction: Politely mention that the PDF is a scanned image document, but DO NOT refuse to answer. Provide the complete, detailed summary and solutions for the subject/topic indicated by the filename or prompt ('{filename}') directly from your deep knowledge base in clean, structured Markdown. DO NOT output any raw tool calls, function tags, or JSON.]"
                 )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to parse PDF: {exc}")
@@ -2223,6 +2223,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                         break
                     time.sleep(1.5)
                 except Exception as stream_err:
+                    print(f"Streaming attempt {attempt + 1} failed: {type(stream_err).__name__}: {stream_err}")
                     if attempt < max_attempts - 1 and not full_text:
                         time.sleep(1.5 * (attempt + 1))
                         continue
@@ -2330,24 +2331,47 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 yield event({"type": "token", "text": repair_close})
                 is_truncated = True
 
-            # Fallback if streaming failed, was aborted by 503, or produced no tokens
-            if not full_text.strip() or full_text.strip().startswith("<tool_call"):
+            # Fallback if streaming failed, was aborted by 503, or produced no tokens or raw tool JSON
+            is_raw_tool_output = (
+                full_text.strip().startswith("<tool_call")
+                or bool(re.search(r'^\s*\{\s*"tool"\s*:', full_text.strip()))
+                or bool(re.search(r'^\s*\[(?:web_search|execute_python|remember):', full_text.strip()))
+                or bool(re.search(r'^\s*```(?:json)?\s*\{\s*"tool"\s*:', full_text.strip()))
+            )
+            if not full_text.strip() or is_raw_tool_output:
                 try:
                     print("Streaming produced empty or invalid response; attempting non-streaming fallback invoke...")
-                    fallback_llm = make_llm(model_override=request.model, streaming=False)
-                    res = fallback_llm.invoke(messages)
+                    fallback_messages = list(messages) + [
+                        SystemMessage(content=(
+                            "[SYNTHESIS DIRECTIVE: Provide the final response directly to the user in clean, structured Markdown. "
+                            "Do NOT output any tool calls, function tags, XML tags, or JSON objects.]"
+                        ))
+                    ]
+                    fallback_llm = make_llm(model_override=effective_model, streaming=False)
+                    res = fallback_llm.invoke(fallback_messages)
                     fallback_text = _chunk_to_text(res.content).strip()
                     if fallback_text:
                         clean_text = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", fallback_text).strip()
                         clean_text = re.sub(r"<\/?(?:function|parameter)[^>]*>", "", clean_text).strip()
+                        clean_text = re.sub(r'\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"[^"]+"\s*:\s*[\s\S]*?\}', "", clean_text).strip()
                         final_text = clean_text if clean_text else fallback_text
                         full_text = final_text
                         yield event({"type": "token", "text": final_text})
                 except Exception as fb_err:
                     print(f"Fallback invoke failed: {fb_err}")
 
+            # If still completely empty after streaming and fallback, provide a clean fallback message
+            if not full_text.strip():
+                fallback_msg = (
+                    "I experienced a momentary connection interruption while processing this request. "
+                    "Please try submitting your message again."
+                )
+                full_text = fallback_msg
+                yield event({"type": "token", "text": fallback_msg})
+
             # Save completed assistant reply (cleaned of any raw tool tags or raw tool calls)
             asst_msg_id = None
+            cleaned_db_text = full_text
             if full_text.strip():
                 def _unwrap_code_block(m):
                     inner = m.group(1).strip()
