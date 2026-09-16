@@ -27,6 +27,9 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+CURRENT_SCHEMA_VERSION = 3
+
+
 def init_db() -> None:
     """Initialize database tables for users, conversations, and messages."""
     with get_connection() as conn:
@@ -154,7 +157,42 @@ def init_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_revoked_tokens_exp ON revoked_tokens(expires_at)")
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL,
+                description TEXT NOT NULL
+            )
+            """
+        )
+
+        current_v = 0
+        try:
+            r = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
+            current_v = int(r["v"]) if r and r["v"] is not None else 0
+        except sqlite3.OperationalError:
+            pass
+
+        now_iso = _utc_now_iso()
+        if current_v < 1:
+            conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (1, ?, 'Initial schema with users, conversations, messages, artifacts, memories, projects')", (now_iso,))
+        if current_v < 2:
+            conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (2, ?, 'Guest accounts, token revocation, message feedback')", (now_iso,))
+        if current_v < 3:
+            conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (3, ?, 'Atomic quota reservation with reserved_tokens')", (now_iso,))
+
         conn.commit()
+
+
+def get_schema_version() -> int:
+    """Return the highest applied schema migration version."""
+    with get_connection() as conn:
+        try:
+            row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
+            return int(row["v"]) if row and row["v"] is not None else 0
+        except sqlite3.OperationalError:
+            return 0
 
 
 def _utc_now_iso() -> str:
