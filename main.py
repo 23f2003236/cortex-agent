@@ -142,6 +142,18 @@ SYSTEM_PROMPT = os.getenv(
 
 app = FastAPI(title="Cortex Agent", version="3.1.0")
 
+
+@app.on_event("startup")
+def on_startup():
+    database.init_db()
+    try:
+        purged = database.cleanup_expired_guests()
+        if purged > 0:
+            logger.info("Startup sweep: purged %d expired guest accounts", purged)
+    except Exception as exc:
+        logger.warning("Startup guest cleanup error: %s", exc)
+
+
 CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
 ALLOWED_ORIGINS = [orig.strip() for orig in CORS_ORIGINS_RAW.split(",") if orig.strip()]
 if not ALLOWED_ORIGINS:
@@ -304,8 +316,23 @@ def login(payload: LoginPayload):
 
 
 @app.post("/api/auth/guest")
-def guest_auth():
+def guest_auth(request: Request):
     """Create an anonymous ephemeral guest session with isolated data and quota."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, wait_sec = database.check_and_record_auth_attempt(
+        f"guest:{client_ip}", max_attempts=10, window_seconds=900
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many guest sessions requested from your network. Please try again in {wait_sec} seconds.",
+        )
+
+    try:
+        database.cleanup_expired_guests()
+    except Exception:
+        pass
+
     user = database.create_guest_user()
     token = generate_token(user["id"], user["username"], expires_in_seconds=60 * 60 * 24)
     return {
