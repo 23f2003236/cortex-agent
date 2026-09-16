@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import math
 import operator
 import os
@@ -37,6 +38,28 @@ import database
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env", override=True)
+
+class SensitiveDataFilter(logging.Filter):
+    """Redact API keys, bearer tokens, passwords, and secrets from all log output."""
+    _patterns = [
+        (re.compile(r"nvapi-[A-Za-z0-9_\-]{20,}", re.IGNORECASE), "nvapi-[REDACTED]"),
+        (re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{20,}", re.IGNORECASE), "Bearer [REDACTED]"),
+        (re.compile(r"('password'|\"password\"):\s*('[^']+'|\"[^\"]+\")", re.IGNORECASE), r'\1: "[REDACTED]"'),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            for pattern, repl in self._patterns:
+                record.msg = pattern.sub(repl, record.msg)
+        return True
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("cortex")
+logger.addFilter(SensitiveDataFilter())
 
 # ContextVar registries for securely propagating user ID and state across worker threads
 _current_user_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("_current_user_id_ctx", default=None)
@@ -2261,7 +2284,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             yield event({"type": "tool_start", "name": "remember", "label": "Memory Storage", "args": {"fact": raw_memory_fact, "category": raw_memory_cat}})
                             yield event({"type": "tool_end", "name": "remember", "label": "Memory Storage", "result": f"Saved to persistent memory: \"{raw_memory_fact}\""})
                     except Exception as mem_err:
-                        print(f"Memory fallback error: {mem_err}")
+                        logger.warning(f"Memory fallback error: {mem_err}")
                 elif "remember" not in tools_used:
                     tools_used.append("remember")
 
@@ -2414,14 +2437,14 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
                         # 2. Stray tool call emitted during synthesis:
                         # CRITICAL: DO NOT yield the raw tool query/XML to the user!
-                        print(f"Synthesis stream intercepted stray tool call: {stream_buffer[:80]}... Discarding tool call output.")
+                        logger.info(f"Synthesis stream intercepted stray tool call: {stream_buffer[:80]}... Discarding tool call output.")
                         full_text = ""
 
                     if full_text.strip():
                         break
                     time.sleep(1.5)
                 except Exception as stream_err:
-                    print(f"Streaming attempt {attempt + 1} failed: {type(stream_err).__name__}: {stream_err}")
+                    logger.warning(f"Streaming attempt {attempt + 1} failed: {type(stream_err).__name__}: {stream_err}")
                     if attempt < max_attempts - 1 and len(full_text.strip()) < 120:
                         full_text = ""
                         time.sleep(1.5 * (attempt + 1))
@@ -2458,7 +2481,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             is_unsubstantive = len(full_text.strip()) < 120 and len(raw_content) > 30
             if not full_text.strip() or is_raw_tool_output or is_unsubstantive or last_finish_reason == "tool_calls":
                 try:
-                    print("Streaming produced empty, unsubstantive, or invalid response; attempting non-streaming fallback invoke...")
+                    logger.info("Streaming produced empty, unsubstantive, or invalid response; attempting non-streaming fallback invoke...")
                     had_partial = bool(full_text.strip())
                     fallback_messages = list(synthesis_messages) + [
                         SystemMessage(content=(
@@ -2482,7 +2505,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             else:
                                 yield event({"type": "token", "text": final_text})
                 except Exception as fb_err:
-                    print(f"Fallback invoke failed: {fb_err}")
+                    logger.warning(f"Fallback invoke failed: {fb_err}")
 
             # If still completely empty after streaming and fallback, provide a clean fallback message
             if not full_text.strip():
@@ -2559,7 +2582,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     pass
             raise
         except Exception as exc:
-            print(f"Stream error: {type(exc).__name__}: {exc}")
+            logger.error(f"Stream error: {type(exc).__name__}: {exc}")
             if full_text.strip():
                 try:
                     database.add_message(conv_id, role="assistant", content=full_text, tools_used=tools_used, user_id=current_user["id"])
@@ -2589,7 +2612,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     partial_tokens = max(0, len(full_text) // 4) if full_text.strip() else 0
                     database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=partial_tokens)
                 except Exception as rel_err:
-                    print(f"Error releasing quota in finally: {rel_err}")
+                    logger.error(f"Error releasing quota in finally: {rel_err}")
                 quota_reserved = False
             try:
                 _current_user_id_ctx.reset(ctx_token)
