@@ -1095,13 +1095,51 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
     filename = file.filename or "uploaded_file"
     ext = Path(filename).suffix.lower()
 
+    MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+    CHUNK_SIZE = 64 * 1024  # 64 KB
+
+    chunks = []
+    total_size = 0
     try:
-        raw_content = await file.read()
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_UPLOAD_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="File too large. Maximum allowed size is 10 MB.",
+                )
+            chunks.append(chunk)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to read file: {exc}")
 
-    if len(raw_content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large. Maximum allowed size is 10 MB.")
+    raw_content = b"".join(chunks)
+
+    # Validate file magic bytes for binary formats
+    if not raw_content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty (0 bytes).")
+
+    if ext == ".pdf":
+        if not raw_content.startswith(b"%PDF-"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid PDF: missing '%PDF-' header signature.")
+    elif ext in (".docx", ".xlsx"):
+        if not (raw_content.startswith(b"PK\x03\x04") or raw_content.startswith(b"PK\x05\x06") or raw_content.startswith(b"PK\x07\x08")):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Corrupt or invalid {ext} file: missing valid OpenXML archive header.")
+    elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+        if ext == ".png" and not raw_content.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid PNG file: missing PNG signature.")
+        elif ext in (".jpg", ".jpeg") and not raw_content.startswith(b"\xff\xd8\xff"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid JPEG file: missing JPEG signature.")
+        elif ext == ".gif" and not (raw_content.startswith(b"GIF87a") or raw_content.startswith(b"GIF89a")):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid GIF file: missing GIF signature.")
+        elif ext == ".webp" and not (raw_content.startswith(b"RIFF") and len(raw_content) >= 12 and raw_content[8:12] == b"WEBP"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid WEBP file: missing WEBP signature.")
+        elif ext == ".bmp" and not raw_content.startswith(b"BM"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid BMP file: missing BMP signature.")
 
     database.increment_daily_uploads(current_user["id"], 1)
 
