@@ -238,7 +238,6 @@ const TOOL_LABELS = {
   code_generator: "Code generation",
   chart_renderer: "Interactive Chart",
   remember: "Memory Storage",
-  execute_python: "Python Sandbox",
 };
 
 const TOOL_ICONS = {
@@ -252,7 +251,6 @@ const TOOL_ICONS = {
   code_generator: `<svg viewBox="0 0 24 24" fill="none" width="12" height="12" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
   chart_renderer: `<svg viewBox="0 0 24 24" fill="none" width="12" height="12" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
   remember: `<svg viewBox="0 0 24 24" fill="none" width="12" height="12" stroke="currentColor" stroke-width="2"><path d="M12 2a5 5 0 0 1 5 5v1a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"/><path d="M19 11v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
-  execute_python: `<svg viewBox="0 0 24 24" fill="none" width="12" height="12" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><polygon points="9 8 15 12 9 16 9 8" fill="currentColor"/></svg>`,
 };
 
 const EXT_MAP = {
@@ -780,8 +778,6 @@ customRenderer.code = function (arg1, arg2) {
 
   const fileSize = formatBytes(new Blob([text]).size);
 
-  const isPythonCode = lang === "python" || lang === "py";
-
   return `
     <div class="code-block-wrapper">
       <div class="code-header">
@@ -791,11 +787,6 @@ customRenderer.code = function (arg1, arg2) {
           <span class="code-size-badge">${fileSize}</span>
         </div>
         <div class="code-header-actions">
-          ${isPythonCode ? `
-          <button type="button" class="code-run-python-btn" title="Run code in Python Sandbox">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-            <span>Run</span>
-          </button>` : ""}
           ${(lang === "html" || lang === "htm" || lang === "svg" || lang === "xml" || (text.includes("<!DOCTYPE") || text.includes("<html") || text.includes("<svg"))) ? `
           <button type="button" class="code-preview-btn" title="Live Preview in Side Panel">
             ${ICONS.eye}
@@ -812,9 +803,6 @@ customRenderer.code = function (arg1, arg2) {
         </div>
       </div>
       <pre><code class="hljs ${validLang ? "language-" + validLang : ""}">${highlighted}</code></pre>
-      ${isPythonCode ? `
-      <textarea class="raw-python-code-payload" style="display:none;" hidden>${escapeHtml(text)}</textarea>
-      <div class="python-exec-output" style="display:none;"></div>` : ""}
     </div>
   `;
 };
@@ -1687,199 +1675,6 @@ chatEl.addEventListener("click", async (e) => {
     return;
   }
 
-  // 11. Standard Code Block: ▶ Run in Python Sandbox button
-  const runPythonBtn = e.target.closest(".code-run-python-btn");
-  if (runPythonBtn) {
-    const wrapper = runPythonBtn.closest(".code-block-wrapper");
-    if (!wrapper) return;
-    const outputDrawer = wrapper.querySelector(".python-exec-output");
-    if (!outputDrawer) return;
-
-    // Extract code from payload textarea or code block
-    const payloadEl = wrapper.querySelector(".raw-python-code-payload");
-    const code = payloadEl ? payloadEl.value : (wrapper.querySelector("pre code")?.textContent || "");
-    if (!code.trim()) return;
-
-    // Set button loading state
-    runPythonBtn.disabled = true;
-    runPythonBtn.classList.add("running");
-    runPythonBtn.innerHTML = `
-      <svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="12" y1="2" x2="12" y2="6"></line>
-        <line x1="12" y1="18" x2="12" y2="22"></line>
-        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-        <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-        <line x1="2" y1="12" x2="6" y2="12"></line>
-        <line x1="18" y1="12" x2="22" y2="12"></line>
-        <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-        <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-      </svg>
-      <span>Running...</span>
-    `;
-
-    outputDrawer.style.display = "block";
-    outputDrawer.innerHTML = `
-      <div class="exec-output-header">
-        <div class="exec-header-left">
-          <span class="exec-output-title">Python Terminal</span>
-          <span class="exec-status-badge running">Running...</span>
-        </div>
-      </div>
-      <div class="exec-loading-pulse">Executing code safely in sandbox...</div>
-    `;
-
-    try {
-      const resp = await fetch("/api/execute/python", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
-        body: JSON.stringify({ code }),
-      });
-
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data.detail || "Sandbox execution failed");
-      }
-
-      const isSuccess = data.success;
-      const statusClass = isSuccess ? "success" : (data.timed_out ? "timeout" : "error");
-      const statusText = isSuccess ? "Success" : (data.timed_out ? "Timed Out" : "Error");
-      const durationText = typeof data.duration_ms === "number" ? `${data.duration_ms}ms` : "";
-
-      if (!data.figures) data.figures = [];
-      // Extract any base64 image strings from stdout defensively if not already in data.figures
-      const rawMatches = (data.stdout || "").match(/data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}/g) || [];
-      for (const b64 of rawMatches) {
-        if (!data.figures.includes(b64)) {
-          data.figures.push(b64);
-        }
-      }
-
-      // Strip raw base64 data URIs so the terminal console output remains completely clean
-      const cleanStdout = (data.stdout || "")
-        .replace(/data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}/g, "")
-        .trim();
-
-      let stdoutHtml = "";
-      if (cleanStdout) {
-        stdoutHtml = `
-          <div class="exec-stream-label">Output (stdout)</div>
-          <pre class="exec-stdout"><code>${escapeHtml(cleanStdout)}</code></pre>
-        `;
-      }
-
-      let stderrHtml = "";
-      if (data.stderr && data.stderr.trim()) {
-        stderrHtml = `
-          <div class="exec-stream-label error">Errors / Warnings (stderr)</div>
-          <pre class="exec-stderr"><code>${escapeHtml(data.stderr)}</code></pre>
-        `;
-      }
-
-      let figuresHtml = "";
-      if (data.figures && data.figures.length > 0) {
-        figuresHtml = `
-          <div class="exec-stream-label">Generated Plots (${data.figures.length})</div>
-          <div class="exec-figures">
-            ${data.figures.map((fig, idx) => `
-              <div class="exec-plot-card">
-                <div class="exec-plot-header">
-                  <span class="exec-plot-label"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg> Figure ${idx + 1}</span>
-                  <a href="${fig}" download="cortex_plot_${idx + 1}.png" class="exec-plot-dl-btn" title="Download High-Res Plot">
-                    ${ICONS.download}
-                    <span>Download PNG</span>
-                  </a>
-                </div>
-                <div class="exec-plot-img-wrap">
-                  <img src="${fig}" alt="Generated Figure ${idx + 1}" class="exec-plot-img" />
-                </div>
-              </div>
-            `).join("")}
-          </div>
-        `;
-      }
-
-      if (!stdoutHtml && !stderrHtml && !figuresHtml) {
-        stdoutHtml = `<pre class="exec-stdout empty"><code>(Process completed with no console output)</code></pre>`;
-      }
-
-      outputDrawer.innerHTML = `
-        <div class="exec-output-header">
-          <div class="exec-header-left">
-            <span class="exec-output-title">Python Terminal</span>
-            <span class="exec-status-badge ${statusClass}">${statusText}</span>
-            ${durationText ? `<span class="exec-duration-badge">${durationText}</span>` : ""}
-          </div>
-          <button type="button" class="exec-clear-btn" title="Close Output">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-          </button>
-        </div>
-        ${stdoutHtml}
-        ${stderrHtml}
-        ${figuresHtml}
-      `;
-
-      // Enable lightbox click for terminal plots
-      outputDrawer.querySelectorAll(".exec-plot-img").forEach((img) => {
-        img.addEventListener("click", () => {
-          openImageLightbox({
-            src: img.src,
-            filename: img.alt || "Generated Figure",
-            size: "",
-          });
-        });
-      });
-
-      const clearBtn = outputDrawer.querySelector(".exec-clear-btn");
-      if (clearBtn) {
-        clearBtn.addEventListener("click", () => {
-          outputDrawer.style.display = "none";
-          outputDrawer.innerHTML = "";
-        });
-      }
-    } catch (err) {
-      outputDrawer.innerHTML = `
-        <div class="exec-output-header">
-          <div class="exec-header-left">
-            <span class="exec-output-title">Python Terminal</span>
-            <span class="exec-status-badge error">Execution Error</span>
-          </div>
-          <button type="button" class="exec-clear-btn" title="Close Output">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-          </button>
-        </div>
-        <pre class="exec-stderr"><code>${escapeHtml(err.message || String(err))}</code></pre>
-      `;
-      const clearBtn = outputDrawer.querySelector(".exec-clear-btn");
-      if (clearBtn) {
-        clearBtn.addEventListener("click", () => {
-          outputDrawer.style.display = "none";
-          outputDrawer.innerHTML = "";
-        });
-      }
-    } finally {
-      runPythonBtn.disabled = false;
-      runPythonBtn.classList.remove("running");
-      runPythonBtn.innerHTML = `
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-        <span>Run</span>
-      `;
-    }
-    return;
-  }
-
-  // 12. Python Plot Image: Click to open full-screen lightbox
-  const plotImg = e.target.closest(".exec-plot-img");
-  if (plotImg) {
-    openImageLightbox({
-      src: plotImg.src,
-      filename: plotImg.alt || "figure.png",
-      size: "High-Res Plot",
-    });
-    return;
-  }
 });
 
 // ---------------- Claude-Style Artifact Split Panel Management ----------------
@@ -1918,7 +1713,7 @@ function openArtifactPanel({ filename, content, type }) {
   if (artifactSubtitle) {
     artifactSubtitle.textContent =
       resolvedType === "html"
-        ? "Interactive Web App / Live Sandbox"
+        ? "Interactive Web App / Artifact Studio"
         : resolvedType === "svg"
         ? "Vector SVG Preview"
         : "Document Reader & Code View";
@@ -5566,10 +5361,10 @@ const simPresetsData = {
       },
       {
         type: "tool",
-        icon: "🐍",
-        title: 'tool: execute_python(code="import matplotlib.pyplot as plt; ...")',
-        badge: { text: "EXECUTED 0.42s", cls: "done" },
-        detail: "[STDOUT] Simulated 500,000 requests across 16 worker threads.\n[STDOUT] Peak throughput: 489,210 ops/sec | p99 latency: 1.18ms | Drops: 0%\n[FIGURE] Harvested plot: token_bucket_throughput.png (1280x720 300DPI)",
+        icon: "🧠",
+        title: 'tool: deep_reasoning(target="distributed_concurrency_analysis")',
+        badge: { text: "SYNTHESIZED 0.42s", cls: "done" },
+        detail: "✓ Formal invariant verification completed for 500k ops/sec. Verified sliding-window Lua atomicity and Redis cluster failover semantics.",
         mono: true
       },
       {
@@ -5601,10 +5396,10 @@ const simPresetsData = {
       },
       {
         type: "tool",
-        icon: "🐍",
-        title: 'tool: execute_python(code="import xgboost as xgb; import numpy as np...")',
-        badge: { text: "EXECUTED 0.78s", cls: "done" },
-        detail: "[STDOUT] 5-Fold Stratified CV Mean ROC-AUC: 0.942 ± 0.009 | Precision@Top10%: 0.88\n[STDOUT] Feature importance: Contract Duration (34%), Monthly Charges (27%), Support Calls (18%)\n[FIGURE] Generated: churn_roc_pr_curves.png (300DPI publication grade)",
+        icon: "📊",
+        title: 'tool: chart_renderer(spec="roc_pr_curve_interactive")',
+        badge: { text: "RENDERED 0.35s", cls: "done" },
+        detail: "✓ Interactive SVG/Chart.js ROC & Precision-Recall curves generated. 5-fold CV Mean ROC-AUC: 0.942 ± 0.009.",
         mono: true
       },
       {
@@ -5663,10 +5458,10 @@ const simPresetsData = {
       },
       {
         type: "tool",
-        icon: "🐍",
-        title: 'tool: execute_python(code="import sympy as sp; S, t, r, sigma = sp.symbols(...)")',
-        badge: { text: "VERIFIED 0.22s", cls: "done" },
-        detail: "[STDOUT] SymPy verified zero-arbitrage condition: dΠ = r Π dt\n[STDOUT] Resulting PDE: ∂V/∂t + r S ∂V/∂S + 1/2 σ² S² ∂²V/∂S² - r V = 0\n[STATUS] Algebraic boundary conditions validated.",
+        icon: "📐",
+        title: 'tool: calculator(expression="zero_arbitrage_invariant_derivation")',
+        badge: { text: "VERIFIED 0.18s", cls: "done" },
+        detail: "✓ Formal algebraic verification of zero-arbitrage condition: dΠ = r Π dt\nResulting Black-Scholes PDE: ∂V/∂t + r S ∂V/∂S + 1/2 σ² S² ∂²V/∂S² - r V = 0\nAlgebraic boundary conditions validated.",
         mono: true
       },
       {
@@ -5745,7 +5540,7 @@ function executeCustomSimPrompt(userPrompt) {
       icon: "💭",
       title: "Autonomous Planning & Task Decomposition",
       time: "0.4s",
-      detail: `Deconstructing prompt: "${prompt}". Identifying core requirements, necessary APIs, architecture patterns, and sandbox testing requirements.`
+      detail: `Deconstructing prompt: "${prompt}". Identifying core requirements, necessary APIs, production architecture patterns, and test suites.`
     },
     {
       type: "tool",
@@ -5757,10 +5552,10 @@ function executeCustomSimPrompt(userPrompt) {
     },
     {
       type: "tool",
-      icon: "🐍",
-      title: 'tool: execute_python(code="import os, sys, json; ...")',
-      badge: { text: "EXECUTED 0.35s", cls: "done" },
-      detail: "[STDOUT] Initialized sandbox environment.\n[STDOUT] All unit assertions passed (100% test coverage).\n[STATUS] Execution verified zero errors.",
+      icon: "💻",
+      title: 'tool: code_generator(target="production_deliverable")',
+      badge: { text: "SYNTHESIZED 0.35s", cls: "done" },
+      detail: "Synthesized production-grade, type-annotated code with comprehensive error handling and test suite.",
       mono: true
     },
     {
@@ -5794,7 +5589,7 @@ const modelFleetData = {
     arch: "Sparse Mixture of Experts (MoE) 120B",
     context: "131,072 Tokens (128k)",
     ttft: "< 18ms",
-    tools: "Web Search, Python Sandbox, Math, Memory",
+    tools: "Web Search, Code Intelligence, Math, Memory",
     modelValue: "meta/llama-3.1-70b-instruct"
   },
   "cortex-5-ultra": {
@@ -6219,7 +6014,7 @@ const tourSteps = [
   {
     icon: "🚀",
     title: "Welcome to Cortex 3.1 Studio",
-    desc: "Experience next-generation autonomous AI with live sandboxed Python execution, real-time web research, interactive Chart.js charts, and KaTeX math.",
+    desc: "Experience next-generation autonomous AI with frontier code intelligence, real-time web research, interactive Chart.js charts, and KaTeX math.",
     selector: null
   },
   {
@@ -6248,8 +6043,8 @@ const tourSteps = [
   },
   {
     icon: "🪄",
-    title: "Agent Presets & Code Sandbox",
-    desc: "Use magic presets for web research, Chart.js plots, deep reasoning, and live sandboxed Python data execution.",
+    title: "Agent Presets & Code Architecture",
+    desc: "Use magic presets for web research, Chart.js plots, deep reasoning, and production code architecture synthesis.",
     selector: "#presetsBtn"
   }
 ];

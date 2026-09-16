@@ -27,7 +27,6 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 from langchain_core.tools import tool
 
 import database
-import sandbox
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env", override=True)
@@ -57,10 +56,10 @@ SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
     "You are Cortex, an advanced autonomous AI agent paired with real-time tools.\n\n"
     "1. REAL-TIME TOOLS & DISCIPLINE:\n"
-    "- Available tools: calculator (arithmetic & scientific math: sqrt, sin, log, pi, e), web_search, fetch_webpage (up to 9k chars), wikipedia_lookup (en/hi), weather_lookup, current_datetime, remember (persistent cross-session memory), execute_python (sandboxed Python & data science plotting).\n"
+    "- Available tools: calculator (arithmetic & scientific math: sqrt, sin, log, pi, e), web_search, fetch_webpage (up to 9k chars), wikipedia_lookup (en/hi), weather_lookup, current_datetime, remember (persistent cross-session memory).\n"
     "- Call tools when fresh facts, live data, prices, or precise calculations are needed. For general reasoning or trivial facts, reason directly.\n"
     "- PERSISTENT USER MEMORY: When the user shares personal details, preferences, tech stacks, constraints, or explicitly asks you to remember something (e.g. 'remember that...', 'yaad rakhna...'), invoke the 'remember' tool to store this fact across sessions. Note: The 'remember' tool is strictly WRITE-ONLY for saving new information. All previously saved memories are already provided in your system prompt under [STORED USER MEMORIES & PAST CONTEXT]. Never attempt to call 'remember' to read, search, or query memories; read the injected list directly. If the user asks what you remember or about their project/preferences and nothing is listed under stored memories, answer directly in natural Markdown that no details have been saved yet and invite them to share.\n"
-    "- PYTHON EXECUTION & DATA PLOTTING: When the user asks to calculate complex mathematics, run algorithms/simulations, test code, or plot charts (e.g. Matplotlib), invoke the 'execute_python' tool. The sandbox automatically executes the code and harvests any generated Matplotlib figures into visual images. For plotting charts, prioritize invoking 'execute_python' directly; do not waste rounds searching the web if standard sample or historical data can be used.\n"
+    "- CODE INTELLIGENCE & ACCURACY: When asked to write code, algorithms, scripts, or data science pipelines (Python, JavaScript, SQL, HTML, etc.), write clean, production-grade, self-contained, and bug-free code inside standard markdown code fences. Provide clear explanations and steps so the user can easily run or integrate it into their environment.\n"
     "- NO RAW TOOL OUTPUT: Never emit raw JSON tool calls (e.g. {'tool': ...}), raw XML tool tags (<tool_call>, <function=...>), or pseudo-commands in your text response to the user. Always write clean, user-facing Markdown.\n"
     "- INLINE CITATIONS: When using web_search or wikipedia_lookup, cite your sources inline using markdown numbered reference links like [1](url), [2](url) or [Source](url) at the end of relevant factual claims so the user can easily trace and verify information.\n"
     "- Once tool research is obtained, synthesize immediately into a thorough, dense, and complete answer. Never output raw tool call tags (<tool_call>) or naked URLs alone.\n\n"
@@ -565,37 +564,7 @@ def remember(fact: str, category: str = "preference") -> str:
         return f"Failed to save memory: {exc}"
 
 
-@tool
-def execute_python(code: str) -> str:
-    """Execute Python code in an isolated secure sandbox.
-    Captures stdout, stderr, execution duration, and automatically intercepts any Matplotlib charts.
-    Use this tool whenever exact mathematical calculations, algorithmic simulations,
-    data science operations, or data visualization charts are requested.
-    Argument:
-      code: The executable Python code snippet to run.
-    """
-    result = sandbox.run_python_code(code, timeout_seconds=15)
-    output_lines = []
-    if result["stdout"]:
-        output_lines.append(f"[Stdout]:\n{result['stdout']}")
-    if result["stderr"]:
-        output_lines.append(f"[Stderr / Errors]:\n{result['stderr']}")
-    plots = result.get("plots") or []
-    if plots:
-        global _latest_harvested_plots
-        _latest_harvested_plots.extend(plots)
-        try:
-            cur = _current_harvested_plots_ctx.get()
-            _current_harvested_plots_ctx.set(cur + plots)
-        except Exception:
-            pass
-        for idx, plot_data_url in enumerate(plots):
-            output_lines.append(f"[Generated Plot {idx+1}]:\n![Figure {idx+1}]({plot_data_url})")
-    output_lines.append(f"[Execution time: {result['duration_ms']}ms, Exit code: {result['exit_code']}]")
-    return "\n\n".join(output_lines)
-
-
-TOOLS = [calculator, web_search, fetch_webpage, wikipedia_lookup, weather_lookup, current_datetime, remember, execute_python]
+TOOLS = [calculator, web_search, fetch_webpage, wikipedia_lookup, weather_lookup, current_datetime, remember]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 MAX_TOOL_ROUNDS = 5
@@ -718,7 +687,6 @@ TOOL_LABELS = {
     "weather_lookup": "Weather",
     "current_datetime": "Date & time",
     "remember": "Memory Storage",
-    "execute_python": "Python Sandbox",
 }
 
 
@@ -867,31 +835,9 @@ def run_tool_rounds_streaming(
     yield ("tools_used", tools_used)
 
 
-def is_plot_or_python_request(text: str) -> bool:
-    """Robust detection of Python execution, data visualization, and mathematical plotting requests."""
-    if not text:
-        return False
-    lower = text.lower().strip()
-    # 1. Direct keywords
-    if any(k in lower for k in [
-        "matplotlib", "plt.show", "plt.plot", "plt.figure", "seaborn", "execute_python",
-        "run python", "execute python", "run this code", "execute code", "run code",
-        "code chalao", "plot using python", "calculate using python", "simulation in python",
-        "python script to", "write and execute", "write & execute"
-    ]):
-        return True
-    # 2. Plotting verbs + targets (e.g. plot a sin theta and cos theta graph, plot curve, draw a graph)
-    if re.search(r"\b(plot|graph|draw|chart|visualize)\b.*?\b(graph|curve|chart|plot|sin|cos|tan|theta|function|distribution|data|comparison|compare|trend|histogram|scatter|line|bar)\b", lower):
-        return True
-    # 3. Phrasing like "plot a ...", "plot the ...", "graph of ..."
-    if re.search(r"\b(plot\s+a\b|plot\s+the\b|plot\s+curves?|plot\s+graphs?|make\s+a\s+plot|generate\s+a\s+plot|graph\s+of\b|draw\s+a\s+graph|compare.*(?:graph|plot|curve))\b", lower):
-        return True
-    return False
-
-
 def should_run_tools(raw_content: str, messages: list) -> bool:
     """Smart query classification for Auto Mode.
-    Determines if tools (web_search, fetch_webpage, calculator, wikipedia, weather, datetime, execute_python)
+    Determines if tools (web_search, fetch_webpage, calculator, wikipedia, weather, datetime, remember)
     are genuinely required. For conceptual, coding, creative, architectural, or conversational
     queries, returns False so direct streaming begins in 1-5 seconds without delay."""
     if not raw_content:
@@ -934,18 +880,13 @@ def should_run_tools(raw_content: str, messages: list) -> bool:
     if re.search(r"\b(remember that|remember this|yaad rakh|yaad rakhna|note down that|save to memory|store in memory|keep in mind that|remember my|mera naam|my name is)\b", lower):
         return True
 
-    # 9. Python Code Execution & Data Science Plotting:
-    if is_plot_or_python_request(raw_content):
-        return True
-
     return False
 
 
 def should_run_fast_tools(raw_content: str) -> bool:
     """Determine if Fast Mode should run local operational tools.
-    Fast mode skips heavy multi-round web research, but MUST execute fast local operations:
+    Fast mode skips heavy multi-round web research, but executes fast local operations:
     - Persistent memory saving (remember)
-    - Python sandbox code execution / plotting (execute_python)
     - Deterministic math expressions (calculator)
     """
     if not raw_content:
@@ -954,10 +895,7 @@ def should_run_fast_tools(raw_content: str) -> bool:
     # 1. Memory saving
     if re.search(r"\b(remember that|remember this|yaad rakh|yaad rakhna|note down that|save to memory|store in memory|keep in mind that)\b", lower):
         return True
-    # 2. Python sandbox execution & plotting
-    if is_plot_or_python_request(raw_content):
-        return True
-    # 3. Exact calculations
+    # 2. Exact calculations
     if re.search(r"\b(calculate|sqrt\(|cbrt\(|sin\(|cos\(|tan\(|log10?\(|log2\()\b", lower):
         return True
     if re.search(r"\b\d+(\.\d+)?\s*[\+\-\*\/\^]\s*\d+(\.\d+)?\b", raw_content):
@@ -1669,21 +1607,6 @@ def update_conv_instructions(
     return {"ok": True, "instructions": payload.instructions}
 
 
-# ---------------------------------------------------------------------------
-# Python Sandbox Execution Endpoint
-# ---------------------------------------------------------------------------
-
-class PythonExecutionPayload(BaseModel):
-    code: str = Field(min_length=1, max_length=100000)
-
-
-@app.post("/api/execute/python")
-def execute_python_code_endpoint(
-    payload: PythonExecutionPayload,
-    current_user: dict = Depends(get_current_user),
-):
-    """Execute Python code in the sandbox environment for interactive execution."""
-    return sandbox.run_python_code(payload.code, timeout_seconds=15)
 
 
 # ---------------------------------------------------------------------------
@@ -1985,41 +1908,22 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             # Determine whether tools should be executed based on mode:
             # - For visual screenshots: stream visual inspection directly without blocking on web tools
-            # - "fast": single-round local tools (remember, execute_python, calculator) when requested; skips heavy web browsing
+            # - "fast": single-round local tools (remember, calculator) when requested; skips heavy web browsing
             # - "thinking": full multi-round agentic tools & deep research
-            is_python_plot_prompt = is_plot_or_python_request(raw_content)
             tools_subset = None
             max_rounds = None
-
-            PYTHON_PLOT_DIRECTIVE = (
-                "[PYTHON PLOTTING & EXECUTION DIRECTIVE: The user requested Python code execution or a mathematical plot/graph. "
-                "Invoke the 'execute_python' tool immediately with clean Matplotlib code. "
-                "IMPORTANT RULES FOR MATPLOTLIB: "
-                "1. Use standard Matplotlib: plt.figure(figsize=(8, 4.5)), plt.plot(), plt.title(), plt.xlabel(), plt.ylabel(), plt.grid(True), plt.legend(), and plt.tight_layout(). "
-                "2. Do NOT call plt.close() or convert figures to base64 manually — the sandbox automatically harvests and displays all figures! "
-                "3. Do NOT print raw base64 data to stdout. "
-                "4. Do NOT call web_search.]"
-            )
 
             if has_image and mode != "thinking":
                 run_tools = False
             elif mode == "fast":
                 run_tools = should_run_fast_tools(raw_content)
                 if run_tools:
-                    tools_subset = [execute_python, remember, calculator]
+                    tools_subset = [remember, calculator]
                     max_rounds = 2
-                    if is_python_plot_prompt:
-                        messages.append(SystemMessage(content=PYTHON_PLOT_DIRECTIVE))
             elif mode == "thinking":
                 run_tools = True
-                if is_python_plot_prompt:
-                    messages.append(SystemMessage(content=PYTHON_PLOT_DIRECTIVE))
             else:
                 run_tools = should_run_tools(raw_content, messages)
-                if is_python_plot_prompt:
-                    tools_subset = [execute_python, calculator, remember]
-                    max_rounds = 2
-                    messages.append(SystemMessage(content=PYTHON_PLOT_DIRECTIVE))
 
             if run_tools:
                 for ev_type, payload in run_tool_rounds_streaming(messages, model_override=effective_model, tools_subset=tools_subset, max_rounds=max_rounds):
@@ -2249,96 +2153,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if last_finish_reason == "length":
                 is_truncated = True
 
-            # Auto-execute python code if user asked to run code or plot charts and execute_python wasn't invoked during rounds or no plots were harvested
-            code_blocks = re.findall(r"```([a-zA-Z0-9_-]*)\s*\n?([\s\S]*?)```", full_text)
-
-            should_auto_exec = (
-                (is_python_plot_prompt and "execute_python" not in tools_used)
-                or (is_python_plot_prompt and not _latest_harvested_plots)
-                or (("attachment://" in full_text or "sandbox:/" in full_text) and not _latest_harvested_plots)
-                or (("plt." in full_text or "matplotlib" in full_text) and not _latest_harvested_plots)
-            )
-
-            if should_auto_exec and code_blocks:
-                for lang_tag, raw_code in code_blocks:
-                    py_to_run = raw_code.strip()
-                    raw_block = py_to_run
-                    # Strip any accidental language tag prefix on line 1
-                    py_to_run = re.sub(r"^(?:execute_python|python|py)\s*\n?", "", py_to_run).strip()
-
-                    # Check if the code block actually contains wrapped tool JSON
-                    if "{" in py_to_run and ('"tool"' in py_to_run or '"code"' in py_to_run):
-                        try:
-                            start_b = py_to_run.find("{")
-                            end_b = py_to_run.rfind("}")
-                            if start_b != -1 and end_b != -1:
-                                p = json.loads(py_to_run[start_b:end_b+1])
-                                args = p.get("arguments") or p.get("args") or {}
-                                extracted = args.get("code") or p.get("code")
-                                if extracted:
-                                    py_to_run = extracted
-                        except Exception:
-                            m_c = re.search(r'"code"\s*:\s*"((?:[^"\\]|\\.)*)"', py_to_run)
-                            if m_c:
-                                try:
-                                    py_to_run = json.loads(f'"{m_c.group(1)}"')
-                                except Exception:
-                                    pass
-
-                    if any(k in py_to_run for k in ["plt.", "matplotlib", "print(", "plot(", "def ", "import "]):
-                        try:
-                            if "execute_python" not in tools_used:
-                                tools_used.append("execute_python")
-                            yield event({"type": "tool_start", "name": "execute_python", "label": "Python Sandbox", "args": {"code": py_to_run[:200]}})
-                            sb_res = sandbox.run_python_code(py_to_run, timeout_seconds=15)
-                            sb_text = sb_res.get("stdout", "") or sb_res.get("stderr", "") or "Execution completed."
-                            yield event({"type": "tool_end", "name": "execute_python", "label": "Python Sandbox", "result": sb_text[:300]})
-
-                            sb_plots = sb_res.get("plots") or []
-                            if sb_plots:
-                                _latest_harvested_plots.extend(sb_plots)
-
-                            # If the code was originally JSON, replace the raw JSON block in full_text
-                            if raw_block != py_to_run and raw_block in full_text:
-                                full_text = full_text.replace(raw_block, py_to_run)
-
-                            # Append executed output if stdout/stderr was produced and not already in text
-                            if sb_text and "Executed Output" not in full_text and sb_res.get("stdout"):
-                                output_block = f"\n\n**Executed Output:**\n\n```\n{sb_text.strip()}\n```"
-                                full_text += output_block
-                                yield event({"type": "token", "text": output_block})
-                            break
-                        except Exception as auto_py_err:
-                            print(f"Auto-execute python error: {auto_py_err}")
-
-            # Normalize ```execute_python to ```python in full_text for standard syntax highlighting
-            if "```execute_python" in full_text:
-                full_text = re.sub(r"```execute_python", "```python", full_text)
-
-            # Ensure harvested plots from execute_python tool are embedded into the output
-            harvested_plots = []
-            try:
-                harvested_plots.extend(_current_harvested_plots_ctx.get() or [])
-            except Exception:
-                pass
-            if _latest_harvested_plots:
-                harvested_plots.extend(_latest_harvested_plots)
-
-            seen_plots = set()
-            for idx, plot_url in enumerate(harvested_plots):
-                if plot_url and plot_url not in seen_plots:
-                    seen_plots.add(plot_url)
-                    # Check if there is an unresolved placeholder image markdown tag
-                    broken_img_pattern = r"!\[(.*?)\]\(((?!https?:\/\/|data:image\/).*?)\)"
-                    if re.search(broken_img_pattern, full_text):
-                        full_text = re.sub(broken_img_pattern, f"![\\1]({plot_url})", full_text, count=1)
-                        yield event({"type": "token", "text": f"\n\n![Generated Plot {len(seen_plots)}]({plot_url})\n\n"})
-                    elif plot_url not in full_text:
-                        plot_block = f"\n\n![Generated Plot {len(seen_plots)}]({plot_url})\n\n"
-                        full_text += plot_block
-                        yield event({"type": "token", "text": plot_block})
-
-            # Clean any remaining broken/unresolved placeholder images if no plot replaced them
+            # Clean any broken/unresolved placeholder images
             full_text = re.sub(r"!\[(.*?)\]\(((?:attachment:\/\/|sandbox:\/)[^\)]*)\)", "", full_text)
 
             # Heal split/broken markdown image tags e.g. ![alt]\n(data:image...) or naked (data:image/png;base64...)
