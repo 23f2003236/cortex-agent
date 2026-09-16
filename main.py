@@ -38,12 +38,9 @@ import database
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
-# ContextVar and module-level registries for propagating user ID and plots across streaming worker threads
+# ContextVar registries for securely propagating user ID and state across worker threads
 _current_user_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("_current_user_id_ctx", default=None)
 _current_harvested_plots_ctx: contextvars.ContextVar[list] = contextvars.ContextVar("_current_harvested_plots_ctx", default=[])
-_active_conv_user_map: dict[str, str] = {}
-_latest_active_user_id: Optional[str] = None
-_latest_harvested_plots: list[str] = []
 
 # Per-user streaming concurrency semaphore (max 2 active streams per user)
 _user_stream_semaphore: dict[str, int] = {}
@@ -717,9 +714,7 @@ def remember(fact: str, category: str = "preference") -> str:
     clean_fact = (fact or "").strip()
     if not clean_fact:
         return "Error: Memory fact cannot be empty."
-    user_id = _current_user_id_ctx.get() or _latest_active_user_id
-    if not user_id and _active_conv_user_map:
-        user_id = next(iter(_active_conv_user_map.values()))
+    user_id = _current_user_id_ctx.get()
     if not user_id:
         return "Notice: Memory not saved because user context is not available."
     try:
@@ -2094,10 +2089,6 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         release_user_stream(user_id)
         raise
 
-    _active_conv_user_map[conv_id] = current_user["id"]
-    _latest_active_user_id = current_user["id"]
-    _latest_harvested_plots = []
-
     def event(data: dict) -> str:
         return f"data: {json.dumps(data)}\n\n"
 
@@ -2109,10 +2100,6 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         effective_model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 
     def generate():
-        global _latest_active_user_id, _latest_harvested_plots
-        _active_conv_user_map[conv_id] = current_user["id"]
-        _latest_active_user_id = current_user["id"]
-        _latest_harvested_plots = []
         ctx_token = _current_user_id_ctx.set(current_user["id"])
         plot_token = _current_harvested_plots_ctx.set([])
         full_text = ""
@@ -2548,7 +2535,6 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 except Exception as rel_err:
                     print(f"Error releasing quota in finally: {rel_err}")
                 quota_reserved = False
-            _active_conv_user_map.pop(conv_id, None)
             try:
                 _current_user_id_ctx.reset(ctx_token)
             except Exception:
