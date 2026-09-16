@@ -143,16 +143,31 @@ def _utc_now_iso() -> str:
 
 # ---------------- Auth & User Management ----------------
 
-def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+DEFAULT_PBKDF2_ROUNDS = 600_000
+LEGACY_PBKDF2_ROUNDS = 100_000
+
+
+def hash_password(password: str, salt: Optional[str] = None, iterations: Optional[int] = None) -> tuple[str, str]:
     if not salt:
-        salt = secrets.token_hex(16)
+        rounds = iterations or DEFAULT_PBKDF2_ROUNDS
+        raw_salt = secrets.token_hex(16)
+        formatted_salt = f"{raw_salt}${rounds}"
+    elif "$" in salt:
+        raw_salt, iter_str = salt.split("$", 1)
+        rounds = int(iter_str)
+        formatted_salt = salt
+    else:
+        raw_salt = salt
+        rounds = iterations or LEGACY_PBKDF2_ROUNDS
+        formatted_salt = salt
+
     pw_hash = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
-        salt.encode("utf-8"),
-        100_000,
+        raw_salt.encode("utf-8"),
+        rounds,
     ).hex()
-    return pw_hash, salt
+    return pw_hash, formatted_salt
 
 
 def verify_password(password: str, password_hash: str, salt: str) -> bool:
@@ -164,28 +179,32 @@ def create_user(username: str, password: str, email: Optional[str] = None) -> di
     username_clean = username.strip().lower()
     if not username_clean:
         raise ValueError("Username cannot be empty.")
-    if len(password) < 4:
-        raise ValueError("Password must be at least 4 characters.")
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
 
     pw_hash, salt = hash_password(password)
     user_id = str(uuid.uuid4())
     now = _utc_now_iso()
 
     with get_connection() as conn:
-        conn.execute(
-            "INSERT INTO users (id, username, email, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, username_clean, (email or "").strip(), pw_hash, salt, now),
-        )
-        # If this is the first registered user, auto-assign any orphan conversations
-        count_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
-        if count_users == 1:
-            conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL", (user_id,))
-        conn.commit()
+        try:
+            conn.execute(
+                "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (user_id, username_clean, (email or "").strip(), pw_hash, salt, now),
+            )
+            # If this is the first registered user, auto-assign any orphan conversations
+            count_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE is_guest = 0").fetchone()["c"]
+            if count_users == 1:
+                conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL", (user_id,))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Username '{username_clean}' is already registered.")
 
     return {
         "id": user_id,
         "username": username_clean,
         "email": (email or "").strip(),
+        "is_guest": False,
         "created_at": now,
     }
 
@@ -194,16 +213,26 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
     username_clean = username.strip().lower()
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, password_hash, salt, created_at FROM users WHERE username = ?",
+            "SELECT id, username, email, password_hash, salt, created_at, is_guest FROM users WHERE username = ?",
             (username_clean,),
         ).fetchone()
         if not row:
             return None
         if verify_password(password, row["password_hash"], row["salt"]):
+            # Transparently upgrade legacy 100k hashes to 600k rounds on login
+            if "$" not in (row["salt"] or ""):
+                new_hash, new_salt = hash_password(password)
+                conn.execute(
+                    "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                    (new_hash, new_salt, row["id"]),
+                )
+                conn.commit()
+
             return {
                 "id": row["id"],
                 "username": row["username"],
                 "email": row["email"],
+                "is_guest": bool(row["is_guest"]),
                 "created_at": row["created_at"],
             }
         return None

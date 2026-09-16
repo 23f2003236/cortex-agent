@@ -184,7 +184,7 @@ async def get_current_user(
 
 class RegisterPayload(BaseModel):
     username: str = Field(min_length=3, max_length=32)
-    password: str = Field(min_length=4, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
     email: Optional[str] = None
 
 
@@ -193,16 +193,21 @@ class LoginPayload(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-@app.post("/api/auth/register")
+@app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterPayload):
-    existing = database.get_user_by_username(payload.username)
-    if existing:
-        raise HTTPException(status_code=400, detail="Username is already taken.")
+    clean_user = payload.username.strip().lower()
+    if len(clean_user) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
 
     try:
-        user = database.create_user(payload.username, payload.password, payload.email)
+        user = database.create_user(clean_user, payload.password, payload.email)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        err_str = str(exc)
+        if "already registered" in err_str.lower() or "already taken" in err_str.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Username '{clean_user}' is already taken.")
+        raise HTTPException(status_code=400, detail=err_str)
 
     token = generate_token(user["id"], user["username"])
     return {
@@ -212,6 +217,7 @@ def register(payload: RegisterPayload):
             "id": user["id"],
             "username": user["username"],
             "email": user["email"],
+            "is_guest": False,
         },
     }
 
