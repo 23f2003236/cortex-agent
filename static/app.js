@@ -956,11 +956,8 @@ function renderMarkdownWithMath(text) {
   const { processed, mathMap } = extractMath(safeText);
   const html = marked.parse(processed);
   const sanitized = DOMPurify.sanitize(html, {
-    ADD_TAGS: ["iframe", "canvas"],
+    ADD_TAGS: ["canvas"],
     ADD_ATTR: [
-      "sandbox",
-      "srcdoc",
-      "frameborder",
       "data-artifact-id",
       "data-chart-id",
       "data-doc-id",
