@@ -347,12 +347,13 @@ def get_user_by_username(username: str) -> Optional[dict[str, Any]]:
         return d
 
 
-def revoke_token(token_sig: str, user_id: str, expires_at: int) -> None:
+def revoke_token(token_sig: str, user_id: str, expires_at: Optional[int] = None) -> None:
     """Blacklist a token signature until its natural expiration."""
+    exp = int(expires_at) if expires_at is not None else int(time.time()) + 86400 * 30
     with get_connection() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO revoked_tokens (token_sig, user_id, revoked_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token_sig, user_id, _utc_now_iso(), int(expires_at)),
+            (token_sig, user_id, _utc_now_iso(), exp),
         )
         # Prune already-expired revoked tokens
         conn.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (int(time.time()),))
