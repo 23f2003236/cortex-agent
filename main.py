@@ -1101,15 +1101,28 @@ def home():
 
 @app.get("/api/health")
 def health():
+    """Minimal public health check (liveness probe)."""
+    return {"status": "ok", "version": "3.1.0"}
+
+
+@app.get("/api/models")
+def list_models():
+    """Public list of active models for client UI selection."""
+    return {"models": AVAILABLE_MODELS, "default": MODEL_NAME}
+
+
+@app.get("/api/status")
+def system_status(current_user: dict = Depends(get_current_user)):
+    """Authenticated administrative runtime status."""
     return {
         "ok": True,
-        "provider": "NVIDIA",
-        "model": MODEL_NAME,
+        "status": "operational",
+        "version": "3.1.0",
+        "provider": "NVIDIA NIM",
+        "default_model": MODEL_NAME,
         "api_key_configured": bool(NVIDIA_API_KEY),
         "tools": [t.name for t in TOOLS],
-        "available_models": AVAILABLE_MODELS,
-        "max_output_tokens": MAX_OUTPUT_TOKENS,
-        "model_token_limits": MODEL_TOKEN_LIMITS,
+        "models": AVAILABLE_MODELS,
     }
 
 

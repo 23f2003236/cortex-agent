@@ -4538,18 +4538,19 @@ if (modelSelect) {
 
 async function loadHealth() {
   try {
-    const res = await fetch("/api/health");
+    const res = await fetch("/api/models");
     const data = await res.json();
-    if (data.available_models && data.available_models.length && modelSelect) {
+    const modelsList = data.models || data.available_models || [];
+    if (modelsList.length && modelSelect) {
       const savedModel = localStorage.getItem("cortex_model");
       const currentVal = savedModel || modelSelect.value;
-      modelSelect.innerHTML = data.available_models
+      modelSelect.innerHTML = modelsList
         .map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`)
         .join("");
-      if (currentVal && data.available_models.some((m) => m.id === currentVal)) {
+      if (currentVal && modelsList.some((m) => m.id === currentVal)) {
         modelSelect.value = currentVal;
       } else {
-        modelSelect.value = data.available_models[0].id;
+        modelSelect.value = modelsList[0].id;
         localStorage.setItem("cortex_model", modelSelect.value);
       }
     }
