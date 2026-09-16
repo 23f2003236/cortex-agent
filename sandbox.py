@@ -94,6 +94,54 @@ except Exception:
 
 exec_error = False
 
+_harvested_b64s = set()
+
+def _harvest_fig(fig):
+    try:
+        import io, base64
+        if fig is not None:
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', bbox_inches='tight', dpi=130)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode('ascii')
+            data_uri = f"data:image/png;base64,{b64}"
+            if data_uri not in _harvested_b64s:
+                _harvested_b64s.add(data_uri)
+                print(f"\\n__CORTEX_PLOT_B64__:{data_uri}\\n")
+    except Exception:
+        pass
+
+# Intercept plt.close and plt.show so figures are harvested before being destroyed
+if plt is not None:
+    _orig_close = plt.close
+    _orig_show = plt.show
+
+    def _cortex_close(*args, **kwargs):
+        try:
+            if not args:
+                _harvest_fig(plt.gcf())
+            elif isinstance(args[0], plt.Figure):
+                _harvest_fig(args[0])
+            elif isinstance(args[0], str) and args[0].lower() == 'all':
+                for num in plt.get_fignums():
+                    _harvest_fig(plt.figure(num))
+            elif isinstance(args[0], int):
+                _harvest_fig(plt.figure(args[0]))
+        except Exception:
+            pass
+        return _orig_close(*args, **kwargs)
+
+    def _cortex_show(*args, **kwargs):
+        try:
+            for num in plt.get_fignums():
+                _harvest_fig(plt.figure(num))
+        except Exception:
+            pass
+        return _orig_show(*args, **kwargs)
+
+    plt.close = _cortex_close
+    plt.show = _cortex_show
+
 # User code execution
 try:
     exec(compile(__USER_CODE_REPR__, '<cortex_sandbox>', 'exec'))
@@ -102,19 +150,17 @@ except Exception:
     traceback.print_exc()
     exec_error = True
 
-# Harvest any opened matplotlib figures
+# Harvest any remaining open matplotlib figures
 if plt is not None:
     try:
-        import io, base64
         fignums = plt.get_fignums()
         for fignum in fignums:
             fig = plt.figure(fignum)
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', bbox_inches='tight', dpi=120)
-            buf.seek(0)
-            b64 = base64.b64encode(buf.read()).decode('ascii')
-            print(f"\\n__CORTEX_PLOT_B64__:data:image/png;base64,{b64}\\n")
-            plt.close(fig)
+            _harvest_fig(fig)
+            try:
+                _orig_close(fig)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -185,10 +231,18 @@ def run_python_code(code: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS, *
         plots = []
         plot_matches = re.findall(r"__CORTEX_PLOT_B64__:(data:image\/png;base64,[A-Za-z0-9+/=]+)", raw_stdout)
         for p in plot_matches:
-            plots.append(p)
+            if p not in plots:
+                plots.append(p)
 
-        # Clean stdout by removing plot markers
-        clean_stdout = re.sub(r"__CORTEX_PLOT_B64__:data:image\/png;base64,[A-Za-z0-9+/=]+\n?", "", raw_stdout).strip()
+        # Also extract any raw data:image/...;base64 string printed to stdout by user scripts
+        raw_b64_matches = re.findall(r"(data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,})", raw_stdout)
+        for p in raw_b64_matches:
+            if p not in plots:
+                plots.append(p)
+
+        # Clean stdout by removing plot markers and raw base64 data URIs so terminal remains clean
+        clean_stdout = re.sub(r"__CORTEX_PLOT_B64__:data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]+\n?", "", raw_stdout)
+        clean_stdout = re.sub(r"data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}\n?", "", clean_stdout).strip()
         clean_stderr = raw_stderr.strip()
 
         ok = (

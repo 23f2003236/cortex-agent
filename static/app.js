@@ -295,9 +295,36 @@ const MIME_MAP = {
   txt: "text/plain;charset=utf-8",
 };
 
+function healMarkdownPlots(text) {
+  if (!text) return "";
+  let s = String(text);
+
+  // 1. Fix split markdown image tags: ![alt]\n(data:...) or ![alt]\r\n(data:...)
+  s = s.replace(/!\[([^\]]*)\]\s*\r?\n+\s*\(((?:data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^\)\s]+))\)/g, (m, alt, url) => {
+    return '![' + alt + '](' + url + ')';
+  });
+
+  // 2. Fix parenthesized standalone data URIs: (data:image/png;base64,iVBORw0KGgo...)
+  s = s.replace(/(?:^|\n)[ \t]*\(((?:data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{20,}))\)[ \t]*(?:\n|$)/g, (m, uri) => {
+    return '\n\n![Generated Plot](' + uri + ')\n\n';
+  });
+
+  // 3. Fix raw naked data URIs standing alone on their own line: data:image/png;base64,iVBORw0KGgo...
+  s = s.replace(/(?:^|\n)[ \t]*(data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{20,})[ \t]*(?:\n|$)/g, (m, uri) => {
+    return '\n\n![Generated Plot](' + uri + ')\n\n';
+  });
+
+  // 4. Fix split within normal lines if LLM emitted [alt]\n(data:...) without leading !:
+  s = s.replace(/(?:^|[^!])\[([^\]]*)\]\s*\r?\n+\s*\((data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]+)\)/g, (m, alt, uri) => {
+    return '\n\n![' + alt + '](' + uri + ')\n\n';
+  });
+
+  return s;
+}
+
 function cleanMarkdownFences(text) {
   if (!text) return "";
-  let s = String(text).trim();
+  let s = healMarkdownPlots(String(text).trim());
   // Strip opening fence like ```markdown:filename=... or ```md or ```markdown
   s = s.replace(/^```(?:markdown|md|text)?(?::[^\r\n]+)?\r?\n/i, "");
   // Strip trailing fence if present at the very end
@@ -401,7 +428,7 @@ function parseLangAndFilename(rawLang, text) {
 }
 
 function extractDocumentFilename(text) {
-  if (!text) return "document.md";
+  if (!text) return "cortex_document.md";
 
   // 1. Check if a script or file name is in code format like `bbc_news_scraper.py`
   const codeFnMatch = text.match(/`([a-zA-Z0-9_\-]+\.(?:py|js|ts|html|css|json|sh|csv|sql|md))`/);
@@ -411,16 +438,27 @@ function extractDocumentFilename(text) {
   const fnMatch = text.match(/(?:filename|file)=\s*["']?([a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+)["']?/i);
   if (fnMatch && fnMatch[1]) return fnMatch[1];
 
-  // 3. Search markdown headings or top title lines that have actual alphanumeric text
+  function isCodeOrJunk(str) {
+    if (!str) return true;
+    const s = str.trim();
+    if (/^(?:import|from|def|class|const|let|var|function|return|async|await|if|elif|else|for|while|try|except|with|console\.|print\(|plt\.|np\.)\b/i.test(s)) return true;
+    if (/^[a-zA-Z0-9_$]+\s*=[^=]/.test(s)) return true;
+    if (s.startsWith("data:image") || s.startsWith("![") || s.includes("base64,")) return true;
+    if (/^(?:here\s+is|certainly|sure|below\s+is|i\s+have|alright|ok|okay|note:|pro-tip:)/i.test(s)) return true;
+    return false;
+  }
+
+  // 3. Search markdown headings (# Title, ## Title) or top bold title
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
     const isHeading = /^#{1,3}\s+/.test(trimmed);
-    const isTopTitle = i < 3 && (trimmed.startsWith("**") || (!trimmed.startsWith("<") && !trimmed.startsWith("```") && trimmed.length < 80 && !trimmed.endsWith(":") && !trimmed.endsWith(".")));
-    if (isHeading || isTopTitle) {
-      const rawTitle = trimmed.replace(/^#{1,3}\s+/, "").replace(/^\*\*|\*\*$/g, "");
-      // Skip headings made entirely of dashes, underscores or symbols
+    const isBoldTitle = trimmed.startsWith("**") && trimmed.endsWith("**") && trimmed.length > 4 && trimmed.length < 80;
+
+    if (isHeading || (i < 3 && isBoldTitle)) {
+      const rawTitle = trimmed.replace(/^#{1,3}\s+/, "").replace(/^\*\*|\*\*$/g, "").trim();
+      if (isCodeOrJunk(rawTitle)) continue;
       if (/^[-_#=\*\s]+$/.test(rawTitle)) continue;
 
       let clean = rawTitle
@@ -432,7 +470,7 @@ function extractDocumentFilename(text) {
         .replace(/^-+|-+$/g, "")
         .slice(0, 45);
 
-      if (clean && !/^[-_]+$/.test(clean) && clean.length >= 4) {
+      if (clean && !/^[-_]+$/.test(clean) && clean.length >= 3) {
         return `${clean.toLowerCase()}.md`;
       }
     }
@@ -813,6 +851,47 @@ customRenderer.link = function (arg1, arg2, arg3) {
   return `<a href="${escapeHtml(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
 
+customRenderer.image = function (arg1, arg2, arg3) {
+  let href = "";
+  let title = "";
+  let text = "";
+  if (typeof arg1 === "object" && arg1 !== null) {
+    href = arg1.href || "";
+    title = arg1.title || "";
+    text = arg1.text || "";
+  } else {
+    href = String(arg1 || "");
+    title = String(arg2 || "");
+    text = String(arg3 || "");
+  }
+
+  const isDataUri = href.startsWith("data:image/");
+  const isPlot = isDataUri || /(?:plot|chart|graph|figure|sin|cos|matplotlib)/i.test(text || title || href);
+
+  if (isPlot || isDataUri) {
+    const plotTitle = escapeHtml(text || title || "Generated Plot");
+    const dlLink = isDataUri ? href : escapeHtml(href);
+    return `
+      <div class="chat-plot-card">
+        <div class="chat-plot-header">
+          <span class="chat-plot-label"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg> ${plotTitle}</span>
+          <a href="${dlLink}" download="cortex_plot_${Date.now()}.png" class="chat-plot-dl-btn" title="Download High-Res Plot">
+            ${ICONS.download}
+            <span>Download PNG</span>
+          </a>
+        </div>
+        <div class="chat-plot-img-wrap">
+          <img src="${dlLink}" alt="${plotTitle}" class="chat-plot-img" loading="lazy" />
+        </div>
+      </div>
+    `;
+  }
+
+  return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}" title="${escapeHtml(title)}" class="chat-inline-img" loading="lazy" />`;
+};
+
+docRenderer.image = customRenderer.image;
+
 marked.setOptions({ breaks: true, gfm: true, renderer: customRenderer });
 
 // ---------------- LaTeX / Math Formula Parsing (KaTeX) ----------------
@@ -822,9 +901,11 @@ function extractMath(text) {
   if (!text) return { processed: "", mathMap };
   let id = 0;
 
+  let s = healMarkdownPlots(text);
+
   // Protect code blocks (multi-line ```...``` and inline `...`)
   const codeBlocks = [];
-  let s = text.replace(/(```[\s\S]*?```)/g, (m) => {
+  s = s.replace(/(```[\s\S]*?```)/g, (m) => {
     codeBlocks.push(m);
     return `%%CODE_BLOCK_${codeBlocks.length - 1}%%`;
   });
@@ -880,9 +961,9 @@ function extractMath(text) {
 }
 
 function renderMarkdownWithMath(text) {
-  let safeText = (text ?? "")
+  let safeText = healMarkdownPlots((text ?? "")
     .replace(/```execute_python/gi, "```python")
-    .replace(/!\[([^\]]*)\]\((?:attachment:\/\/|sandbox:\/)[^\)]*\)/gi, "");
+    .replace(/!\[([^\]]*)\]\((?:attachment:\/\/|sandbox:\/)[^\)]*\)/gi, ""));
   const { processed, mathMap } = extractMath(safeText);
   const html = marked.parse(processed);
   const sanitized = DOMPurify.sanitize(html, {
@@ -898,6 +979,7 @@ function renderMarkdownWithMath(text) {
       "data-math-id",
       "data-tex",
       "loading",
+      "download",
     ],
     ALLOW_DATA_ATTR: true,
   });
@@ -1666,11 +1748,25 @@ chatEl.addEventListener("click", async (e) => {
       const statusText = isSuccess ? "Success" : (data.timed_out ? "Timed Out" : "Error");
       const durationText = typeof data.duration_ms === "number" ? `${data.duration_ms}ms` : "";
 
+      if (!data.figures) data.figures = [];
+      // Extract any base64 image strings from stdout defensively if not already in data.figures
+      const rawMatches = (data.stdout || "").match(/data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}/g) || [];
+      for (const b64 of rawMatches) {
+        if (!data.figures.includes(b64)) {
+          data.figures.push(b64);
+        }
+      }
+
+      // Strip raw base64 data URIs so the terminal console output remains completely clean
+      const cleanStdout = (data.stdout || "")
+        .replace(/data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}/g, "")
+        .trim();
+
       let stdoutHtml = "";
-      if (data.stdout && data.stdout.trim()) {
+      if (cleanStdout) {
         stdoutHtml = `
           <div class="exec-stream-label">Output (stdout)</div>
-          <pre class="exec-stdout"><code>${escapeHtml(data.stdout)}</code></pre>
+          <pre class="exec-stdout"><code>${escapeHtml(cleanStdout)}</code></pre>
         `;
       }
 
@@ -1690,13 +1786,15 @@ chatEl.addEventListener("click", async (e) => {
             ${data.figures.map((fig, idx) => `
               <div class="exec-plot-card">
                 <div class="exec-plot-header">
-                  <span class="exec-plot-label">Figure ${idx + 1}</span>
+                  <span class="exec-plot-label"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg> Figure ${idx + 1}</span>
                   <a href="${fig}" download="cortex_plot_${idx + 1}.png" class="exec-plot-dl-btn" title="Download High-Res Plot">
                     ${ICONS.download}
                     <span>Download PNG</span>
                   </a>
                 </div>
-                <img src="${fig}" alt="Generated Figure ${idx + 1}" class="exec-plot-img" />
+                <div class="exec-plot-img-wrap">
+                  <img src="${fig}" alt="Generated Figure ${idx + 1}" class="exec-plot-img" />
+                </div>
               </div>
             `).join("")}
           </div>
@@ -1722,6 +1820,17 @@ chatEl.addEventListener("click", async (e) => {
         ${stderrHtml}
         ${figuresHtml}
       `;
+
+      // Enable lightbox click for terminal plots
+      outputDrawer.querySelectorAll(".exec-plot-img").forEach((img) => {
+        img.addEventListener("click", () => {
+          openImageLightbox({
+            src: img.src,
+            filename: img.alt || "Generated Figure",
+            size: "",
+          });
+        });
+      });
 
       const clearBtn = outputDrawer.querySelector(".exec-clear-btn");
       if (clearBtn) {
@@ -2013,6 +2122,61 @@ function openArtifactPanel({ filename, content, type }) {
     .chart-canvas-wrapper canvas {
       width: 100% !important;
       height: 100% !important;
+      display: block;
+    }
+    /* Matplotlib Generated Plot styles inside Artifact Document */
+    .chat-plot-card {
+      position: relative;
+      margin: 20px 0;
+      background: ${isDark ? "#0f141c" : "#ffffff"};
+      border: 1px solid ${isDark ? "rgba(255, 255, 255, 0.1)" : "#cbd5e1"};
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+    .chat-plot-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: ${isDark ? "rgba(255, 255, 255, 0.03)" : "#f8fafc"};
+      border-bottom: 1px solid ${isDark ? "rgba(255, 255, 255, 0.06)" : "#e2e8f0"};
+      font-size: 12px;
+      color: ${isDark ? "#94a3b8" : "#475569"};
+      font-weight: 500;
+    }
+    .chat-plot-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: ${isDark ? "#e2e8f0" : "#0f172a"};
+      font-weight: 600;
+    }
+    .chat-plot-dl-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 6px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .chat-plot-img-wrap {
+      padding: 12px;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .chat-plot-img-wrap img, .chat-plot-img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
       display: block;
     }
   </style>
@@ -3588,17 +3752,23 @@ function renderStreamedText(bubbleEl, fullText, done) {
     .replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}\s*(?:null)?/gi, "");
 
   if (done) {
-    cleanText = cleanText.trim();
+    cleanText = healMarkdownPlots(cleanText.trim());
     bubbleEl._rawFullText = cleanText;
     const { html: rendered, mathMap } = renderMarkdownWithMath(cleanText);
     let finalHtml = rendered;
 
-    // Auto-detect if message is a full document or structured report / large response
+    // Auto-detect if message is an explicit standalone document or structured report
+    const hasCodeOrPlot =
+      /(?:plt\.|matplotlib|execute_python|data:image\/|```python|```js|```html|def\s+|import\s+)/i.test(cleanText);
+
+    const isExplicitDocument =
+      /^#\s+[A-Za-z0-9]/.test(cleanText.trim()) ||
+      (/^##\s+[A-Za-z0-9]/.test(cleanText.trim()) && cleanText.length > 600);
+
     const isReport =
-      cleanText.trim().startsWith("#") ||
-      cleanText.includes("##") ||
-      cleanText.includes("###") ||
-      (cleanText.length > 350 && (cleanText.includes("\n1. ") || cleanText.includes("\n- ") || cleanText.includes("| --- |") || cleanText.includes("```")));
+      !hasCodeOrPlot &&
+      isExplicitDocument &&
+      (cleanText.includes("##") || cleanText.includes("| --- |") || cleanText.length > 750);
 
     if (isReport && !rendered.includes('class="document-card"')) {
       docIdCounter++;

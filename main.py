@@ -867,9 +867,31 @@ def run_tool_rounds_streaming(
     yield ("tools_used", tools_used)
 
 
+def is_plot_or_python_request(text: str) -> bool:
+    """Robust detection of Python execution, data visualization, and mathematical plotting requests."""
+    if not text:
+        return False
+    lower = text.lower().strip()
+    # 1. Direct keywords
+    if any(k in lower for k in [
+        "matplotlib", "plt.show", "plt.plot", "plt.figure", "seaborn", "execute_python",
+        "run python", "execute python", "run this code", "execute code", "run code",
+        "code chalao", "plot using python", "calculate using python", "simulation in python",
+        "python script to", "write and execute", "write & execute"
+    ]):
+        return True
+    # 2. Plotting verbs + targets (e.g. plot a sin theta and cos theta graph, plot curve, draw a graph)
+    if re.search(r"\b(plot|graph|draw|chart|visualize)\b.*?\b(graph|curve|chart|plot|sin|cos|tan|theta|function|distribution|data|comparison|compare|trend|histogram|scatter|line|bar)\b", lower):
+        return True
+    # 3. Phrasing like "plot a ...", "plot the ...", "graph of ..."
+    if re.search(r"\b(plot\s+a\b|plot\s+the\b|plot\s+curves?|plot\s+graphs?|make\s+a\s+plot|generate\s+a\s+plot|graph\s+of\b|draw\s+a\s+graph|compare.*(?:graph|plot|curve))\b", lower):
+        return True
+    return False
+
+
 def should_run_tools(raw_content: str, messages: list) -> bool:
     """Smart query classification for Auto Mode.
-    Determines if tools (web_search, fetch_webpage, calculator, wikipedia, weather, datetime)
+    Determines if tools (web_search, fetch_webpage, calculator, wikipedia, weather, datetime, execute_python)
     are genuinely required. For conceptual, coding, creative, architectural, or conversational
     queries, returns False so direct streaming begins in 1-5 seconds without delay."""
     if not raw_content:
@@ -913,11 +935,7 @@ def should_run_tools(raw_content: str, messages: list) -> bool:
         return True
 
     # 9. Python Code Execution & Data Science Plotting:
-    if re.search(r"\b(run python|execute python|run this code|code chalao|execute code|run code|plot using python|matplotlib|plot curve|plot chart|calculate using python|simulation in python|run a script|execute a script)\b", lower):
-        return True
-    if re.search(r"\b(write and execute|write & execute|run and test|execute and test)\b", lower):
-        return True
-    if "matplotlib" in lower or "plt.show" in lower or "seaborn" in lower:
+    if is_plot_or_python_request(raw_content):
         return True
 
     return False
@@ -937,9 +955,7 @@ def should_run_fast_tools(raw_content: str) -> bool:
     if re.search(r"\b(remember that|remember this|yaad rakh|yaad rakhna|note down that|save to memory|store in memory|keep in mind that)\b", lower):
         return True
     # 2. Python sandbox execution & plotting
-    if re.search(r"\b(run python|execute python|run this code|code chalao|execute code|run code|plot using python|matplotlib|calculate using python|write and execute|write & execute)\b", lower):
-        return True
-    if "matplotlib" in lower or "plt.show" in lower:
+    if is_plot_or_python_request(raw_content):
         return True
     # 3. Exact calculations
     if re.search(r"\b(calculate|sqrt\(|cbrt\(|sin\(|cos\(|tan\(|log10?\(|log2\()\b", lower):
@@ -1971,14 +1987,19 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             # - For visual screenshots: stream visual inspection directly without blocking on web tools
             # - "fast": single-round local tools (remember, execute_python, calculator) when requested; skips heavy web browsing
             # - "thinking": full multi-round agentic tools & deep research
-            # - "auto": smart intent classification (only runs tools if real-time data/fetch is needed)
-            is_python_plot_prompt = bool(re.search(
-                r"\b(run python|execute python|matplotlib|plot.*using python|write and execute python|write & execute python|simulation in python|python code to calculate|python script to|plot a chart|plot chart|bar chart|line chart)\b",
-                raw_content,
-                re.IGNORECASE,
-            ))
+            is_python_plot_prompt = is_plot_or_python_request(raw_content)
             tools_subset = None
             max_rounds = None
+
+            PYTHON_PLOT_DIRECTIVE = (
+                "[PYTHON PLOTTING & EXECUTION DIRECTIVE: The user requested Python code execution or a mathematical plot/graph. "
+                "Invoke the 'execute_python' tool immediately with clean Matplotlib code. "
+                "IMPORTANT RULES FOR MATPLOTLIB: "
+                "1. Use standard Matplotlib: plt.figure(figsize=(8, 4.5)), plt.plot(), plt.title(), plt.xlabel(), plt.ylabel(), plt.grid(True), plt.legend(), and plt.tight_layout(). "
+                "2. Do NOT call plt.close() or convert figures to base64 manually — the sandbox automatically harvests and displays all figures! "
+                "3. Do NOT print raw base64 data to stdout. "
+                "4. Do NOT call web_search.]"
+            )
 
             if has_image and mode != "thinking":
                 run_tools = False
@@ -1987,22 +2008,18 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 if run_tools:
                     tools_subset = [execute_python, remember, calculator]
                     max_rounds = 2
+                    if is_python_plot_prompt:
+                        messages.append(SystemMessage(content=PYTHON_PLOT_DIRECTIVE))
             elif mode == "thinking":
                 run_tools = True
+                if is_python_plot_prompt:
+                    messages.append(SystemMessage(content=PYTHON_PLOT_DIRECTIVE))
             else:
                 run_tools = should_run_tools(raw_content, messages)
                 if is_python_plot_prompt:
                     tools_subset = [execute_python, calculator, remember]
                     max_rounds = 2
-                    messages.append(
-                        SystemMessage(
-                            content=(
-                                "[PYTHON EXECUTION DIRECTIVE: The user requested Python code execution / Matplotlib plotting. "
-                                "Invoke the 'execute_python' tool immediately. Define any sample or estimated data directly in Python arrays. "
-                                "Do NOT call web_search.]"
-                            )
-                        )
-                    )
+                    messages.append(SystemMessage(content=PYTHON_PLOT_DIRECTIVE))
 
             if run_tools:
                 for ev_type, payload in run_tool_rounds_streaming(messages, model_override=effective_model, tools_subset=tools_subset, max_rounds=max_rounds):
@@ -2239,6 +2256,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 (is_python_plot_prompt and "execute_python" not in tools_used)
                 or (is_python_plot_prompt and not _latest_harvested_plots)
                 or (("attachment://" in full_text or "sandbox:/" in full_text) and not _latest_harvested_plots)
+                or (("plt." in full_text or "matplotlib" in full_text) and not _latest_harvested_plots)
             )
 
             if should_auto_exec and code_blocks:
@@ -2323,6 +2341,11 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             # Clean any remaining broken/unresolved placeholder images if no plot replaced them
             full_text = re.sub(r"!\[(.*?)\]\(((?:attachment:\/\/|sandbox:\/)[^\)]*)\)", "", full_text)
 
+            # Heal split/broken markdown image tags e.g. ![alt]\n(data:image...) or naked (data:image/png;base64...)
+            full_text = re.sub(r"!\[([^\]]*)\]\s*\n+\s*\(((?:data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^\)\s]+))\)", r"![\1](\2)", full_text)
+            full_text = re.sub(r"(?:^|\n)\s*\(((data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}))\)", r"\n\n![Generated Plot](\1)\n\n", full_text)
+            full_text = re.sub(r"(?:^|\n)\s*(data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,})\s*(?:\n|$)", r"\n\n![Generated Plot](\1)\n\n", full_text)
+
             # Auto-heal unclosed code blocks if generation ended mid-block
             fence_count = len(re.findall(r"```", full_text))
             if fence_count % 2 != 0:
@@ -2397,6 +2420,9 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 cleaned_db_text = re.sub(r"=\s*execute_pythoncode>", "", cleaned_db_text)
                 cleaned_db_text = re.sub(r'\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}', "", cleaned_db_text)
                 cleaned_db_text = re.sub(r"!\[(.*?)\]\(((?:attachment:\/\/|sandbox:\/)[^\)]*)\)", "", cleaned_db_text)
+                cleaned_db_text = re.sub(r"!\[([^\]]*)\]\s*\n+\s*\(((?:data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^\)\s]+))\)", r"![\1](\2)", cleaned_db_text)
+                cleaned_db_text = re.sub(r"(?:^|\n)\s*\(((data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,}))\)", r"\n\n![Generated Plot](\1)\n\n", cleaned_db_text)
+                cleaned_db_text = re.sub(r"(?:^|\n)\s*(data:image\/[a-zA-Z0-9+\-_]+;base64,[A-Za-z0-9+/=]{60,})\s*(?:\n|$)", r"\n\n![Generated Plot](\1)\n\n", cleaned_db_text)
                 cleaned_db_text = cleaned_db_text.strip()
                 asst_msg = database.add_message(conv_id, role="assistant", content=cleaned_db_text or full_text, tools_used=tools_used, user_id=current_user["id"])
                 asst_msg_id = asst_msg["id"]
