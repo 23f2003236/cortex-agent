@@ -1472,6 +1472,7 @@ def list_conversations(
 
 class CreateConversationPayload(BaseModel):
     title: Optional[str] = "New Chat"
+    project_id: Optional[str] = None
 
 
 @app.post("/api/conversations")
@@ -1480,7 +1481,12 @@ def create_new_conversation(
     current_user: dict = Depends(get_current_user),
 ):
     title = payload.title if payload and payload.title else "New Chat"
-    return database.create_conversation(title=title, user_id=current_user["id"])
+    project_id = payload.project_id if payload else None
+    if project_id:
+        proj = database.get_project(project_id, user_id=current_user["id"])
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project workspace not found or does not belong to your account.")
+    return database.create_conversation(title=title, user_id=current_user["id"], project_id=project_id)
 
 
 @app.get("/api/conversations/{conv_id}")
@@ -2069,6 +2075,14 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
     try:
         conv_id = request.conversation_id
         raw_content = request.messages[-1].content
+
+        if request.project_id:
+            proj = database.get_project(request.project_id, user_id=current_user["id"])
+            if not proj:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project workspace not found or does not belong to your account.",
+                )
 
         if not conv_id:
             title = generate_smart_title(raw_content)

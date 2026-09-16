@@ -342,12 +342,17 @@ def create_conversation(
     cid = conv_id or str(uuid.uuid4())
     now = _utc_now_iso()
     with get_connection() as conn:
+        valid_project_id = None
+        if project_id and user_id:
+            chk = conn.execute("SELECT id FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id)).fetchone()
+            if chk:
+                valid_project_id = project_id
         conn.execute(
             "INSERT INTO conversations (id, title, created_at, updated_at, user_id, project_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (cid, title, now, now, user_id, project_id),
+            (cid, title, now, now, user_id, valid_project_id),
         )
         conn.commit()
-    return {"id": cid, "title": title, "created_at": now, "updated_at": now, "user_id": user_id, "project_id": project_id}
+    return {"id": cid, "title": title, "created_at": now, "updated_at": now, "user_id": user_id, "project_id": valid_project_id}
 
 
 def get_conversations(user_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict[str, Any]]:
