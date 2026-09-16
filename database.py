@@ -786,6 +786,22 @@ def increment_daily_tokens(user_id: str, tokens: int) -> dict:
     return get_daily_usage(user_id)
 
 
+def set_daily_tokens(user_id: str, tokens: int, date_str: Optional[str] = None) -> dict:
+    d = date_str or _today_str()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_usage (user_id, usage_date, tokens_used, uploads_count)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(user_id, usage_date) DO UPDATE SET
+            tokens_used = excluded.tokens_used
+            """,
+            (user_id, d, max(0, int(tokens))),
+        )
+        conn.commit()
+    return get_daily_usage(user_id, d)
+
+
 def increment_daily_uploads(user_id: str, count: int = 1) -> dict:
     if count <= 0:
         return get_daily_usage(user_id)

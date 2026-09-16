@@ -2060,51 +2060,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
                     # If a tool call was intercepted in the stream:
                     if is_tool_call_stream is True and stream_buffer:
-                        # 1. Execute Python Sandbox
-                        if "execute_python" in stream_buffer or "=execute_pythoncode" in stream_buffer:
-                            m_ep = re.search(r"(?:=\s*<?execute_pythoncode>?|<\/?function=execute_python>|<\/?tool_call>\s*execute_python)", stream_buffer)
-                            py_code = stream_buffer[m_ep.end():].strip() if m_ep else stream_buffer
-                            py_code = re.sub(r"<\/?(?:parameter|function|tool_call|execute_pythoncode)[^>]*>", "", py_code).strip()
-                            py_code = re.sub(r"^=code>\s*", "", py_code).strip()
-                            # Check if code was inside JSON
-                            if "{" in py_code and ('"tool"' in py_code or '"code"' in py_code):
-                                try:
-                                    start_b = py_code.find("{")
-                                    end_b = py_code.rfind("}")
-                                    if start_b != -1 and end_b != -1:
-                                        p = json.loads(py_code[start_b:end_b+1])
-                                        args = p.get("arguments") or p.get("args") or {}
-                                        extracted = args.get("code") or p.get("code")
-                                        if extracted:
-                                            py_code = extracted
-                                except Exception:
-                                    m_c = re.search(r'"code"\s*:\s*"((?:[^"\\]|\\.)*)"', py_code)
-                                    if m_c:
-                                        try:
-                                            py_code = json.loads(f'"{m_c.group(1)}"')
-                                        except Exception:
-                                            pass
-                            py_code = re.sub(r"^```(?:python|py)?\s*", "", py_code).strip()
-                            py_code = re.sub(r"```$", "", py_code).strip()
-                            if py_code:
-                                if "execute_python" not in tools_used:
-                                    tools_used.append("execute_python")
-                                yield event({"type": "tool_start", "name": "execute_python", "label": "Python Sandbox", "args": {"code": py_code[:200]}})
-                                res = sandbox.run_python_code(py_code, timeout_seconds=15)
-                                res_text = res.get("stdout", "") or res.get("stderr", "") or "Execution completed."
-                                yield event({"type": "tool_end", "name": "execute_python", "label": "Python Sandbox", "result": res_text[:300]})
-
-                                output_parts = [f"```python\n{py_code}\n```\n\n**Executed Output:**\n\n```\n{res_text}\n```"]
-                                if res.get("plots"):
-                                    for p_idx, p_url in enumerate(res["plots"]):
-                                        output_parts.append(f"\n\n![Generated Plot {p_idx+1}]({p_url})\n\n")
-                                formatted_output = "\n".join(output_parts)
-                                full_text = formatted_output
-                                yield event({"type": "token", "text": formatted_output})
-                                break
-
-                        # 2. Store Persistent Memory
-                        elif "remember" in stream_buffer:
+                        # 1. Store Persistent Memory
+                        if "remember" in stream_buffer:
                             fact = None
                             if stream_buffer.lstrip().startswith("{"):
                                 try:
@@ -2245,8 +2202,12 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if is_truncated:
                 yield event({"type": "truncated", "reason": "length", "conversation_id": conv_id})
 
-            # Calculate consumed tokens and increment daily token usage
-            consumed_tokens = max(1, (len(raw_content) + len(full_text)) // 4)
+            # Calculate consumed tokens excluding massive base64 image data and increment daily token usage
+            has_image_b64 = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content))
+            clean_raw_text = re.sub(r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)", "", raw_content).strip()
+            # Standard multi-modal vision token budget (~800 tokens per image tile in modern vision LLMs)
+            image_token_cost = 800 if has_image_b64 else 0
+            consumed_tokens = max(1, (len(clean_raw_text) + len(full_text)) // 4 + image_token_cost)
             current_usage = database.increment_daily_tokens(current_user["id"], consumed_tokens)
 
             yield event({
