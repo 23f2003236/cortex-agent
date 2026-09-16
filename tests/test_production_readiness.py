@@ -27,6 +27,7 @@ import main
 
 
 import tempfile
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 
@@ -287,6 +288,155 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertEqual(health, {"status": "ok", "version": "3.1.0"})
         self.assertNotIn("api_key_configured", health)
         self.assertNotIn("available_models", health)
+
+    # ---------------- 11. Reverse-Proxy Trusted IP Resolution ----------------
+
+    def test_reverse_proxy_client_ip_spoofing_prevention(self):
+        """Verify untrusted direct client cannot spoof IP via X-Forwarded-For."""
+        req = MagicMock()
+        req.client.host = "203.0.113.195"  # Public untrusted IP
+        req.headers = {"X-Forwarded-For": "1.1.1.1", "CF-Connecting-IP": "8.8.8.8"}
+        client_ip = main.get_client_ip(req)
+        self.assertEqual(client_ip, "203.0.113.195", "Must ignore headers from untrusted direct connection")
+
+    def test_reverse_proxy_trusted_forwarding(self):
+        """Verify trusted proxy connection extracts correct client IP."""
+        req = MagicMock()
+        req.client.host = "127.0.0.1"  # Trusted loopback proxy
+        req.headers = {"X-Forwarded-For": "203.0.113.50"}
+        client_ip = main.get_client_ip(req)
+        self.assertEqual(client_ip, "203.0.113.50")
+
+        # Test Cloudflare CF-Connecting-IP
+        req.headers = {"CF-Connecting-IP": "198.51.100.99", "X-Forwarded-For": "198.51.100.99, 127.0.0.1"}
+        client_ip = main.get_client_ip(req)
+        self.assertEqual(client_ip, "198.51.100.99")
+
+    # ---------------- 12. Request Body Limit Middleware (413) ----------------
+
+    def test_request_body_size_limit_413(self):
+        """Verify payloads exceeding 2 MB return HTTP 413 Request Entity Too Large."""
+        large_payload = {"username": "a" * 100, "password": "b" * 100, "extra": "x" * (2 * 1024 * 1024 + 500)}
+        resp = self.client.post("/api/auth/login", json=large_payload)
+        self.assertEqual(resp.status_code, 413)
+        self.assertIn("too large", resp.json().get("detail", "").lower())
+
+    # ---------------- 13. Message Context Character Limit (422) ----------------
+
+    def test_message_context_character_limit_422(self):
+        """Verify conversations exceeding 250,000 total characters are rejected with 422."""
+        token = main.generate_token(self.user["id"], self.user["username"])
+        huge_message = {"role": "user", "content": "A" * 260_000}
+        payload = {
+            "model": "nvidia/nemotron-3-super-120b-a12b",
+            "messages": [huge_message],
+        }
+        resp = self.client.post(
+            "/api/chat/stream",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(resp.status_code, 422)
+
+    # ---------------- 14. Guest Chat Within 25k Quota ----------------
+
+    @patch("main.make_llm")
+    def test_guest_chat_operates_within_quota(self, mock_make_llm):
+        """Verify guest account initiates streaming chat without quota rejection."""
+        mock_instance = MagicMock()
+        mock_instance.stream.return_value = [
+            MagicMock(content="Hello", response_metadata={}, additional_kwargs={})
+        ]
+        mock_make_llm.return_value = mock_instance
+
+        guest_resp = self.client.post("/api/auth/guest")
+        self.assertEqual(guest_resp.status_code, 200)
+        guest_data = guest_resp.json()
+        guest_token = guest_data["token"]
+        guest_id = guest_data["user"]["id"]
+
+        usage = database.get_daily_usage(guest_id)
+        self.assertEqual(usage["tokens_limit"], 25000)
+        self.assertEqual(usage["token_limit"], 25000)
+
+        payload = {
+            "model": "nvidia/nemotron-3-super-120b-a12b",
+            "messages": [{"role": "user", "content": "Hello! What is 2 + 2?"}],
+        }
+        resp = self.client.post(
+            "/api/chat/stream",
+            json=payload,
+            headers={"Authorization": f"Bearer {guest_token}"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode("utf-8")
+        self.assertNotIn("Daily token quota reached", content)
+        self.assertIn('"type": "init"', content)
+        import re
+        m = re.search(r'"budget_tokens":\s*(\d+)', content)
+        self.assertTrue(m, "Must emit budget_tokens in init event")
+        budget = int(m.group(1))
+        self.assertLessEqual(budget, 25000, "Guest budget must never exceed guest quota limit")
+        self.assertGreater(budget, 0)
+
+    # ---------------- 15. Guest Rate Limiting Endpoint ----------------
+
+    def test_guest_rate_limiting_endpoint(self):
+        """Verify rapid guest creation requests hit rate limit after threshold."""
+        unique_ip = f"198.51.100.{hash(self.test_username) % 200 + 10}"
+        for _ in range(10):
+            r = self.client.post("/api/auth/guest", headers={"X-Forwarded-For": unique_ip})
+            self.assertEqual(r.status_code, 200)
+        blocked = self.client.post("/api/auth/guest", headers={"X-Forwarded-For": unique_ip})
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn("too many guest sessions", blocked.json().get("detail", "").lower())
+
+    # ---------------- 16. Stream Lease Renewal & Concurrency Race ----------------
+
+    def test_stream_lease_renewal(self):
+        """Verify stream lease renewal successfully extends expiration."""
+        user_id = self.user["id"]
+        ok, sid = main.acquire_user_stream(user_id)
+        self.assertTrue(ok)
+        renew_ok = main.renew_user_stream(sid)
+        self.assertTrue(renew_ok)
+        main.release_user_stream(sid)
+
+    def test_atomic_stream_concurrency_race(self):
+        """Verify concurrent attempts to acquire stream leases are strictly serialized."""
+        import concurrent.futures
+        user_id = self.user["id"]
+        results = []
+
+        def try_acquire():
+            return main.acquire_user_stream(user_id)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(try_acquire) for _ in range(5)]
+            for f in concurrent.futures.as_completed(futures):
+                results.append(f.result())
+
+        successful = [sid for ok, sid in results if ok]
+        self.assertLessEqual(len(successful), 2, "Must never allow more than 2 concurrent stream leases")
+        for sid in successful:
+            main.release_user_stream(sid)
+
+    # ---------------- 17. Login Lockout & Reset ----------------
+
+    def test_login_brute_force_lockout_endpoint(self):
+        """Verify endpoint returns 429 when failed login attempts reach 5."""
+        username = f"lockout_{self.test_username}"
+        database.create_user(username, "CorrectPassword123!")
+
+        # 5 failed login attempts
+        for _ in range(5):
+            resp = self.client.post("/api/auth/login", json={"username": username, "password": "WrongPassword!"})
+            self.assertEqual(resp.status_code, 401)
+
+        # 6th attempt should be locked out with HTTP 429
+        locked_resp = self.client.post("/api/auth/login", json={"username": username, "password": "WrongPassword!"})
+        self.assertEqual(locked_resp.status_code, 429)
+        self.assertIn("locked", locked_resp.json().get("detail", "").lower())
 
 
 if __name__ == "__main__":

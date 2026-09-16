@@ -2446,6 +2446,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
     try:
         conv_id = request.conversation_id
         raw_content = request.messages[-1].content
+        has_image = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content))
 
         if request.project_id:
             proj = database.get_project(request.project_id, user_id=current_user["id"])
