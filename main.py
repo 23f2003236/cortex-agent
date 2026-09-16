@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -170,6 +170,85 @@ ALLOWED_ORIGINS = [orig.strip() for orig in CORS_ORIGINS_RAW.split(",") if orig.
 if not ALLOWED_ORIGINS:
     ALLOWED_ORIGINS = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
+MAX_UPLOAD_SIZE = 25 * 1024 * 1024  # 25 MB for document/file uploads
+MAX_REQUEST_SIZE = 2 * 1024 * 1024   # 2 MB for standard JSON endpoints
+
+
+class RequestBodyLimitMiddleware:
+    """Enforce strict payload size limits across all HTTP requests to prevent DoS."""
+
+    def __init__(self, app, max_upload_size: int = MAX_UPLOAD_SIZE, max_request_size: int = MAX_REQUEST_SIZE):
+        self.app = app
+        self.max_upload_size = max_upload_size
+        self.max_request_size = max_request_size
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        max_size = self.max_upload_size if path.startswith("/api/upload") else self.max_request_size
+
+        headers = dict(scope.get("headers", []))
+        cl_header = headers.get(b"content-length")
+        if cl_header:
+            try:
+                cl = int(cl_header.decode("ascii"))
+                if cl > max_size:
+                    resp_body = json.dumps({
+                        "detail": f"Request entity too large ({cl:,} bytes). Maximum allowed size is {max_size:,} bytes."
+                    }).encode("utf-8")
+                    await send({
+                        "type": "http.response.start",
+                        "status": 413,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(resp_body)).encode("ascii")),
+                        ],
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": resp_body,
+                    })
+                    return
+            except ValueError:
+                pass
+
+        bytes_received = 0
+
+        async def limited_receive():
+            nonlocal bytes_received
+            message = await receive()
+            if message["type"] == "http.request":
+                body = message.get("body", b"")
+                bytes_received += len(body)
+                if bytes_received > max_size:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Request body exceeded maximum allowed limit ({bytes_received:,} > {max_size:,} bytes).",
+                    )
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except HTTPException as exc:
+            resp_body = json.dumps({"detail": exc.detail}).encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": exc.status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(resp_body)).encode("ascii")),
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": resp_body,
+            })
+
+
+app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -1338,6 +1417,17 @@ class ChatRequest(BaseModel):
     model: Optional[str] = None
     mode: Optional[str] = "auto"
     messages: list[ChatMessage] = Field(default_factory=list, min_length=1, max_length=100)
+
+    @field_validator("messages")
+    @classmethod
+    def validate_total_message_length(cls, messages: list[ChatMessage]) -> list[ChatMessage]:
+        total_chars = sum(len(m.content) for m in messages)
+        if total_chars > 250_000:
+            raise ValueError(
+                f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > 250,000 characters). "
+                "Please shorten your prompt or start a new conversation thread."
+            )
+        return messages
 
 
 @app.get("/")
