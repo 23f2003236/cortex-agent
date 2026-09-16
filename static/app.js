@@ -4307,6 +4307,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           fullText += payload.text;
           renderStreamedText(shell.bubbleEl, fullText, false);
           if (isNearBottom()) scrollToBottom();
+        } else if (payload.type === "replace_text") {
+          fullText = payload.text;
+          renderStreamedText(shell.bubbleEl, fullText, false);
+          if (isNearBottom()) scrollToBottom();
 
           // Live dynamic update during generation
           if (fullText.includes("```python") || fullText.includes("```javascript") || fullText.includes("```html") || fullText.includes("```sh") || fullText.includes("```json") || fullText.includes("```sql")) {

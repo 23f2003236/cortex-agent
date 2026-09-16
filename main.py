@@ -354,8 +354,8 @@ def web_search(query: str) -> str:
         try:
             results = []
             seen_domains = {}
-            with DDGS(timeout=8) as ddgs:
-                for r in ddgs.text(clean_query, max_results=14):
+            with DDGS(timeout=10) as ddgs:
+                for r in ddgs.text(clean_query, max_results=14, backend="auto"):
                     title = r.get("title", "").strip()
                     body = r.get("body", "").strip()
                     href = r.get("href", "").strip()
@@ -378,12 +378,13 @@ def web_search(query: str) -> str:
         except Exception as exc:
             err_msg = str(exc)
             if ("ratelimit" in err_msg.lower() or "202" in err_msg) and attempt < 2:
-                time.sleep(1.2 * (attempt + 1))
+                time.sleep(1.5 * (attempt + 1))
                 continue
             if attempt < 2:
                 time.sleep(1.0)
                 continue
-            return f"Web search failed: {exc}"
+            # If rate limited on all attempts, provide helpful notice rather than failing outright
+            return f"Note: Real-time search rate limit encountered for '{clean_query}'. Synthesize answer using knowledge base."
 
     return f"No search results found for '{query}'."
 
@@ -1967,18 +1968,30 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             yield event({"type": "tools", "tools_used": tools_used})
 
-            # Transition directive after tool rounds to instruct synthesis and forbid raw tool calling XML
+            # Transition directive after tool rounds to aggregate research data and instruct synthesis
+            synthesis_messages = list(messages)
             if tools_used:
-                messages.append(
-                    SystemMessage(
-                        content=(
-                            "[SYNTHESIS DIRECTIVE: All research and tool executions are finished. "
-                            "Present the final answer directly to the user in clean, structured Markdown now. "
-                            "DO NOT output any tool calls, JSON objects with 'tool' or 'arguments', XML tags, or code execution commands. "
-                            "Write the complete final response now.]"
-                        )
-                    )
+                research_snippets = []
+                for m in messages:
+                    if isinstance(m, ToolMessage) and getattr(m, "content", None):
+                        c = str(m.content).strip()
+                        if c:
+                            research_snippets.append(c)
+
+                research_context = "\n\n".join(research_snippets)
+                directive_content = (
+                    "### Verified Real-Time Research Facts:\n"
+                    f"{research_context}\n\n"
+                    if research_context else ""
+                ) + (
+                    "[SYNTHESIS DIRECTIVE: All research and tool executions are finished. "
+                    "Synthesize the verified facts above with your deep knowledge into an exhaustive, "
+                    "authoritative, and beautifully structured final response directly to the user in clean Markdown. "
+                    "Include comparison tables, pros/cons, and actionable guidance where appropriate. "
+                    "DO NOT output any tool calls, function tags, XML tags, search queries, or JSON objects. "
+                    "Write the complete final response in Markdown now.]"
                 )
+                synthesis_messages.append(SystemMessage(content=directive_content))
 
             llm = make_llm(model_override=effective_model, streaming=True, max_tokens=budget_tokens)
             max_attempts = 3
@@ -1996,7 +2009,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     is_tool_call_stream = None  # None = undecided, True = tool intercepted, False = normal text
                     intercepted_tool_info = None
 
-                    for chunk in llm.stream(messages):
+                    for chunk in llm.stream(synthesis_messages):
                         meta = getattr(chunk, "response_metadata", {}) or {}
                         add_kw = getattr(chunk, "additional_kwargs", {}) or {}
                         fr = meta.get("finish_reason") or add_kw.get("finish_reason")
@@ -2060,7 +2073,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
                     # If a tool call was intercepted in the stream:
                     if is_tool_call_stream is True and stream_buffer:
-                        # 1. Store Persistent Memory
+                        # 1. Store Persistent Memory if requested
                         if "remember" in stream_buffer:
                             fact = None
                             if stream_buffer.lstrip().startswith("{"):
@@ -2090,19 +2103,18 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             yield event({"type": "token", "text": reply})
                             break
 
-                        # 3. Clean any other stray XML tool calls or fallback
-                        clean_buf = re.sub(r"<\/?(?:function|parameter|tool_call|execute_pythoncode)[^>]*>", "", stream_buffer).strip()
-                        if clean_buf:
-                            full_text = clean_buf
-                            yield event({"type": "token", "text": clean_buf})
-                            break
+                        # 2. Stray tool call emitted during synthesis:
+                        # CRITICAL: DO NOT yield the raw tool query/XML to the user!
+                        print(f"Synthesis stream intercepted stray tool call: {stream_buffer[:80]}... Discarding tool call output.")
+                        full_text = ""
 
                     if full_text.strip():
                         break
                     time.sleep(1.5)
                 except Exception as stream_err:
                     print(f"Streaming attempt {attempt + 1} failed: {type(stream_err).__name__}: {stream_err}")
-                    if attempt < max_attempts - 1 and not full_text:
+                    if attempt < max_attempts - 1 and len(full_text.strip()) < 120:
+                        full_text = ""
                         time.sleep(1.5 * (attempt + 1))
                         continue
                     break
@@ -2126,32 +2138,40 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 yield event({"type": "token", "text": repair_close})
                 is_truncated = True
 
-            # Fallback if streaming failed, was aborted by 503, or produced no tokens or raw tool JSON
+            # Fallback if streaming failed, was aborted by 503, or produced no tokens, raw tool output, or unsubstantive snippet
             is_raw_tool_output = (
                 full_text.strip().startswith("<tool_call")
                 or bool(re.search(r'^\s*\{\s*"tool"\s*:', full_text.strip()))
                 or bool(re.search(r'^\s*\[(?:web_search|execute_python|remember):', full_text.strip()))
                 or bool(re.search(r'^\s*```(?:json)?\s*\{\s*"tool"\s*:', full_text.strip()))
+                or bool(re.search(r'<\/?(?:function|tool_call|parameter)', full_text))
             )
-            if not full_text.strip() or is_raw_tool_output:
+            is_unsubstantive = len(full_text.strip()) < 120 and len(raw_content) > 30
+            if not full_text.strip() or is_raw_tool_output or is_unsubstantive or last_finish_reason == "tool_calls":
                 try:
-                    print("Streaming produced empty or invalid response; attempting non-streaming fallback invoke...")
-                    fallback_messages = list(messages) + [
+                    print("Streaming produced empty, unsubstantive, or invalid response; attempting non-streaming fallback invoke...")
+                    had_partial = bool(full_text.strip())
+                    fallback_messages = list(synthesis_messages) + [
                         SystemMessage(content=(
-                            "[SYNTHESIS DIRECTIVE: Provide the final response directly to the user in clean, structured Markdown. "
-                            "Do NOT output any tool calls, function tags, XML tags, or JSON objects.]"
+                            "[SYNTHESIS DIRECTIVE: Provide the final response directly to the user in comprehensive, well-structured Markdown. "
+                            "Do NOT output any tool calls, function tags, XML tags, search queries, or JSON objects. "
+                            "Provide the complete, in-depth final answer now.]"
                         ))
                     ]
-                    fallback_llm = make_llm(model_override=effective_model, streaming=False)
+                    fallback_llm = make_llm(model_override=effective_model, streaming=False, max_tokens=budget_tokens)
                     res = fallback_llm.invoke(fallback_messages)
                     fallback_text = _chunk_to_text(res.content).strip()
                     if fallback_text:
                         clean_text = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", fallback_text).strip()
-                        clean_text = re.sub(r"<\/?(?:function|parameter)[^>]*>", "", clean_text).strip()
+                        clean_text = re.sub(r"<\/?(?:function|parameter|tool_call)[^>]*>", "", clean_text).strip()
                         clean_text = re.sub(r'\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"[^"]+"\s*:\s*[\s\S]*?\}', "", clean_text).strip()
                         final_text = clean_text if clean_text else fallback_text
-                        full_text = final_text
-                        yield event({"type": "token", "text": final_text})
+                        if final_text:
+                            full_text = final_text
+                            if had_partial:
+                                yield event({"type": "replace_text", "text": final_text})
+                            else:
+                                yield event({"type": "token", "text": final_text})
                 except Exception as fb_err:
                     print(f"Fallback invoke failed: {fb_err}")
 
