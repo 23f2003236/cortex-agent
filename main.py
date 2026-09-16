@@ -2085,8 +2085,11 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         plot_token = _current_harvested_plots_ctx.set([])
         full_text = ""
         tools_used = []
+        quota_reserved = False
+        estimated_tokens = 1500
         try:
             budget_tokens = estimate_response_tokens(effective_model, raw_content, mode=mode)
+            estimated_tokens = min(budget_tokens, 4000)
             yield event({
                 "type": "init",
                 "conversation_id": conv_id,
@@ -2097,7 +2100,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 "user_message_id": user_msg_id,
             })
 
-            tokens_ok, used_tok, limit_tok = database.check_daily_tokens(current_user["id"])
+            tokens_ok, used_tok, limit_tok = database.reserve_quota(current_user["id"], estimated_tokens=estimated_tokens)
             if not tokens_ok:
                 err_msg = f"Daily token quota reached ({used_tok:,} / {limit_tok:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
                 yield event({"type": "token", "text": err_msg})
@@ -2110,6 +2113,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     "usage": database.get_daily_usage(current_user["id"]),
                 })
                 return
+            quota_reserved = True
 
             # Check if user explicitly asked to save a memory
             mem_match = re.search(
@@ -2458,7 +2462,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             # Standard multi-modal vision token budget (~800 tokens per image tile in modern vision LLMs)
             image_token_cost = 800 if has_image_b64 else 0
             consumed_tokens = max(1, (len(clean_raw_text) + len(full_text)) // 4 + image_token_cost)
-            current_usage = database.increment_daily_tokens(current_user["id"], consumed_tokens)
+            current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
+            quota_reserved = False
 
             yield event({
                 "type": "done",
@@ -2504,6 +2509,13 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 detail = f"Request failed: {err_msg[:140]}"
             yield event({"type": "error", "detail": detail})
         finally:
+            if quota_reserved:
+                try:
+                    partial_tokens = max(0, len(full_text) // 4) if full_text.strip() else 0
+                    database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=partial_tokens)
+                except Exception as rel_err:
+                    print(f"Error releasing quota in finally: {rel_err}")
+                quota_reserved = False
             _active_conv_user_map.pop(conv_id, None)
             try:
                 _current_user_id_ctx.reset(ctx_token)

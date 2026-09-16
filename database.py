@@ -129,11 +129,18 @@ def init_db() -> None:
                 usage_date TEXT NOT NULL,
                 tokens_used INTEGER DEFAULT 0,
                 uploads_count INTEGER DEFAULT 0,
+                reserved_tokens INTEGER DEFAULT 0,
                 PRIMARY KEY (user_id, usage_date)
             )
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_usage_user ON daily_usage(user_id, usage_date)")
+
+        # Migration: ensure reserved_tokens column exists on existing databases
+        try:
+            conn.execute("ALTER TABLE daily_usage ADD COLUMN reserved_tokens INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
         conn.execute(
             """
@@ -854,11 +861,12 @@ def get_daily_usage(user_id: str, date_str: Optional[str] = None) -> dict:
     d = date_str or _today_str()
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT tokens_used, uploads_count FROM daily_usage WHERE user_id = ? AND usage_date = ?",
+            "SELECT tokens_used, uploads_count, reserved_tokens FROM daily_usage WHERE user_id = ? AND usage_date = ?",
             (user_id, d),
         ).fetchone()
         tokens_used = int(row["tokens_used"]) if row else 0
         uploads_count = int(row["uploads_count"]) if row else 0
+        reserved_tokens = int(row["reserved_tokens"]) if (row and "reserved_tokens" in row.keys() and row["reserved_tokens"] is not None) else 0
 
         # Check if user is a guest account
         u_row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -870,12 +878,64 @@ def get_daily_usage(user_id: str, date_str: Optional[str] = None) -> dict:
             "user_id": user_id,
             "date": d,
             "tokens_used": tokens_used,
+            "reserved_tokens": reserved_tokens,
             "tokens_limit": tok_limit,
             "uploads_count": uploads_count,
             "uploads_limit": up_limit,
-            "tokens_remaining": max(0, tok_limit - tokens_used),
+            "tokens_remaining": max(0, tok_limit - (tokens_used + reserved_tokens)),
             "uploads_remaining": max(0, up_limit - uploads_count),
         }
+
+
+def reserve_quota(user_id: str, estimated_tokens: int = 1500) -> tuple[bool, int, int]:
+    """Atomically reserve quota before streaming starts to prevent concurrent quota bypass."""
+    if estimated_tokens <= 0:
+        estimated_tokens = 500
+    d = _today_str()
+    with get_connection() as conn:
+        u_row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
+        is_guest = bool(u_row and u_row["is_guest"])
+        tok_limit = GUEST_DAILY_TOKEN_LIMIT if is_guest else DAILY_TOKEN_LIMIT
+
+        row = conn.execute(
+            "SELECT tokens_used, reserved_tokens FROM daily_usage WHERE user_id = ? AND usage_date = ?",
+            (user_id, d),
+        ).fetchone()
+        tokens_used = int(row["tokens_used"]) if row else 0
+        reserved_tokens = int(row["reserved_tokens"]) if (row and "reserved_tokens" in row.keys() and row["reserved_tokens"] is not None) else 0
+
+        if (tokens_used + reserved_tokens + estimated_tokens) > tok_limit:
+            return False, tokens_used + reserved_tokens, tok_limit
+
+        conn.execute(
+            """
+            INSERT INTO daily_usage (user_id, usage_date, tokens_used, uploads_count, reserved_tokens)
+            VALUES (?, ?, 0, 0, ?)
+            ON CONFLICT(user_id, usage_date) DO UPDATE SET
+            reserved_tokens = reserved_tokens + excluded.reserved_tokens
+            """,
+            (user_id, d, int(estimated_tokens)),
+        )
+        conn.commit()
+        return True, tokens_used + reserved_tokens + estimated_tokens, tok_limit
+
+
+def release_quota(user_id: str, estimated_tokens: int, actual_tokens: int = 0) -> dict:
+    """Atomically release reserved quota and commit actual consumed tokens."""
+    d = _today_str()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_usage (user_id, usage_date, tokens_used, uploads_count, reserved_tokens)
+            VALUES (?, ?, ?, 0, 0)
+            ON CONFLICT(user_id, usage_date) DO UPDATE SET
+            reserved_tokens = MAX(0, reserved_tokens - ?),
+            tokens_used = tokens_used + ?
+            """,
+            (user_id, d, max(0, int(actual_tokens)), max(0, int(estimated_tokens)), max(0, int(actual_tokens))),
+        )
+        conn.commit()
+    return get_daily_usage(user_id)
 
 
 def increment_daily_tokens(user_id: str, tokens: int) -> dict:
@@ -932,8 +992,9 @@ def increment_daily_uploads(user_id: str, count: int = 1) -> dict:
 
 def check_daily_tokens(user_id: str, additional: int = 1) -> tuple[bool, int, int]:
     usage = get_daily_usage(user_id)
-    is_allowed = (usage["tokens_used"] + additional) <= usage["tokens_limit"]
-    return is_allowed, usage["tokens_used"], usage["tokens_limit"]
+    total_active = usage["tokens_used"] + usage.get("reserved_tokens", 0)
+    is_allowed = (total_active + additional) <= usage["tokens_limit"]
+    return is_allowed, total_active, usage["tokens_limit"]
 
 
 def check_daily_uploads(user_id: str, additional: int = 1) -> tuple[bool, int, int]:
