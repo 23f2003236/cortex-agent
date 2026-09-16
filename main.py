@@ -234,12 +234,30 @@ def login(payload: LoginPayload):
     }
 
 
+@app.post("/api/auth/guest")
+def guest_auth():
+    """Create an anonymous ephemeral guest session with isolated data and quota."""
+    user = database.create_guest_user()
+    token = generate_token(user["id"], user["username"], expires_in_seconds=60 * 60 * 24)
+    return {
+        "ok": True,
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "email": "",
+            "is_guest": True,
+        },
+    }
+
+
 @app.get("/api/auth/me")
 def auth_me(current_user: dict = Depends(get_current_user)):
     return {
         "id": current_user["id"],
         "username": current_user["username"],
         "email": current_user.get("email", ""),
+        "is_guest": bool(current_user.get("is_guest", False)),
         "created_at": current_user.get("created_at", ""),
     }
 

@@ -37,7 +37,8 @@ def init_db() -> None:
                 email TEXT,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                is_guest INTEGER DEFAULT 0
             )
             """
         )
@@ -108,10 +109,12 @@ def init_db() -> None:
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id)")
 
-        # Migrate existing users table for custom_instructions
+        # Migrate existing users table for custom_instructions and is_guest
         user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         if "custom_instructions" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
+        if "is_guest" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN is_guest INTEGER DEFAULT 0")
 
         # Migrate existing messages table for feedback column
         msg_cols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
@@ -206,22 +209,55 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def create_guest_user() -> dict[str, Any]:
+    """Create an anonymous, isolated ephemeral guest account."""
+    uid = str(uuid.uuid4())
+    guest_suffix = uid[:8]
+    username = f"guest_{guest_suffix}"
+    raw_pwd = secrets.token_urlsafe(24)
+    pw_hash, salt = hash_password(raw_pwd)
+    now = _utc_now_iso()
+
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 1)",
+            (uid, username, "", pw_hash, salt, now),
+        )
+        conn.commit()
+
+    return {
+        "id": uid,
+        "username": username,
+        "email": "",
+        "is_guest": True,
+        "created_at": now,
+    }
+
+
 def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, created_at FROM users WHERE id = ?",
+            "SELECT id, username, email, created_at, is_guest FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        d["is_guest"] = bool(d.get("is_guest", 0))
+        return d
 
 
 def get_user_by_username(username: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, created_at FROM users WHERE username = ?",
+            "SELECT id, username, email, created_at, is_guest FROM users WHERE username = ?",
             (username.strip().lower(),),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        d["is_guest"] = bool(d.get("is_guest", 0))
+        return d
 
 
 # ---------------- Conversation Management ----------------
@@ -742,6 +778,8 @@ def set_conversation_project(conv_id: str, project_id: Optional[str], user_id: s
 
 DAILY_TOKEN_LIMIT = 100_000
 DAILY_UPLOAD_LIMIT = 10
+GUEST_DAILY_TOKEN_LIMIT = 25_000
+GUEST_DAILY_UPLOAD_LIMIT = 3
 
 
 def _today_str() -> str:
@@ -757,15 +795,22 @@ def get_daily_usage(user_id: str, date_str: Optional[str] = None) -> dict:
         ).fetchone()
         tokens_used = int(row["tokens_used"]) if row else 0
         uploads_count = int(row["uploads_count"]) if row else 0
+
+        # Check if user is a guest account
+        u_row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
+        is_guest = bool(u_row and u_row["is_guest"])
+        tok_limit = GUEST_DAILY_TOKEN_LIMIT if is_guest else DAILY_TOKEN_LIMIT
+        up_limit = GUEST_DAILY_UPLOAD_LIMIT if is_guest else DAILY_UPLOAD_LIMIT
+
         return {
             "user_id": user_id,
             "date": d,
             "tokens_used": tokens_used,
-            "tokens_limit": DAILY_TOKEN_LIMIT,
+            "tokens_limit": tok_limit,
             "uploads_count": uploads_count,
-            "uploads_limit": DAILY_UPLOAD_LIMIT,
-            "tokens_remaining": max(0, DAILY_TOKEN_LIMIT - tokens_used),
-            "uploads_remaining": max(0, DAILY_UPLOAD_LIMIT - uploads_count),
+            "uploads_limit": up_limit,
+            "tokens_remaining": max(0, tok_limit - tokens_used),
+            "uploads_remaining": max(0, up_limit - uploads_count),
         }
 
 

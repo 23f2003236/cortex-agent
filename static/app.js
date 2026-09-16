@@ -5356,11 +5356,8 @@ authPassword?.addEventListener("input", (e) => {
   }
 });
 
-// 1-Click Frictionless Guest Test Drive
+// 1-Click Frictionless Isolated Guest Test Drive
 async function handleGuestTestDrive() {
-  const guestUser = "guest_developer";
-  const guestPass = "cortex2026";
-
   if (authDemoBtn) {
     authDemoBtn.disabled = true;
     authDemoBtn.innerHTML = `<span>Connecting Guest Session…</span>`;
@@ -5371,19 +5368,10 @@ async function handleGuestTestDrive() {
   }
 
   try {
-    let res = await fetch("/api/auth/login", {
+    const res = await fetch("/api/auth/guest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: guestUser, password: guestPass }),
     });
-
-    if (!res.ok) {
-      res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: guestUser, password: guestPass, email: "guest@cortex.ai" }),
-      });
-    }
 
     const data = await res.json();
     if (!res.ok) {
@@ -5406,11 +5394,8 @@ async function handleGuestTestDrive() {
     await loadConversations(false);
   } catch (err) {
     console.error("Guest drive error:", err);
-    openAuthModal("register");
-    if (authUsername) authUsername.value = guestUser;
-    if (authPassword) authPassword.value = guestPass;
     if (authErrorAlert) {
-      authErrorAlert.textContent = "Click 'Create Account' to start your guest session.";
+      authErrorAlert.textContent = err.message || "Failed to initialize guest session. Please try again.";
       authErrorAlert.style.display = "block";
     }
   } finally {
