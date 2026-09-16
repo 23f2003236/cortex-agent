@@ -1053,6 +1053,7 @@ def get_daily_usage(user_id: str, date_str: Optional[str] = None) -> dict:
             "tokens_used": tokens_used,
             "reserved_tokens": reserved_tokens,
             "tokens_limit": tok_limit,
+            "token_limit": tok_limit,
             "uploads_count": uploads_count,
             "uploads_limit": up_limit,
             "tokens_remaining": max(0, tok_limit - (tokens_used + reserved_tokens)),

@@ -2301,8 +2301,30 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         quota_reserved = False
         estimated_tokens = 1500
         try:
-            budget_tokens = estimate_response_tokens(effective_model, raw_content, mode=mode)
-            estimated_tokens = min(budget_tokens, 4000)
+            usage_info = database.get_daily_usage(current_user["id"])
+            current_used = usage_info.get("tokens_used", 0)
+            current_reserved = usage_info.get("reserved_tokens", 0)
+            tok_limit = usage_info.get("token_limit", 100000)
+            remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
+
+            if remaining_allowance <= 0:
+                err_msg = f"Daily token quota reached ({current_used:,} / {tok_limit:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
+                yield event({"type": "token", "text": err_msg})
+                yield event({
+                    "type": "done",
+                    "conversation_id": conv_id,
+                    "user_message_id": user_msg_id,
+                    "assistant_message_id": None,
+                    "full_text": err_msg,
+                    "usage": usage_info,
+                })
+                return
+
+            raw_requested_budget = estimate_response_tokens(effective_model, raw_content, mode=mode)
+            # Reserve full generation budget, capped by user's remaining allowance
+            budget_tokens = min(raw_requested_budget, remaining_allowance)
+            estimated_tokens = budget_tokens
+
             yield event({
                 "type": "init",
                 "conversation_id": conv_id,
@@ -2475,6 +2497,13 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             if clean_chunk:
                                 full_text += clean_chunk
                                 yield event({"type": "token", "text": clean_chunk})
+                                # In-stream token guard: if generated tokens reach reserved budget, halt gracefully
+                                if (len(full_text) // 4) >= estimated_tokens:
+                                    is_truncated = True
+                                    trunc_note = "\n\n[Generation completed: Reached daily token allowance limit.]"
+                                    full_text += trunc_note
+                                    yield event({"type": "token", "text": trunc_note})
+                                    break
                             continue
 
                         # Still evaluating or buffering initial tokens
