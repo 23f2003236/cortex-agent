@@ -74,7 +74,10 @@ SYSTEM_PROMPT = os.getenv(
     "- CODE BLOCKS & ARTIFACTS: Programming code examples (HTML, CSS, JS, Python, SQL) MUST use standard markdown code blocks (e.g. ```html, ```css, ```python). Only format code as a dedicated downloadable artifact (e.g. ```html:app or ```python:filename=script.py) when the user explicitly requests to build an interactive web app or generate a standalone file. For standard code explanations, use regular code fences.\n"
     "- COMPLETENESS & PACING: Budget your explanations to deliver comprehensive conceptual depth, clean architecture breakdowns, and focused code snippets that reach a definitive conclusion. NEVER dump endless multi-thousand-line source code files that cause responses to hit token limits or cut off mid-sentence.\n"
     "- MATHEMATICS & FORMULAS: Format display equations on their own lines using $$...$$ (outside blockquotes, never prefix with >) and inline math with $...$ (never \\( or \\[).\n\n"
-    "4. TONE & STRUCTURE:\n"
+    "4. ATTACHED DOCUMENTS & SCANNED PDF POLICY:\n"
+    "- When the user attaches a document or PDF where the extractable text is minimal, corrupted, or scanned (e.g. mostly repeated watermarks, photocopy images, or fragmentary lines), politely explain that the uploaded PDF contains scanned page images with limited selectable digital text.\n"
+    "- NEVER STOP THERE OR LEAVE THE USER EMPTY-HANDED! If the user's prompt or filename indicates a recognizable topic, subject, textbook chapter, or concept (e.g., 'Selina Class 9 Physics Chapter 3 Laws of Motion', NCERT, standard algorithms, legal/business topics), PROACTIVELY DELIVER the complete, thorough, chapter-wise summary or answer using your deep domain knowledge (and DuckDuckGo web search if specific questions or exercises need lookup). Always ensure the user receives immediate, high-value assistance.\n\n"
+    "5. TONE & STRUCTURE:\n"
     "- You have a vibrant, highly intelligent, and engaging persona like Claude and ChatGPT. Use clear markdown headers, comparison tables, bullet points, and tasteful emojis (🚀, 💡, ⚡, 📊, 🎯, 🧠, 🛠️, ✨) to make explanations modern, authoritative, and delightful to read.",
 )
 
@@ -1023,13 +1026,43 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
         try:
             reader = pypdf.PdfReader(io.BytesIO(raw_content))
             pages_text = []
+            total_substantive_words = 0
+            raw_page_count = len(reader.pages)
+
             for i, page in enumerate(reader.pages):
                 page_content = page.extract_text() or ""
-                if page_content.strip():
-                    pages_text.append(f"--- Page {i + 1} ---\n{page_content.strip()}")
-            extracted_text = "\n\n".join(pages_text)
-            if not extracted_text.strip():
-                extracted_text = "(No readable text found in PDF. It may be scanned or image-only.)"
+                clean_lines = []
+                for line in page_content.splitlines():
+                    trimmed = line.strip()
+                    if not trimmed:
+                        continue
+                    # Ignore common website download watermarks that pollute scanned textbook PDFs
+                    if re.search(r"downloaded\s+from\s+https?://", trimmed, re.IGNORECASE) or re.search(r"^\s*https?://www\.(studiestoday|learncbse|vedantu|byjus)\.com\s*$", trimmed, re.IGNORECASE):
+                        continue
+                    clean_lines.append(trimmed)
+
+                clean_page = "\n".join(clean_lines).strip()
+                if clean_page:
+                    words = len(clean_page.split())
+                    total_substantive_words += words
+                    pages_text.append(f"--- Page {i + 1} ---\n{clean_page}")
+
+            is_scanned_or_low_text = (total_substantive_words < 60 and raw_page_count >= 2) or not pages_text
+
+            if pages_text and not is_scanned_or_low_text:
+                extracted_text = "\n\n".join(pages_text)
+            elif pages_text and is_scanned_or_low_text:
+                joined_frags = "\n\n".join(pages_text)
+                extracted_text = (
+                    f"[Document Notice: '{filename}' has {raw_page_count} pages, but appears to consist of SCANNED images/photocopies with only {total_substantive_words} words of extractable digital text.]\n\n"
+                    f"{joined_frags}\n\n"
+                    f"[Agent Instruction: The user uploaded a scanned PDF where pages are images with minimal selectable text. Politely clarify that the uploaded PDF consists of scanned page images, but DO NOT stop there. Actively provide the complete, authoritative summary or answers for the topic indicated by the filename/prompt ('{filename}') using your deep subject knowledge and web search.]"
+                )
+            else:
+                extracted_text = (
+                    f"[Document Notice: '{filename}' ({raw_page_count} pages) is a SCANNED image-only PDF with NO selectable text streams.]\n\n"
+                    f"[Agent Instruction: Politely mention that the PDF is a scanned image document, but DO NOT refuse to answer. Provide the complete summary or solution for the subject/topic indicated by the filename or prompt ('{filename}') directly from your knowledge base.]"
+                )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to parse PDF: {exc}")
     elif ext in [".xlsx", ".xls"]:
