@@ -1,0 +1,43 @@
+# Python Environments & Cache
+.venv/
+env/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Secrets & Environment Variables (CRITICAL: Never commit to Git)
+.env
+.env*.local
+.env.production
+.env.staging
+*.key
+*.pem
+secret.txt
+
+# Database Files (Contains user hashes, sessions, conversations)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+cortex.db
+cortex_agent.db
+database.db
+
+# Scratch & Temporary Logs / Notes
+scratch/
+calculus_msg.txt
+snippet.txt
+test.md
+*.log
+
+# Editor & OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

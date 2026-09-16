@@ -1,0 +1,2317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex — Autonomous Agent</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22 fill=%22none%22><rect width=%2232%22 height=%2232%22 rx=%229%22 fill=%22%230a0d10%22 stroke=%22%2322c55e%22 stroke-width=%221.5%22/><path d=%22M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z%22 stroke=%22%2322c55e%22 stroke-width=%222%22 stroke-linejoin=%22round%22/><path d=%22M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z%22 fill=%22%2322c55e%22 fill-opacity=%220.25%22 stroke=%22%2322c55e%22 stroke-width=%221.7%22 stroke-linejoin=%22round%22/><circle cx=%2216%22 cy=%2216%22 r=%222.5%22 fill=%22%234ade80%22/><path d=%22M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5%22 stroke=%22%2322c55e%22 stroke-width=%221.6%22/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20260913_v4" />
+  <link rel="stylesheet" href="/static/style.css?v=20260916_v49" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/static/vendor/katex/katex.min.js?v=20260913_v4"></script>
+  <script src="/static/vendor/katex/auto-render.min.js?v=20260913_v4"></script>
+  <script src="/static/vendor/chart.umd.min.js?v=20260914_v1"></script>
+  <script>if (typeof Chart === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js"><\\/script>'); }</script>
+  <script src="/static/vendor/marked.min.js?v=20260914_v1"></script>
+  <script>if (typeof marked === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"><\\/script>'); }</script>
+  <script src="/static/vendor/purify.min.js?v=20260914_v1"></script>
+  <script>if (typeof DOMPurify === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"><\\/script>'); }</script>
+</head>
+<body>
+
+  <!-- ==================== LANDING PAGE VIEW ==================== -->
+  <div id="landingView" class="landing-view">
+    <!-- Top Navigation -->
+    <header class="landing-nav">
+      <div class="landing-nav-inner">
+        <a href="#hero" class="brand brand-link">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+              <path d="M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z" fill="#22c55e" fill-opacity="0.25" stroke="#22c55e" stroke-width="1.7" stroke-linejoin="round"/>
+              <circle cx="16" cy="16" r="2.5" fill="#4ade80"/>
+              <path d="M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">Cortex</span>
+            <span class="brand-badge">Agent 3.1</span>
+          </div>
+        </a>
+
+        <nav class="landing-nav-links">
+          <a href="#capabilities">Capabilities</a>
+          <a href="#showcase">Agent 3.1</a>
+          <a href="#savings">Savings</a>
+          <a href="#models">Models</a>
+          <a href="#research">Research</a>
+          <a href="#faqs">FAQs</a>
+        </nav>
+
+        <div class="landing-nav-actions">
+          <div class="nav-status-pill">
+            <span class="status-pulse"></span>
+            <span>NVIDIA NIM</span>
+          </div>
+          <button id="navSignInBtn" class="btn-ghost-nav" type="button">Sign In</button>
+          <button id="navRegisterBtn" class="btn-accent-nav" type="button">Launch Cortex</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 1. Hero Section -->
+    <section id="hero" class="landing-hero">
+      <div class="hero-stars-backdrop" aria-hidden="true"></div>
+
+      <div class="hero-badge">
+        <span class="badge-pulse"></span>
+        <span>Powered by NVIDIA NIM & LangChain Multi-Model Engine</span>
+      </div>
+
+      <h1 class="hero-title hero-serif-title">
+        We make autonomous coding & reasoning <span class="highlight-serif">100% free</span>
+      </h1>
+
+      <p class="hero-subtitle">
+        Supercharged multi-model intelligence, live sandboxed execution, real-time web research, and interactive data visualization. No paywalls. No closed gardens.
+      </p>
+
+      <!-- Pill Toggles like Freebuff -->
+      <div class="hero-pill-tabs">
+        <span class="pill-tab active">Web Agent</span>
+        <span class="pill-tab">Code Sandbox</span>
+        <span class="pill-tab">Reasoning MoE</span>
+        <span class="pill-tab">KaTeX Math</span>
+        <span class="pill-tab">Multi-Modal</span>
+      </div>
+
+      <!-- Main CTA Button -->
+      <div class="hero-action-box">
+        <button id="heroGetStartedBtn" class="hero-cta-btn" type="button">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <span>Launch Cortex Studio</span>
+          <span class="cta-arrow-badge">Free Forever</span>
+        </button>
+        <div class="hero-subtext">No credit card required &middot; Instant access &middot; 8 Active NIM Models</div>
+      </div>
+
+      <!-- Developer Counter Metric -->
+      <div class="hero-counter-wrap">
+        <span>Join <strong class="counter-number">414,403</strong> developers & researchers</span>
+      </div>
+
+      <!-- Comparison Matrix Card (Screenshot 1) -->
+      <div class="hero-comparison-card">
+        <div class="comparison-row highlight-cortex">
+          <div class="comp-brand">
+            <div class="comp-icon cortex-icon">
+              <svg viewBox="0 0 32 32" width="16" height="16" fill="none"><path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2"/><circle cx="16" cy="16" r="2.5" fill="#4ade80"/></svg>
+            </div>
+            <div class="comp-info">
+              <strong>Cortex Agent 3.1</strong>
+              <span>8 NIM Models &middot; Live Sandbox &middot; Web Search</span>
+            </div>
+          </div>
+          <div class="comp-bar-track">
+            <div class="comp-bar-fill cortex-fill"></div>
+          </div>
+          <div class="comp-price green-text">$0 <small>/ yr</small></div>
+        </div>
+
+        <div class="comparison-row">
+          <div class="comp-brand">
+            <div class="comp-icon competitor-icon">✦</div>
+            <div class="comp-info">
+              <strong>Claude Pro</strong>
+              <span>Usage limits &middot; No native free sandbox</span>
+            </div>
+          </div>
+          <div class="comp-bar-track">
+            <div class="comp-bar-fill competitor-fill" style="width: 58%;"></div>
+          </div>
+          <div class="comp-price red-text">$240 <small>/ yr</small></div>
+        </div>
+
+        <div class="comparison-row">
+          <div class="comp-brand">
+            <div class="comp-icon competitor-icon">❖</div>
+            <div class="comp-info">
+              <strong>ChatGPT Plus</strong>
+              <span>Strict rate limits &middot; Cloud compute lock-in</span>
+            </div>
+          </div>
+          <div class="comp-bar-track">
+            <div class="comp-bar-fill competitor-fill" style="width: 58%;"></div>
+          </div>
+          <div class="comp-price red-text">$240 <small>/ yr</small></div>
+        </div>
+
+        <div class="comparison-row">
+          <div class="comp-brand">
+            <div class="comp-icon competitor-icon">⚡</div>
+            <div class="comp-info">
+              <strong>Cursor Pro</strong>
+              <span>Subscription tier required for agent mode</span>
+            </div>
+          </div>
+          <div class="comp-bar-track">
+            <div class="comp-bar-fill competitor-fill" style="width: 65%;"></div>
+          </div>
+          <div class="comp-price red-text">$240 <small>/ yr</small></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. "Introducing Cortex Agent 3.1" Showcase Section with Live Claude Code Terminal Simulator -->
+    <section id="showcase" class="landing-showcase-section">
+      <div class="showcase-container">
+        <div class="showcase-left">
+          <div class="showcase-tag-row">
+            <span class="showcase-tag">NEW</span>
+            <span class="showcase-subtag">CLAUDE CODE ARCHITECTURE</span>
+          </div>
+          <h2 class="showcase-title">
+            Meet the Autonomous Agent That <span class="highlight-serif">Actually Codes & Executes</span>
+          </h2>
+          <p class="showcase-desc">
+            Unlike chatbots that only talk, Cortex Agent 3.1 operates like a staff principal engineer. It breaks down prompts into autonomous sub-tasks, performs real-time web research, executes sandboxed Python, generates Matplotlib curves, and packages deliverable markdown artifacts.
+          </p>
+
+          <div class="replaces-block">
+            <span class="replaces-label">REPLACES 5 EXPENSIVE SUBSCRIPTIONS</span>
+            <div class="replaces-grid">
+              <div class="replace-item">
+                <span class="rep-icon">❖</span>
+                <span>ChatGPT Plus ($240/yr)</span>
+              </div>
+              <div class="replace-item">
+                <span class="rep-icon">⚡</span>
+                <span>Claude Pro ($240/yr)</span>
+              </div>
+              <div class="replace-item">
+                <span class="rep-icon">🔍</span>
+                <span>Perplexity Pro ($200/yr)</span>
+              </div>
+              <div class="replace-item">
+                <span class="rep-icon">💻</span>
+                <span>Cursor Pro ($240/yr)</span>
+              </div>
+              <div class="replace-item">
+                <span class="rep-icon">✦</span>
+                <span>Gemini Advanced ($240/yr)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feature Metric Highlights -->
+          <div class="showcase-stats-grid">
+            <div class="showcase-stat-item">
+              <span class="showcase-stat-val">100k</span>
+              <span class="showcase-stat-label">Daily Tokens / Free</span>
+            </div>
+            <div class="showcase-stat-item">
+              <span class="showcase-stat-val">7</span>
+              <span class="showcase-stat-label">Frontier NIM Models</span>
+            </div>
+            <div class="showcase-stat-item">
+              <span class="showcase-stat-val">&lt;400ms</span>
+              <span class="showcase-stat-label">Sandbox Cold-Start</span>
+            </div>
+          </div>
+
+          <div class="showcase-cta-group">
+            <button id="showcaseGetStartedBtn" class="hero-cta-btn showcase-cta" type="button">
+              <span>Launch Studio Free</span>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+            <button id="showcaseDemoBtn" class="showcase-demo-btn" type="button">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span>1-Click Test Drive</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="showcase-right">
+          <!-- Interactive Claude Code Agent Terminal Simulator -->
+          <div class="terminal-sim-window" id="terminalSimWindow">
+            <div class="terminal-sim-topbar">
+              <div class="terminal-sim-dots">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+              </div>
+              <div class="terminal-sim-title-wrap">
+                <span class="terminal-sim-badge">cortex-agent@v3.1.4</span>
+                <span class="terminal-sim-branch">git:(main)</span>
+              </div>
+              <div class="terminal-sim-status">
+                <span class="status-live-pulse"></span>
+                <span>NIM ONLINE &middot; 18ms</span>
+              </div>
+            </div>
+
+            <!-- Terminal Interactive Tabs -->
+            <div class="terminal-sim-tabs">
+              <button class="sim-tab active" data-tab="terminal" type="button">
+                <span>▶ Agent Terminal</span>
+              </button>
+              <button class="sim-tab" data-tab="sandbox" type="button">
+                <span>⚡ Live Sandbox</span>
+              </button>
+              <button class="sim-tab" data-tab="artifact" type="button">
+                <span>📄 Generated Artifact</span>
+              </button>
+              <button class="sim-tab" data-tab="math" type="button">
+                <span>📐 KaTeX Formula</span>
+              </button>
+            </div>
+
+            <!-- Quick Clickable Prompt Presets -->
+            <div class="terminal-sim-presets">
+              <span class="presets-label">Prompt Presets:</span>
+              <button class="sim-preset-chip active" data-preset="ratelimiter" type="button">⚡ Rate Limiter</button>
+              <button class="sim-preset-chip" data-preset="mlpipeline" type="button">📊 ML Benchmark</button>
+              <button class="sim-preset-chip" data-preset="webscrape" type="button">🌐 Web Researcher</button>
+              <button class="sim-preset-chip" data-preset="mathproof" type="button">📐 KaTeX Math</button>
+            </div>
+
+            <!-- Tab 1: Terminal Content Pane -->
+            <div class="terminal-sim-body active" id="simPane-terminal">
+              <!-- Animated Command Line -->
+              <div class="terminal-sim-cmd-line">
+                <span class="sim-prompt-symbol">cortex&gt;</span>
+                <span class="sim-typed-text" id="simTypedText">Design distributed Token-Bucket rate limiter with Redis & benchmark throughput curve</span>
+                <span class="sim-cursor"></span>
+              </div>
+
+              <!-- Live Tool Execution Steps -->
+              <div class="terminal-sim-steps" id="simStepsContainer">
+                <div class="sim-step-item thought">
+                  <div class="sim-step-header">
+                    <span class="sim-step-icon">💭</span>
+                    <span class="sim-step-title">Autonomous Planning & Architectural Decomposition</span>
+                    <span class="sim-step-time">0.6s</span>
+                  </div>
+                  <div class="sim-step-detail">
+                    Identified requirement: High-throughput 500k req/s rate limiter. Selecting sliding-window token bucket algorithm with atomic Redis EVAL Lua script to prevent race conditions. Generating benchmark harness and Matplotlib throughput curve.
+                  </div>
+                </div>
+
+                <div class="sim-step-item tool">
+                  <div class="sim-step-header">
+                    <span class="sim-step-icon">🌐</span>
+                    <span class="sim-step-title">tool: web_search("distributed token bucket redis lua latency benchmark 2026")</span>
+                    <span class="sim-step-badge done">200 OK</span>
+                  </div>
+                  <div class="sim-step-detail mono">
+                    ✓ Found 4 authoritative citations (ACM, Redis Labs, Cloudflare Engineering). Extracted optimal Lua atomicity patterns.
+                  </div>
+                </div>
+
+                <div class="sim-step-item tool">
+                  <div class="sim-step-header">
+                    <span class="sim-step-icon">🐍</span>
+                    <span class="sim-step-title">tool: execute_python(code="import matplotlib.pyplot as plt; ...")</span>
+                    <span class="sim-step-badge done">EXECUTED 0.42s</span>
+                  </div>
+                  <div class="sim-step-detail mono">
+                    [STDOUT] Simulated 500,000 requests across 16 worker threads.
+                    [STDOUT] Peak throughput: 489,210 ops/sec | p99 latency: 1.18ms | Drops: 0%
+                    [FIGURE] Harvested plot: token_bucket_throughput.png (1280x720 300DPI)
+                  </div>
+                </div>
+
+                <div class="sim-step-item artifact">
+                  <div class="sim-step-header">
+                    <span class="sim-step-icon">📄</span>
+                    <span class="sim-step-title">Artifact Generated: distributed_rate_limiter.py (100% Type-Annotated)</span>
+                    <span class="sim-step-badge saved">SAVED .MD</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Terminal Interactive Bottom Input Bar -->
+              <div class="terminal-sim-input-bar">
+                <span class="sim-input-icon">❯</span>
+                <input type="text" id="simCustomInput" placeholder="Try your own prompt (e.g. build fastAPI auth with JWT)..." spellcheck="false" autocomplete="off" />
+                <button id="simRunBtn" class="sim-run-btn" type="button">Run</button>
+              </div>
+            </div>
+
+            <!-- Tab 2: Live Sandbox Content Pane -->
+            <div class="terminal-sim-body" id="simPane-sandbox" style="display: none;">
+              <div class="sim-sandbox-preview">
+                <div class="sim-sandbox-header">
+                  <span class="sim-sandbox-title">⚡ Python 3.12 Sandboxed Execution Terminal</span>
+                  <span class="sim-sandbox-pill">ISOLATED PROCESS</span>
+                </div>
+                <pre class="sim-code-preview"><code>import asyncio
+import time
+from typing import Optional
+
+class DistributedRateLimiter:
+    """Production-grade Token Bucket with Redis atomic eval."""
+    def __init__(self, capacity: int = 100_000, refill_rate: float = 10_000.0):
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        self.tokens = capacity
+        self.last_refill = time.monotonic()
+
+    async def acquire(self, tokens: int = 1) -> bool:
+        now = time.monotonic()
+        delta = now - self.last_refill
+        self.tokens = min(self.capacity, self.tokens + delta * self.refill_rate)
+        self.last_refill = now
+        if self.tokens >= tokens:
+            self.tokens -= tokens
+            return True
+        return False</code></pre>
+                <div class="sim-sandbox-footer">
+                  <span class="sim-bench-pill">Throughput: 489k ops/sec</span>
+                  <span class="sim-bench-pill">p99: 1.18ms</span>
+                  <span class="sim-bench-pill success">Zero Memory Leaks</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 3: Generated Artifact Content Pane -->
+            <div class="terminal-sim-body" id="simPane-artifact" style="display: none;">
+              <div class="document-card sim-artifact-card">
+                <div class="document-header">
+                  <div class="document-file-info">
+                    <div class="document-icon"><svg viewBox="0 0 24 24" fill="none" width="14" height="14" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                    <div class="document-titles">
+                      <span class="document-filename">rate_limiter_specification.md</span>
+                      <div class="document-meta"><span>MARKDOWN DOCUMENT</span><span>•</span><span>4.8 KB</span></div>
+                    </div>
+                  </div>
+                  <div class="document-actions">
+                    <span class="document-btn"><span>View Raw</span></span>
+                    <span class="document-btn"><span>Copy</span></span>
+                    <span class="document-btn document-download-btn"><span>Download .md</span></span>
+                  </div>
+                </div>
+                <div class="document-body sim-doc-body">
+                  <div class="document-rendered-view">
+                    <h3>Architecture Specification: Distributed Token Bucket</h3>
+                    <p>Designed for resilient horizontal scale across multi-region edge gateways. Guarantees strict linearizability under high-concurrency spikes.</p>
+                    <ul>
+                      <li><strong>Atomic Redis Lua Scripting</strong>: Eliminates check-then-set race hazards.</li>
+                      <li><strong>Local L1 Token Caching</strong>: Serves 92% of non-exhausted checks in sub-millisecond RAM.</li>
+                      <li><strong>Graceful Degradation</strong>: In-memory fallback buckets engage seamlessly if Redis network partition occurs.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 4: KaTeX Formula Content Pane -->
+            <div class="terminal-sim-body" id="simPane-math" style="display: none;">
+              <div class="sim-math-preview">
+                <div class="sim-math-box">
+                  <div class="sim-math-label">Continuous Replenishment Differential Equation</div>
+                  <div class="sim-math-formula">
+                    $$T(t) = \min\left(C, \; T(t_0) + \int_{t_0}^t r(\tau) \, d\tau\right)$$
+                  </div>
+                </div>
+                <div class="sim-math-box">
+                  <div class="sim-math-label">Discrete Token Bucket Invariant</div>
+                  <div class="sim-math-formula">
+                    $$\Delta T = \min\left(C - T_{prev}, \; \lfloor \Delta t \cdot r \rfloor\right)$$
+                  </div>
+                </div>
+                <p class="sim-math-caption">✓ Automatically normalized and rendered with KaTeX for instant Notion & Obsidian export.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Capabilities Bento Grid Section -->
+    <section id="capabilities" class="landing-section">
+      <div class="section-badge">Architecture & Capabilities</div>
+      <h2 class="section-title">Built for Real-World Intelligent Workflows</h2>
+      <p class="section-subtitle">Everything you need to analyze datasets, research topics live on the web, execute sandboxed code, and build deliverables.</p>
+
+      <div class="bento-grid">
+        <div class="bento-card bento-hero-card">
+          <div class="bento-icon">🧠</div>
+          <h3>Frontier Intelligence Fleet</h3>
+          <p>Switch seamlessly between Cortex 5 (Super Agent), Cortex 5 Ultra (Master Agent), Cortex 4 (Deep Reasoning), and Cortex 3.5 Lightning.</p>
+          <div class="bento-tag-list">
+            <span>Sub-second TTFT</span>
+            <span>Zero Vendor Lock-in</span>
+            <span>Tool Calling</span>
+          </div>
+        </div>
+
+        <div class="bento-card">
+          <div class="bento-icon">⚡</div>
+          <h3>Isolated Live Sandbox</h3>
+          <p>Instant live HTML, CSS, JavaScript, and Mermaid rendering in a sandboxed split preview panel with 1-click downloads.</p>
+        </div>
+
+        <div class="bento-card">
+          <div class="bento-icon">🌐</div>
+          <h3>Live Web Research</h3>
+          <p>Autonomous DuckDuckGo web search, full-text URL content scraping, live weather telemetry, and Wikipedia fact-checking.</p>
+        </div>
+
+        <div class="bento-card">
+          <div class="bento-icon">📐</div>
+          <h3>KaTeX Math & Notion Sync</h3>
+          <p>Real-time mathematical formula rendering with automatic normalization for instant copy-paste into Notion & Obsidian.</p>
+        </div>
+
+        <div class="bento-card">
+          <div class="bento-icon">📊</div>
+          <h3>Interactive Chart Engine</h3>
+          <p>Generate responsive Chart.js visualizations directly from raw CSV or JSON data with zero external dependencies.</p>
+        </div>
+
+        <div class="bento-card">
+          <div class="bento-icon">🔒</div>
+          <h3>100% Private Workspaces</h3>
+          <p>PBKDF2 salted credentials, signed HMAC session tokens, and durable SQLite WAL storage. Your prompts remain yours alone.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Interactive Savings Calculator Section (Screenshot 3) -->
+    <section id="savings" class="landing-section savings-section">
+      <h2 class="section-title text-center hero-serif-title">See how much you can save</h2>
+
+      <div class="savings-container">
+        <!-- Left Card: Tool pills + Team size slider -->
+        <div class="savings-card savings-tools-card">
+          <div class="savings-pills-grid" id="savingsPillsGrid">
+            <button class="tool-pill" data-price="120" type="button"><span class="pill-icon">⯏</span> OpenCode $120</button>
+            <button class="tool-pill active" data-price="120" type="button"><span class="pill-icon">⌨</span> Copilot Pro $120</button>
+            <button class="tool-pill" data-price="200" type="button"><span class="pill-icon">✳</span> Perplexity Pro $200</button>
+            <button class="tool-pill" data-price="240" type="button"><span class="pill-icon">◉</span> Codex $240</button>
+            <button class="tool-pill" data-price="240" type="button"><span class="pill-icon">e</span> Emergent $240</button>
+            <button class="tool-pill active" data-price="240" type="button"><span class="pill-icon">❖</span> ChatGPT Plus $240</button>
+            <button class="tool-pill" data-price="240" type="button"><span class="pill-icon">✦</span> Gemini Advanced $240</button>
+            <button class="tool-pill" data-price="324" type="button"><span class="pill-icon">b</span> Bolt.new $324</button>
+            <button class="tool-pill" data-price="360" type="button"><span class="pill-icon">𝕏</span> Grok $360</button>
+            <button class="tool-pill" data-price="600" type="button"><span class="pill-icon">♥</span> Lovable $600</button>
+            <button class="tool-pill active" data-price="720" type="button"><span class="pill-icon">⬡</span> Cursor $720</button>
+            <button class="tool-pill" data-price="1080" type="button"><span class="pill-icon">⠵</span> Replit $1,080</button>
+            <button class="tool-pill active" data-price="1200" type="button"><span class="pill-icon">✴</span> Claude Code $1,200</button>
+            <button class="tool-pill" data-price="1200" type="button"><span class="pill-icon">❖</span> Factory $1,200</button>
+            <button class="tool-pill" data-price="1920" type="button"><span class="pill-icon">◓</span> Base44 $1,920</button>
+            <button class="tool-pill" data-price="2400" type="button"><span class="pill-icon">▷</span> Devin $2,400</button>
+          </div>
+
+          <div class="savings-slider-wrap">
+            <div class="slider-meta">
+              <span class="slider-label">Team size</span>
+              <span id="seatCountDisplay" class="slider-val">5 seats</span>
+            </div>
+            <input type="range" id="teamSeatSlider" class="custom-green-slider" min="1" max="25" value="5" step="1" />
+          </div>
+        </div>
+
+        <!-- Right Card: Amount saved + CTA -->
+        <div class="savings-card savings-result-card">
+          <div class="savings-meta-top">You save</div>
+          <div id="savingsAmountDisplay" class="savings-huge-number">$11,400</div>
+          <div class="savings-meta-sub">a year</div>
+
+          <div class="savings-zero-tag">Cortex is $0. Forever.</div>
+
+          <button id="savingsGetStartedBtn" class="hero-cta-btn savings-cta-btn" type="button">
+            <span>Launch Cortex Studio</span>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+
+          <div id="savingsBreakdownText" class="savings-breakdown">
+            Replaces $2,280 per seat × 5 seats
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Interactive Frontier Models Fleet Showcase -->
+    <section id="models" class="landing-section models-fleet-section">
+      <div class="section-badge">CORTEX MULTI-MODEL INTELLIGENCE</div>
+      <h2 class="section-title">7 Frontier NIM Models. Zero Lock-In.</h2>
+      <p class="section-subtitle">Switch seamlessly across specialized intelligence tiers engineered for autonomous coding, exhaustive reasoning, vision, and ultra-fast generation.</p>
+
+      <!-- Interactive Model Cards Grid -->
+      <div class="models-grid" id="modelsFleetGrid">
+        <div class="model-card active-model" data-model-id="cortex-5-super">
+          <div class="model-card-top">
+            <span class="model-tier">FLAGSHIP AUTONOMOUS AGENT</span>
+            <span class="model-badge super">120B MoE</span>
+          </div>
+          <h3>Cortex 5 Super</h3>
+          <p>Premier autonomous coding & tool orchestration engine paired with LangChain agent loop.</p>
+          <div class="model-card-metrics">
+            <span>⚡ 18ms TTFT</span>
+            <span>🧠 128k Context</span>
+            <span>🛠️ 11 Tools</span>
+          </div>
+        </div>
+
+        <div class="model-card" data-model-id="cortex-5-ultra">
+          <div class="model-card-top">
+            <span class="model-tier">FRONTIER ULTRA REASONER</span>
+            <span class="model-badge ultra">550B Master</span>
+          </div>
+          <h3>Cortex 5 Ultra</h3>
+          <p>Massive 550B frontier model for exhaustive multi-chapter PRDs, architecture specifications, and deep research.</p>
+          <div class="model-card-metrics">
+            <span>⚡ 32ms TTFT</span>
+            <span>🧠 128k Context</span>
+            <span>💎 Master Agent</span>
+          </div>
+        </div>
+
+        <div class="model-card" data-model-id="cortex-4-deep">
+          <div class="model-card-top">
+            <span class="model-tier">CHAIN-OF-THOUGHT LOGIC</span>
+            <span class="model-badge deep">MoE Reasoning</span>
+          </div>
+          <h3>Cortex 4 Deep</h3>
+          <p>Specialized chain-of-thought logic engine optimized for complex algorithms, math proofs, and bug root cause isolation.</p>
+          <div class="model-card-metrics">
+            <span>⚡ 14ms TTFT</span>
+            <span>🧠 64k Context</span>
+            <span>🎯 Deduction</span>
+          </div>
+        </div>
+
+        <div class="model-card" data-model-id="cortex-4-omni">
+          <div class="model-card-top">
+            <span class="model-tier">OMNI-MODAL VISION</span>
+            <span class="model-badge omni">Vision MoE</span>
+          </div>
+          <h3>Cortex 4 Omni</h3>
+          <p>High-resolution multimodal model that inspects UI screenshots, architecture diagrams, and charts in real time.</p>
+          <div class="model-card-metrics">
+            <span>⚡ 22ms TTFT</span>
+            <span>🖼️ High-Res</span>
+            <span>👁️ Visual Q&A</span>
+          </div>
+        </div>
+
+        <div class="model-card" data-model-id="cortex-35-fast">
+          <div class="model-card-top">
+            <span class="model-tier">SUB-SECOND LIGHTNING</span>
+            <span class="model-badge fast">Lightning</span>
+          </div>
+          <h3>Cortex 3.5 Fast</h3>
+          <p>Ultra-low-latency streaming engine built for instant autocomplete, rapid code formatting, and iterative queries.</p>
+          <div class="model-card-metrics">
+            <span>⚡ 6ms TTFT</span>
+            <span>⚡ 140 tok/s</span>
+            <span>🚀 Instant</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Dynamic Model Telemetry Inspector -->
+      <div class="model-inspector-card" id="modelInspectorCard">
+        <div class="inspector-header">
+          <div class="inspector-left">
+            <div class="inspector-pulse"></div>
+            <strong id="inspectorModelName">Cortex 5 Super Agent (120B MoE)</strong>
+            <span class="inspector-status-badge" id="inspectorModelStatus">DEPLOYED & HEALTHY</span>
+          </div>
+          <button class="inspector-try-btn" id="inspectorTryBtn" type="button">Select & Launch</button>
+        </div>
+        <div class="inspector-body">
+          <div class="inspector-stat">
+            <span class="inspector-label">Architecture</span>
+            <span class="inspector-val" id="inspectorArch">Sparse Mixture of Experts (MoE)</span>
+          </div>
+          <div class="inspector-stat">
+            <span class="inspector-label">Context Window</span>
+            <span class="inspector-val" id="inspectorContext">131,072 Tokens (128k)</span>
+          </div>
+          <div class="inspector-stat">
+            <span class="inspector-label">Time to First Token</span>
+            <span class="inspector-val" id="inspectorTtft">&lt; 18ms</span>
+          </div>
+          <div class="inspector-stat">
+            <span class="inspector-label">Autonomous Tool Loop</span>
+            <span class="inspector-val" id="inspectorTools">Web Search, Python Sandbox, Math, Memory</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Research Lab & Benchmarks (Screenshot 3) -->
+    <section id="research" class="landing-section research-section">
+      <div class="research-header-row">
+        <div>
+          <div class="section-badge">CORTEX RESEARCH</div>
+          <h2 class="section-title text-left">From the research lab</h2>
+        </div>
+        <div class="view-all-link">
+          <span>View all benchmarks</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </div>
+      </div>
+
+      <!-- Category Filter Tabs -->
+      <div class="research-tabs">
+        <button class="res-tab active" data-category="all" type="button">All</button>
+        <button class="res-tab" data-category="comparisons" type="button">Comparisons</button>
+        <button class="res-tab" data-category="guides" type="button">Guides</button>
+        <button class="res-tab" data-category="engineering" type="button">Engineering</button>
+        <button class="res-tab" data-category="benchmarks" type="button">Benchmarks</button>
+      </div>
+
+      <!-- 3 Glass Cards -->
+      <div class="research-grid">
+        <article class="research-card" data-category="comparisons">
+          <div class="res-card-tag comparisons">Comparisons</div>
+          <h3 class="res-card-title">The free cloud coding agent with live execution</h3>
+          <p class="res-card-desc">A real sandbox for any repository, a free multi-model agent, and an instant live preview — $0/yr.</p>
+          <div class="res-card-footer">
+            <span>Sep 14, 2026 &middot; 8 min read</span>
+            <span class="res-card-arrow">↗</span>
+          </div>
+        </article>
+
+        <article class="research-card" data-category="guides">
+          <div class="res-card-tag guides">Guides</div>
+          <h3 class="res-card-title">Cancel your cloud coding subscription. Keep the project.</h3>
+          <p class="res-card-desc">Why paying $240/yr for closed vendor lock-in is obsolete when open-weight NIM inference delivers sub-second results.</p>
+          <div class="res-card-footer">
+            <span>Sep 12, 2026 &middot; 6 min read</span>
+            <span class="res-card-arrow">↗</span>
+          </div>
+        </article>
+
+        <article class="research-card" data-category="engineering">
+          <div class="res-card-tag engineering">Engineering</div>
+          <h3 class="res-card-title">Sub-second multi-turn reasoning with local artifact compilation & KaTeX</h3>
+          <p class="res-card-desc">Inside Cortex's distributed streaming pipeline, real-time math normalization, and dynamic DOM sandboxing.</p>
+          <div class="res-card-footer">
+            <span>Sep 10, 2026 &middot; 7 min read</span>
+            <span class="res-card-arrow">↗</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- 6. Numbered FAQ Accordion Section (Screenshot 4) -->
+    <section id="faqs" class="landing-section faqs-section">
+      <div class="faqs-container">
+        <div class="faqs-left">
+          <h2 class="faqs-main-title">FAQs</h2>
+          <p class="faqs-lead">Clear answers to questions about models, zero subscriptions, privacy, and tools.</p>
+        </div>
+
+        <div class="faqs-right">
+          <div class="faq-accordion">
+            <div class="faq-item active">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">01</span>
+                <span class="faq-question">How can Cortex be completely free?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>Cortex is powered directly by high-throughput NVIDIA NIM cloud infrastructure and client-side sandboxes. By bypassing cloud subscription markups, Cortex delivers frontier reasoning and execution without charging you a cent.</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">02</span>
+                <span class="faq-question">What models are available in the workspace?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>You have instant access to 7 active frontier models: Cortex 5 (Super Agent), Cortex 5 Ultra (Master Agent), Cortex 4 (Deep Reasoning), Cortex 4 Omni (Vision & Reasoning), Cortex 3.5 Lightning (Ultra-Fast), Cortex Guard (Safety & Policy), and Cortex Embed (Vector & RAG).</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">03</span>
+                <span class="faq-question">Does Cortex collect or train on my private data?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>Never. Your chats, prompts, uploaded files, and generated artifacts are stored securely in your private session database with salted PBKDF2 credentials. No user data is ever sold or used for model training.</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">04</span>
+                <span class="faq-question">Can I preview HTML, CSS, JavaScript, and diagrams live?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>Yes! Cortex includes a dedicated split-view artifact sandbox. Web apps, Chart.js graphs, KaTeX math formulas, and Mermaid diagrams render interactively in real time with 1-click downloads.</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">05</span>
+                <span class="faq-question">Do I need an API key or credit card to get started?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>No credit card or API key is required. Simply register your free account in seconds and immediately begin chatting, analyzing, and building.</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">06</span>
+                <span class="faq-question">How does Cortex compare to Claude Pro or ChatGPT Plus?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>Cortex provides equivalent or superior reasoning capabilities without monthly $20 subscription fees, restrictive messaging quotas, or lack of client-side live sandboxes.</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">07</span>
+                <span class="faq-question">Can I export my notes and math formulas directly to Notion?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>Yes! Cortex has automated math syntax normalization built right into its copy and download handlers. Formulas exported as Markdown render seamlessly in Notion, Obsidian, and Typora.</p>
+              </div>
+            </div>
+
+            <div class="faq-item">
+              <button class="faq-question-btn" type="button">
+                <span class="faq-num">08</span>
+                <span class="faq-question">Can I deploy or host my generated apps?</span>
+                <span class="faq-icon">▾</span>
+              </button>
+              <div class="faq-answer">
+                <p>Every piece of code generated in Cortex is standalone and clean. You can download the files as a bundle or individual artifacts and deploy them directly to Vercel, Netlify, or any static host.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. Cinematic Horizon & Minimalist Footer (Screenshot 5) -->
+    <section class="landing-horizon-section">
+      <div class="horizon-visual-wrap">
+        <div class="horizon-stars"></div>
+        <div class="horizon-glow"></div>
+        <div class="horizon-mountains-back"></div>
+        <div class="horizon-watermark-text">cortex</div>
+        <div class="horizon-mountains-front"></div>
+      </div>
+
+      <div class="horizon-content">
+        <h2 class="horizon-title">We just made intelligence open & free.</h2>
+        <p class="horizon-subtitle">Stop paying $20/month for closed AI silos. Launch Cortex and experience the future of autonomous workflows.</p>
+        <button id="bottomGetStartedBtn" class="hero-cta-btn horizon-cta" type="button">
+          <span>Launch Cortex Agent</span>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- Clean Footer with Inactive Policy Buttons as Requested -->
+    <footer class="landing-footer">
+      <div class="footer-inner">
+        <div class="footer-nav-left">
+          <a href="#hero" class="footer-link">Home</a>
+          <a href="#capabilities" class="footer-link">Capabilities</a>
+          <a href="#showcase" class="footer-link">Agent 3.1</a>
+          <a href="#models" class="footer-link">Models</a>
+          <a href="#research" class="footer-link">Research</a>
+          <a href="#faqs" class="footer-link">FAQs</a>
+          <!-- Disabled policy links as specifically requested -->
+          <span class="footer-link-disabled" title="Currently inactive">Privacy Policy (Off)</span>
+          <span class="footer-link-disabled" title="Currently inactive">Terms of Service (Off)</span>
+          <span class="footer-link-disabled" title="Currently inactive">GitHub (Off)</span>
+        </div>
+
+        <div class="footer-copyright">
+          <span>&copy; 2026 Cortex Agent. All rights reserved.</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ==================== UPGRADED DUAL-COLUMN AUTH SUITE ==================== -->
+  <div id="authModal" class="auth-modal-overlay" style="display: none;">
+    <div class="auth-modal-suite">
+      <button id="authModalCloseBtn" class="auth-close-btn" type="button" aria-label="Close modal">✕</button>
+
+      <!-- Left Column: Platform Guarantees & Why Cortex -->
+      <div class="auth-sidebar-showcase">
+        <div class="auth-brand-row">
+          <div class="logo auth-logo-glow" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="26" height="26" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+              <path d="M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z" fill="#22c55e" fill-opacity="0.25" stroke="#22c55e" stroke-width="1.7" stroke-linejoin="round"/>
+              <circle cx="16" cy="16" r="2.5" fill="#4ade80"/>
+              <path d="M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div>
+            <span class="auth-brand-title">Cortex Agent</span>
+            <span class="auth-brand-tag">3.1 ENTERPRISE</span>
+          </div>
+        </div>
+
+        <h3 class="auth-showcase-heading">Autonomous Intelligence. Zero Paywalls.</h3>
+        <p class="auth-showcase-desc">Instant access to 7 frontier NIM models, live sandboxed Python execution, and cross-session memory.</p>
+
+        <div class="auth-perks-list">
+          <div class="auth-perk-item">
+            <div class="perk-check">✓</div>
+            <div>
+              <strong>100,000 Free Daily Tokens</strong>
+              <span>Refreshes every 24h at 00:00 UTC</span>
+            </div>
+          </div>
+          <div class="auth-perk-item">
+            <div class="perk-check">✓</div>
+            <div>
+              <strong>Live Python Sandbox & Plotting</strong>
+              <span>Execute code & harvest high-res charts safely</span>
+            </div>
+          </div>
+          <div class="auth-perk-item">
+            <div class="perk-check">✓</div>
+            <div>
+              <strong>Autonomous Real-Time Web Research</strong>
+              <span>DuckDuckGo search & full-page scraping</span>
+            </div>
+          </div>
+          <div class="auth-perk-item">
+            <div class="perk-check">✓</div>
+            <div>
+              <strong>Zero-Leak PBKDF2 Local Security</strong>
+              <span>Your prompts and project data stay strictly private</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-quote-card">
+          <p class="auth-quote-text">"Cortex replaced both Cursor and ChatGPT Plus for our core engineering workflow. The sandbox alone is priceless."</p>
+          <div class="auth-quote-author">
+            <span class="author-dot"></span>
+            <span>Principal Systems Architect &middot; 414,400+ Active Users</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Interactive Login / Register Forms -->
+      <div class="auth-form-column">
+        <div class="auth-tabs">
+          <button id="tabSignIn" class="auth-tab active" type="button">Sign In</button>
+          <button id="tabRegister" class="auth-tab" type="button">Create Free Account</button>
+        </div>
+
+        <div class="auth-column-header">
+          <h2 id="authModalTitle">Welcome back</h2>
+          <p id="authModalSubtitle">Sign in to resume your private workspace & past chats</p>
+        </div>
+
+        <div id="authErrorAlert" class="auth-alert" style="display: none;"></div>
+
+        <form id="authForm" class="auth-form" autocomplete="on">
+          <div class="form-group">
+            <label for="authUsername">Username</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <input type="text" id="authUsername" placeholder="e.g. rohan or alex" required minlength="3" autocomplete="username" />
+            </div>
+          </div>
+
+          <div class="form-group" id="emailGroup" style="display: none;">
+            <label for="authEmail">Email (Optional)</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              <input type="email" id="authEmail" placeholder="you@example.com" autocomplete="email" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="authPassword">Password</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <input type="password" id="authPassword" placeholder="••••••••" required minlength="4" autocomplete="current-password" />
+              <button type="button" id="authTogglePasswordBtn" class="password-toggle-btn" title="Toggle password visibility">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <!-- Password Strength Bar for Registration -->
+            <div id="passwordStrengthWrap" class="password-strength-wrap" style="display: none;">
+              <div class="password-strength-track">
+                <div id="passwordStrengthBar" class="password-strength-fill"></div>
+              </div>
+              <span id="passwordStrengthText" class="password-strength-text">Enter at least 4 characters</span>
+            </div>
+          </div>
+
+          <button id="authSubmitBtn" class="auth-submit-btn" type="submit">Sign In</button>
+        </form>
+
+        <!-- Frictionless 1-Click Guest Test Drive Button -->
+        <div class="auth-divider">
+          <span>OR EXPLORE INSTANTLY</span>
+        </div>
+        <button id="authDemoBtn" class="auth-demo-btn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>1-Click Guest Test Drive (Instant Access)</span>
+        </button>
+        <p class="auth-disclaimer">Zero credit card required &middot; 100% private workspace</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SETTINGS MODAL ==================== -->
+  <div id="settingsModal" class="settings-modal-overlay" style="display: none;">
+    <div class="settings-modal-card">
+      <button id="settingsModalCloseBtn" class="settings-close-btn" type="button" aria-label="Close Settings">✕</button>
+
+      <div class="settings-header">
+        <div class="settings-header-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </div>
+        <div>
+          <h2 class="settings-title">Settings</h2>
+          <p class="settings-subtitle">Manage profile and workspace appearance</p>
+        </div>
+      </div>
+
+      <div class="settings-body">
+        <!-- Profile Info Card -->
+        <div class="settings-section">
+          <label class="settings-section-title">Profile</label>
+          <div class="settings-profile-card">
+            <div class="settings-avatar" id="settingsAvatar">U</div>
+            <div class="settings-profile-info">
+              <div class="settings-profile-name-row">
+                <span class="settings-username" id="settingsUsername">User</span>
+                <span class="settings-badge">Private Space</span>
+              </div>
+              <span class="settings-email" id="settingsEmail">user@cortex.ai</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Appearance & Theme Selector -->
+        <div class="settings-section">
+          <label class="settings-section-title">Appearance</label>
+          <p class="settings-section-desc">Choose how Cortex looks to you</p>
+          <div class="settings-theme-selector">
+            <button type="button" class="settings-theme-btn" id="settingsThemeDarkBtn" data-theme-val="dark">
+              <span class="theme-icon-indicator">🌙</span>
+              <div class="theme-btn-info">
+                <span class="theme-name">Dark</span>
+                <span class="theme-desc">High-contrast night palette</span>
+              </div>
+            </button>
+            <button type="button" class="settings-theme-btn" id="settingsThemeLightBtn" data-theme-val="light">
+              <span class="theme-icon-indicator">☀️</span>
+              <div class="theme-btn-info">
+                <span class="theme-name">Light</span>
+                <span class="theme-desc">Clean daylight palette</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <button id="settingsModalDoneBtn" class="settings-done-btn" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MEMORY & PERSONALIZATION MODAL ==================== -->
+  <div id="memoryModal" class="memory-modal-overlay" style="display: none;" aria-hidden="true">
+    <div class="memory-modal-card">
+      <button id="memoryModalCloseBtn" class="settings-close-btn" type="button" aria-label="Close Memory Modal">✕</button>
+
+      <div class="settings-header">
+        <div class="settings-header-icon memory-icon-bg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a5 5 0 0 1 5 5v1a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"></path>
+            <path d="M19 11v1a7 7 0 0 1-14 0v-1"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </div>
+        <div>
+          <h2 class="settings-title">Memory & Personalization</h2>
+          <p class="settings-subtitle">Manage what Cortex remembers about you & set custom directives</p>
+        </div>
+      </div>
+
+      <!-- Modal Tabs -->
+      <div class="memory-tabs">
+        <button id="memTabMemories" class="memory-tab-btn active" type="button">
+          <span>🧠 Stored Memories</span>
+          <span id="memoriesTabCount" class="tab-pill">0</span>
+        </button>
+        <button id="memTabInstructions" class="memory-tab-btn" type="button">
+          <span>⚙️ Custom Instructions</span>
+        </button>
+      </div>
+
+      <!-- Tab 1: Stored Memories -->
+      <div id="memoriesPanel" class="memory-tab-panel active">
+        <div class="memory-add-bar">
+          <input type="text" id="newMemoryInput" placeholder="Add a memory (e.g. 'Senior Python dev', 'Prefers Hinglish')..." maxlength="500" />
+          <select id="newMemoryCategory" class="memory-cat-select" aria-label="Memory category">
+            <option value="preference">Preference</option>
+            <option value="tech">Tech Stack</option>
+            <option value="personal">Personal</option>
+            <option value="project">Project</option>
+            <option value="rule">Rule</option>
+          </select>
+          <button id="addMemoryBtn" class="btn-memory-add" type="button">Add</button>
+        </div>
+
+        <div class="memory-list-header">
+          <span class="memory-list-title">Active Memories (<span id="memoriesTotalLabel">0</span>)</span>
+          <button id="clearAllMemoriesBtn" class="btn-clear-memories" type="button" style="display: none;">Clear All</button>
+        </div>
+
+        <div id="memoriesListContainer" class="memories-list-container">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+
+      <!-- Tab 2: Custom Instructions -->
+      <div id="instructionsPanel" class="memory-tab-panel" style="display: none;">
+        <div class="instructions-guide">
+          <p>Custom instructions tell Cortex how to tailor its responses for every single chat, just like ChatGPT and Claude custom instructions.</p>
+        </div>
+
+        <div class="form-group instructions-group">
+          <label for="customInstructionsTextarea">
+            <strong>What would you like Cortex to know about you & how should it respond?</strong>
+            <span class="sublabel">E.g., "I'm a senior backend developer. Provide concise, production-ready code with type annotations. Speak in friendly Hinglish or English."</span>
+          </label>
+          <textarea id="customInstructionsTextarea" rows="6" placeholder="Enter your custom instructions here..." maxlength="10000"></textarea>
+        </div>
+
+        <div class="instructions-actions">
+          <button id="saveInstructionsBtn" class="btn-save-instructions" type="button">
+            <span>Save Instructions</span>
+          </button>
+          <span id="instructionsSaveStatus" class="instructions-status-text" style="display: none;">Saved!</span>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <button id="memoryModalDoneBtn" class="settings-done-btn" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== PROJECT WORKSPACE MODAL ==================== -->
+  <div id="projectModal" class="project-modal-overlay" style="display: none;" aria-hidden="true">
+    <div class="project-modal-card">
+      <div class="project-modal-header">
+        <div class="project-modal-title">
+          <span>📁</span>
+          <span id="projectModalHeading">Project Workspace</span>
+        </div>
+        <button id="projectModalCloseBtn" class="settings-close-btn" type="button" aria-label="Close modal">✕</button>
+      </div>
+      <div class="project-modal-body">
+        <label class="project-input-label">Project Name</label>
+        <input type="text" id="projectNameInput" class="project-text-input" placeholder="e.g. Finance Research, Python Backend, Thesis..." autocomplete="off" />
+        
+        <label class="project-input-label">Description (Optional)</label>
+        <input type="text" id="projectDescInput" class="project-text-input" placeholder="Brief summary of this project..." autocomplete="off" />
+        
+        <label class="project-input-label">Project Directives & Custom Knowledge</label>
+        <textarea id="projectPromptInput" class="project-textarea" rows="4" placeholder="Specific instructions, rules, or knowledge that should always apply to chats in this project..."></textarea>
+      </div>
+      <div class="project-modal-footer">
+        <button id="projectModalDeleteBtn" type="button" style="display: none; margin-right: auto; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; padding: 6px 14px; border-radius: 8px; font-size: 13px; cursor: pointer;">Delete Project</button>
+        <button id="projectModalCancelBtn" type="button" style="background: transparent; border: 1px solid var(--border); padding: 6px 14px; border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer;">Cancel</button>
+        <button id="projectModalSaveBtn" class="settings-done-btn" type="button" style="padding: 6px 16px;">Save Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== IMAGE LIGHTBOX MODAL ==================== -->
+  <div id="imageLightboxModal" class="image-lightbox-overlay" style="display: none;" aria-hidden="true">
+    <div class="image-lightbox-header">
+      <div class="image-lightbox-info">
+        <span class="image-lightbox-icon">🖼️</span>
+        <span id="lightboxFilename" class="image-lightbox-filename">Image Preview</span>
+        <span id="lightboxSize" class="image-lightbox-size"></span>
+      </div>
+      <div class="image-lightbox-actions">
+        <button id="lightboxZoomOutBtn" class="lightbox-btn" type="button" title="Zoom Out (-)" aria-label="Zoom Out">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            <line x1="8" y1="11" x2="14" y2="11"></line>
+          </svg>
+        </button>
+        <span id="lightboxZoomLevel" class="lightbox-zoom-level" title="Current Zoom">100%</span>
+        <button id="lightboxZoomInBtn" class="lightbox-btn" type="button" title="Zoom In (+)" aria-label="Zoom In">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            <line x1="11" y1="8" x2="11" y2="14"></line>
+            <line x1="8" y1="11" x2="14" y2="11"></line>
+          </svg>
+        </button>
+        <button id="lightboxResetZoomBtn" class="lightbox-btn" type="button" title="Reset Zoom (0)" aria-label="Reset Zoom">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+          </svg>
+        </button>
+        <a id="lightboxDownloadBtn" class="lightbox-btn lightbox-download-link" title="Download Full Image" aria-label="Download Image" download="cortex-image.png">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </a>
+        <button id="lightboxCloseBtn" class="lightbox-btn lightbox-close-btn" type="button" title="Close (Esc)" aria-label="Close">
+          ✕
+        </button>
+      </div>
+    </div>
+    <div id="lightboxBody" class="image-lightbox-body">
+      <div class="image-lightbox-stage">
+        <img id="lightboxImage" src="" alt="Full Resolution Preview" />
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== APP VIEW (WORKSPACE) ==================== -->
+  <div id="appView" class="layout-container" style="display: none;">
+    <!-- Sidebar Overlay (Mobile) -->
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand" id="sidebarBrandBtn">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+              <path d="M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z" fill="#22c55e" fill-opacity="0.25" stroke="#22c55e" stroke-width="1.7" stroke-linejoin="round"/>
+              <circle cx="16" cy="16" r="2.5" fill="#4ade80"/>
+              <path d="M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">Cortex</span>
+            <span class="brand-badge">Agent</span>
+          </div>
+        </div>
+        <button id="closeSidebarBtn" class="icon-btn-ghost mobile-only" type="button" aria-label="Close sidebar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="sidebar-action">
+        <button id="newChatBtn" class="new-chat-btn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+          <span>New Chat</span>
+        </button>
+        <button id="sidebarArtifactsBtn" class="sidebar-artifacts-btn" type="button" title="View all generated Markdown documents and artifacts">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <span>Artifacts</span>
+          <span id="sidebarArtifactsCount" class="sidebar-count-badge">0</span>
+        </button>
+        <div class="sidebar-search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input type="text" id="sidebarSearchInput" placeholder="Search chats (Ctrl+K)..." autocomplete="off" spellcheck="false" />
+          <button id="sidebarSearchClearBtn" class="search-clear-btn" type="button" title="Clear search" style="display: none;">✕</button>
+        </div>
+      </div>
+
+      <!-- Project Workspaces Selector -->
+      <div class="sidebar-projects-bar">
+        <div class="sidebar-projects-header">
+          <span class="sidebar-projects-title">Projects</span>
+          <button id="createProjectBtn" class="create-project-mini-btn" type="button" title="Create New Project Workspace">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div id="projectsListContainer" class="projects-pill-list">
+          <button class="project-pill active" data-project-id="" type="button">All Chats</button>
+        </div>
+      </div>
+
+      <nav id="conversationsList" class="conversations-list" aria-label="Past conversations">
+        <!-- Dynamically populated conversations with Pinned and Recent groups -->
+      </nav>
+
+      <!-- Sidebar User Profile Footer (Claude-Style) -->
+      <div class="sidebar-footer">
+        <div class="user-menu-anchor">
+          <button id="userProfileBtn" class="user-profile-card" type="button" aria-label="User Profile & Settings" aria-haspopup="true" aria-expanded="false">
+            <div class="user-avatar" id="userAvatar">U</div>
+            <div class="user-details">
+              <span class="user-name" id="userNameDisplay">User</span>
+              <span class="user-status-badge">Private Space</span>
+            </div>
+            <svg class="profile-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+
+          <!-- Claude-Style Profile Popup Menu -->
+          <div id="userProfileMenu" class="user-profile-menu" style="display: none;">
+            <div class="user-menu-header">
+              <span class="user-menu-label">Signed in as</span>
+              <span class="user-menu-email" id="userMenuEmail">user@cortex.ai</span>
+            </div>
+            <div class="user-menu-divider"></div>
+            <button id="menuMemoriesBtn" class="user-menu-item" type="button">
+              <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a5 5 0 0 1 5 5v1a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"></path>
+                <path d="M19 11v1a7 7 0 0 1-14 0v-1"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+              </svg>
+              <span>Memory & Instructions</span>
+            </button>
+            <button id="menuSettingsBtn" class="user-menu-item" type="button">
+              <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              <span>Settings</span>
+            </button>
+            <div class="user-menu-divider"></div>
+            <button id="menuSignOutBtn" class="user-menu-item user-menu-logout" type="button">
+              <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+              </svg>
+              <span>Log out</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapse Sidebar Button (Moved from top to bottom) -->
+        <button id="collapseSidebarBtn" class="collapse-sidebar-footer-btn desktop-only" type="button" aria-label="Collapse sidebar" title="Collapse sidebar (Ctrl+B)">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="toggleSidebarBtn" class="icon-btn-ghost" type="button" aria-label="Toggle sidebar" title="Toggle Sidebar (Ctrl+B)">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+          </button>
+          <div class="chat-title-wrap">
+            <span id="chatTitleHeader" class="chat-title-header" title="Click to rename">New Chat</span>
+            <button id="editChatTitleBtn" class="title-edit-btn" type="button" title="Rename chat" aria-label="Rename chat">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <!-- Daily Token Usage Tracker Pill -->
+          <div id="topbarUsagePill" class="topbar-usage-pill" title="Daily Token Usage (100k tokens/day limit. Resets at midnight UTC)">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span id="topbarUsageText">0 / 100k</span>
+            <div class="usage-progress-bar"><div id="topbarUsageBar" class="usage-progress-fill" style="width: 0%;"></div></div>
+          </div>
+
+          <!-- App Guide & Playbook Button -->
+          <button id="guideBtn" class="topbar-action-pill-btn guide-btn" type="button" title="Cortex Agent Playbook & Complete Guide" aria-label="Playbook Guide">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
+            <span>Guide</span>
+          </button>
+          <button id="themeToggleBtn" class="topbar-theme-btn" type="button" title="Toggle Dark / Light Theme" aria-label="Toggle Theme">
+            <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
+          <button id="exportChatBtn" class="topbar-export-btn" type="button" title="Export conversation as Markdown (.md)" aria-label="Export conversation" style="display: none;">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            <span>Export .md</span>
+          </button>
+        </div>
+      </header>
+
+      <main id="chat" class="chat-area" aria-live="polite"></main>
+
+      <!-- ==================== CLAUDE-STYLE ARTIFACTS VIEW ==================== -->
+      <section id="artifactsView" class="artifacts-view" style="display: none;">
+        <div class="artifacts-view-header">
+          <div class="artifacts-header-left">
+            <div class="artifacts-title-row">
+              <div class="artifacts-title-icon">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+              </div>
+              <h2 class="artifacts-main-title">Artifacts Library</h2>
+              <span id="artifactsCountBadge" class="artifacts-count-badge">0 documents</span>
+            </div>
+            <p class="artifacts-subtitle">Browse, preview, and download all generated Markdown reports, code artifacts, and documents</p>
+          </div>
+          <div class="artifacts-header-actions">
+            <div class="artifacts-search-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="artifactsSearchInput" placeholder="Filter artifacts by title or content..." autocomplete="off" />
+            </div>
+            <button id="artifactsCloseViewBtn" class="artifacts-back-btn" type="button">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              <span>Back to Chat</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="artifactsGrid" class="artifacts-grid">
+          <!-- Dynamically populated artifact cards -->
+        </div>
+
+        <div id="artifactsEmptyState" class="artifacts-empty-state" style="display: none;">
+          <div class="artifacts-empty-icon">📄</div>
+          <h3>No Artifacts Yet</h3>
+          <p>Ask Cortex to write a document, analysis, or report (e.g. <code>Create test.md</code> or <code>Write a comprehensive research report</code>) and it will appear here automatically.</p>
+        </div>
+      </section>
+
+      <section class="composer-wrap">
+        <!-- File Attachment Chip -->
+        <div id="attachmentPreview" class="attachment-preview" style="display: none;">
+          <div class="attachment-chip">
+            <span class="attachment-icon">📄</span>
+            <span id="attachmentName" class="attachment-name">filename.pdf</span>
+            <span id="attachmentSize" class="attachment-size">(0 KB)</span>
+            <button id="removeAttachmentBtn" type="button" class="attachment-remove-btn" title="Remove attachment" aria-label="Remove attachment">✕</button>
+          </div>
+        </div>
+
+        <form id="chatForm" class="composer">
+          <!-- Textarea typing area -->
+          <div class="composer-input-row">
+            <textarea
+              id="prompt"
+              rows="1"
+              maxlength="20000"
+              placeholder="Ask Cortex anything… (type, speak, attach docs, plot charts)"
+              autocomplete="off"
+            ></textarea>
+          </div>
+
+          <!-- Bottom controls toolbar -->
+          <div class="composer-toolbar">
+            <div class="composer-toolbar-left">
+              <!-- Plus / Attach Dropdown Trigger -->
+              <div class="composer-menu-anchor">
+                <button id="attachBtn" class="attach-btn" type="button" title="Attach files or photos" aria-label="Attach">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+                <div id="attachMenu" class="composer-dropdown-menu attach-dropdown" style="display: none;">
+                  <button type="button" class="composer-menu-item" id="menuAddFiles">
+                    <span class="menu-item-icon">📄</span>
+                    <div class="menu-item-text">
+                      <span class="menu-item-title">Add Files</span>
+                      <span class="menu-item-desc">PDF, Excel, Docs, CSV, Code</span>
+                    </div>
+                  </button>
+                  <button type="button" class="composer-menu-item" id="menuAddPhotos">
+                    <span class="menu-item-icon">🖼️</span>
+                    <div class="menu-item-text">
+                      <span class="menu-item-title">Add Photos or Screenshots</span>
+                      <span class="menu-item-desc">PNG, JPG, WEBP, Screenshots</span>
+                    </div>
+                  </button>
+                </div>
+                <input type="file" id="fileInputDocs" accept=".pdf,.xlsx,.xls,.docx,.doc,.csv,.tsv,.txt,.md,.json,.py,.js,.html,.css,.yaml,.yml,.log" style="display: none;" />
+                <input type="file" id="fileInputImages" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp" style="display: none;" />
+              </div>
+
+              <!-- Agent Presets Button (Magic Tools) -->
+              <div class="composer-menu-anchor">
+                <button id="presetsBtn" class="presets-btn" type="button" title="Agent Capabilities & Quick Modes" aria-label="Agent Modes">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/>
+                  </svg>
+                </button>
+                <div id="presetsMenu" class="composer-dropdown-menu presets-dropdown" style="display: none;">
+                  <div class="composer-menu-header">Agent Modes & Capabilities</div>
+                  <div class="presets-list">
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Search the web for ">
+                      <span class="menu-item-icon">🌐</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Web Search</span>
+                        <span class="menu-item-desc">Live web research & sources</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Think step-by-step with deep reasoning and solve: ">
+                      <span class="menu-item-icon">🧠</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Deep Reason</span>
+                        <span class="menu-item-desc">Multi-step analytical reasoning</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Generate an interactive Chart.js visualization comparing ">
+                      <span class="menu-item-icon">📊</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Plot Chart</span>
+                        <span class="menu-item-desc">Render responsive charts</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Write production-grade, clean code for ">
+                      <span class="menu-item-icon">💻</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Code Studio</span>
+                        <span class="menu-item-desc">Full script & code architecture</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Deeply analyze and summarize the key insights from: ">
+                      <span class="menu-item-icon">📄</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Document Analysis</span>
+                        <span class="menu-item-desc">Extract data & core insights</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Fact-check the following claims and provide verified sources: ">
+                      <span class="menu-item-icon">🔍</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Fact Check & Cite</span>
+                        <span class="menu-item-desc">Verify data & cite sources</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Brainstorm innovative architectures and solutions for ">
+                      <span class="menu-item-icon">💡</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Brainstorm & Architect</span>
+                        <span class="menu-item-desc">Ideate systems & designs</span>
+                      </div>
+                    </button>
+                    <button type="button" class="composer-menu-item preset-item" data-insert="Provide a concise, executive summary of ">
+                      <span class="menu-item-icon">⚡</span>
+                      <div class="menu-item-text">
+                        <span class="menu-item-title">Quick Summary</span>
+                        <span class="menu-item-desc">High-level bulleted summary</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-toolbar-right">
+              <!-- Voice Input Button (Speech-to-Text) -->
+              <button id="micBtn" class="mic-btn" type="button" title="Voice Input (Speak in Hindi or English)" aria-label="Voice Input">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+              </button>
+
+              <!-- Send / Stop Button -->
+              <button id="sendBtn" class="send-btn" type="submit" aria-label="Send message">
+                <svg class="icon-send" viewBox="0 0 24 24" width="16" height="16"><path d="M12 4l7 7h-4v9h-6v-9H5l7-7z" fill="currentColor"/></svg>
+                <svg class="icon-stop" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="display:none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <!-- Claude-Style Sub-Bar (Outside the box, corner right) -->
+        <div class="composer-subbar">
+          <!-- Mode Selector: Auto / Fast / Thinking -->
+          <div class="mode-picker-wrap" id="modePickerWrap">
+            <button id="modeDropdownBtn" class="mode-dropdown-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Select Response Mode">
+              <span id="modeIcon" class="mode-icon">🎯</span>
+              <span id="modeLabel" class="mode-label">Auto</span>
+              <svg class="mode-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div id="modeMenu" class="mode-dropdown-menu" style="display: none;">
+              <button type="button" class="mode-option active" data-mode="auto">
+                <div class="mode-option-left">
+                  <span class="mode-option-icon">🎯</span>
+                  <div class="mode-option-texts">
+                    <span class="mode-option-title">Auto</span>
+                    <span class="mode-option-desc">Smart routing & instant start</span>
+                  </div>
+                </div>
+                <span class="mode-option-check">✓</span>
+              </button>
+              <button type="button" class="mode-option" data-mode="fast">
+                <div class="mode-option-left">
+                  <span class="mode-option-icon">⚡</span>
+                  <div class="mode-option-texts">
+                    <span class="mode-option-title">Fast</span>
+                    <span class="mode-option-desc">Instant stream (0.5–5s TTFT, no tools)</span>
+                  </div>
+                </div>
+                <span class="mode-option-check" style="display: none;">✓</span>
+              </button>
+              <button type="button" class="mode-option" data-mode="thinking">
+                <div class="mode-option-left">
+                  <span class="mode-option-icon">🧠</span>
+                  <div class="mode-option-texts">
+                    <span class="mode-option-title">Thinking</span>
+                    <span class="mode-option-desc">Deep research & multi-step tools</span>
+                  </div>
+                </div>
+                <span class="mode-option-check" style="display: none;">✓</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="model-picker-wrap">
+            <select id="modelSelect" class="model-select" aria-label="Select AI Model">
+              <option value="nvidia/nemotron-3-super-120b-a12b">Cortex 5 (Super Agent)</option>
+              <option value="nvidia/nemotron-3-ultra-550b-a55b">Cortex 5 Ultra (Master Agent)</option>
+              <option value="openai/gpt-oss-20b">Cortex 4 (Deep Reasoning)</option>
+              <option value="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning">Cortex 4 Omni (Vision & Reasoning)</option>
+              <option value="nvidia/nemotron-3.5-lightning-30b-a3b">Cortex 3.5 Lightning (Ultra-Fast)</option>
+              <option value="nvidia/nemotron-3.5-content-safety">Cortex Guard (Safety & Policy)</option>
+              <option value="nvidia/nemotron-3-embed-1b">Cortex Embed (Vector & RAG)</option>
+            </select>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ==================== CLAUDE-STYLE LIVE ARTIFACT SPLIT PANEL ==================== -->
+    <aside id="artifactSplitPanel" class="artifact-split-panel" style="display: none;">
+      <div class="artifact-panel-header">
+        <div class="artifact-panel-info">
+          <span class="artifact-panel-icon">📦</span>
+          <div class="artifact-panel-titles">
+            <span id="artifactTitle" class="artifact-panel-title">Artifact Preview</span>
+            <span id="artifactSubtitle" class="artifact-panel-subtitle">Interactive Web Sandbox</span>
+          </div>
+        </div>
+        <div class="artifact-panel-tabs">
+          <button id="artifactTabPreview" class="artifact-tab active" type="button">Preview</button>
+          <button id="artifactTabCode" class="artifact-tab" type="button">Code</button>
+        </div>
+        <div class="artifact-panel-actions">
+          <button id="artifactCopyBtn" class="artifact-action-btn" title="Copy content" type="button" aria-label="Copy content">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+          </button>
+          <button id="artifactDownloadBtn" class="artifact-action-btn" title="Download file" type="button" aria-label="Download file">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </button>
+          <button id="artifactCloseBtn" class="artifact-action-btn close-btn" title="Close preview (Esc)" type="button" aria-label="Close preview">✕</button>
+        </div>
+      </div>
+      <div class="artifact-panel-body">
+        <iframe id="artifactIframe" class="artifact-iframe" sandbox="allow-scripts allow-modals allow-same-origin"></iframe>
+        <div id="artifactCodeWrap" class="artifact-code-wrap" style="display: none;">
+          <pre><code id="artifactCodeContent"></code></pre>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ==================== CORTEX AGENT PLAYBOOK & GUIDE DRAWER ==================== -->
+    <aside id="guideDrawer" class="guide-drawer" style="display: none;">
+      <div class="guide-drawer-header">
+        <div class="guide-header-info">
+          <div class="guide-header-badge">
+            <span class="guide-badge-dot"></span>
+            <span>Cortex 3.1 Playbook</span>
+          </div>
+          <h2 class="guide-title">Agent Playbook & Guide</h2>
+          <p class="guide-subtitle">Architecture, Model Tiers, Prompt Engineering & Tool Reference</p>
+        </div>
+        <button id="guideCloseBtn" class="guide-close-btn" type="button" aria-label="Close Guide">✕</button>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="guide-nav-tabs" aria-label="Guide Categories">
+        <button class="guide-tab-btn active" data-tab="quickstart" type="button">⚡ Quickstart</button>
+        <button class="guide-tab-btn" data-tab="models" type="button">🧠 Models</button>
+        <button class="guide-tab-btn" data-tab="modes" type="button">🎯 Modes</button>
+        <button class="guide-tab-btn" data-tab="prompting" type="button">💬 Prompting</button>
+        <button class="guide-tab-btn" data-tab="sandbox" type="button">🐍 Sandbox</button>
+        <button class="guide-tab-btn" data-tab="charts" type="button">📊 Charts</button>
+        <button class="guide-tab-btn" data-tab="workspaces" type="button">📂 Workspaces</button>
+      </nav>
+
+      <!-- Guide Content Sections -->
+      <div class="guide-content-scroll">
+        <!-- 1. Quickstart Tab -->
+        <div id="guideTab-quickstart" class="guide-tab-pane active">
+          <div class="guide-card">
+            <h3>🚀 Welcome to Cortex Agent 3.1</h3>
+            <p>Cortex is an autonomous, multi-model AI workstation engineered for high-throughput reasoning, real-time web research, sandboxed Python code execution, interactive Chart.js visualizations, and live artifact document editing.</p>
+          </div>
+
+          <div class="guide-card">
+            <h4>⌨️ Keyboard Shortcuts</h4>
+            <div class="guide-shortcut-table">
+              <div class="shortcut-row"><kbd>Enter</kbd><span>Send prompt to Cortex</span></div>
+              <div class="shortcut-row"><kbd>Shift + Enter</kbd><span>New line in composer textarea</span></div>
+              <div class="shortcut-row"><kbd>Ctrl + K</kbd><span>Search past chats and conversations</span></div>
+              <div class="shortcut-row"><kbd>Ctrl + B</kbd><span>Toggle sidebar expand / collapse</span></div>
+              <div class="shortcut-row"><kbd>Esc</kbd><span>Close Guide drawer, split preview, or modals</span></div>
+            </div>
+          </div>
+
+          <div class="guide-card">
+            <h4>⚡ Daily Quotas & Free Tier Highlights</h4>
+            <ul class="guide-bullet-list">
+              <li><strong>100,000 Tokens/Day:</strong> Full access to NVIDIA NIM frontier reasoning models with live progress tracking in the top bar.</li>
+              <li><strong>10 Uploads/Day:</strong> Attach documents (PDF, CSV, Excel, Code) and screenshots for vision OCR analysis.</li>
+              <li><strong>Zero Subscriptions:</strong> No $20/mo fees, no credit card required, 100% private.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 2. Models Tab -->
+        <div id="guideTab-models" class="guide-tab-pane">
+          <div class="guide-card">
+            <h3>🧠 Frontier Multi-Model Core</h3>
+            <p>Cortex switches dynamically or manually between 7 state-of-the-art model architectures:</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge super">FLAGSHIP</div>
+            <h4>Cortex 5 (Super Agent) &middot; 120B MoE</h4>
+            <p class="model-meta"><code>nvidia/nemotron-3-super-120b-a12b</code></p>
+            <p>Frontier mixture-of-experts model optimized for agentic tool use, autonomous planning, multi-step problem solving, and complex software development.</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge ultra">ULTRA REASONING</div>
+            <h4>Cortex 5 Ultra (Master Agent) &middot; 550B MoE</h4>
+            <p class="model-meta"><code>nvidia/nemotron-3-ultra-550b-a55b</code></p>
+            <p>Massive 550B parameter flagship with unrivaled depth in mathematics, theoretical computer science, complex distributed system architectures, and rigorous academic research.</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge deep">TRANSPARENT REASONING</div>
+            <h4>Cortex 4 (Deep Reasoning) &middot; 20B</h4>
+            <p class="model-meta"><code>openai/gpt-oss-20b</code></p>
+            <p>Transparent internal reasoning traces displayed via an interactive collapsible thinking bubble. Ideal for algorithmic debugging, logic puzzles, and verifiable deductions.</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge omni">VISION & OCR</div>
+            <h4>Cortex 4 Omni &middot; 30B Vision</h4>
+            <p class="model-meta"><code>nvidia/nemotron-3-nano-omni-30b-a3b-reasoning</code></p>
+            <p>Native multi-modal vision and reasoning. Upload architectural diagrams, UI mockups, financial tables, or error screenshots for instant OCR and contextual breakdown.</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge fast">LIGHTNING</div>
+            <h4>Cortex 3.5 Lightning &middot; 30B</h4>
+            <p class="model-meta"><code>nvidia/nemotron-3.5-lightning-30b-a3b</code></p>
+            <p>Ultra-low time-to-first-token (0.5s - 1.2s). Best for instant brainstorming, grammar editing, quick code completions, and high-frequency queries.</p>
+          </div>
+        </div>
+
+        <!-- 3. Modes Tab -->
+        <div id="guideTab-modes" class="guide-tab-pane">
+          <div class="guide-card">
+            <h3>🎯 Execution Modes</h3>
+            <p>Configure how Cortex thinks and executes by selecting the mode pill at the bottom right of the composer:</p>
+          </div>
+
+          <div class="guide-card">
+            <h4>🎯 Auto Mode (Default)</h4>
+            <p>Smart heuristic router. Automatically detects if a query needs real-time web research, code execution, data visualization, or direct conversational output.</p>
+          </div>
+
+          <div class="guide-card">
+            <h4>⚡ Fast Mode</h4>
+            <p>Zero-overhead streaming. Bypasses external tool calls for instantaneous response initiation. Ideal for rapid QA, writing emails, and quick math.</p>
+          </div>
+
+          <div class="guide-card">
+            <h4>🧠 Thinking Mode</h4>
+            <p>Forces multi-step chain-of-thought exploration, exhaustive tool search, iterative refinement, and deep analytical reasoning before delivering the final answer.</p>
+          </div>
+        </div>
+
+        <!-- 4. Prompting Tab -->
+        <div id="guideTab-prompting" class="guide-tab-pane">
+          <div class="guide-card">
+            <h3>💬 28+ Production Prompt Templates</h3>
+            <p>Ready-to-use, battle-tested prompt templates across 6 disciplines. Click <strong>Use</strong> to instantly insert into composer, or <strong>Copy</strong> to customize:</p>
+          </div>
+
+          <!-- Section A: Coding & Architecture -->
+          <div class="guide-section-header">💻 Software Engineering & Architecture</div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-code">CODE</span>
+                <span class="template-title">Production Microservice Architecture</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Design a complete production-grade microservice architecture for [System / Use Case]. Provide an architectural diagram in ASCII/Mermaid, directory layout, database schema with indexes, FastAPI async endpoints, Dockerfile, and error-handling middleware. Package the entire specification as [service_architecture.md].">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Design a complete production-grade microservice architecture for [System / Use Case]. Provide an architectural diagram in ASCII/Mermaid, directory layout, database schema with indexes, FastAPI async endpoints, Dockerfile, and error-handling middleware. Package the entire specification as [service_architecture.md].">Copy</button>
+              </div>
+            </div>
+            <pre><code>Design a complete production-grade microservice architecture for [System / Use Case]. Provide an architectural diagram in ASCII/Mermaid, directory layout, database schema with indexes, FastAPI async endpoints, Dockerfile, and error-handling middleware. Package the entire specification as [service_architecture.md].</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-code">CODE</span>
+                <span class="template-title">Full Code Refactoring & Type Safety</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Review and refactor the following codebase for maximum performance, strict type annotations, DRY principles, and memory efficiency. Explain the architectural bottlenecks identified and provide the updated drop-in code:&#10;[Paste your code here]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Review and refactor the following codebase for maximum performance, strict type annotations, DRY principles, and memory efficiency. Explain the architectural bottlenecks identified and provide the updated drop-in code:&#10;[Paste your code here]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Review and refactor the following codebase for maximum performance, strict type annotations, DRY principles, and memory efficiency. Explain the architectural bottlenecks identified and provide the updated drop-in code:
+[Paste your code here]</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-code">CODE</span>
+                <span class="template-title">Full-Stack Database Schema & SQL Queries</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Design a normalized relational database schema for [Platform / App]. Include CREATE TABLE statements with foreign keys, composite indexes, JSON constraints, and write 5 optimized analytical queries for reporting metrics.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Design a normalized relational database schema for [Platform / App]. Include CREATE TABLE statements with foreign keys, composite indexes, JSON constraints, and write 5 optimized analytical queries for reporting metrics.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Design a normalized relational database schema for [Platform / App]. Include CREATE TABLE statements with foreign keys, composite indexes, JSON constraints, and write 5 optimized analytical queries for reporting metrics.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-code">CODE</span>
+                <span class="template-title">Automated Unit & Integration Test Suite</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Write a comprehensive PyTest / Jest test suite for the following module. Include edge cases, boundary conditions, mocking for external API calls, parameterized tests, and 100% test branch coverage:&#10;[Paste function or module here]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Write a comprehensive PyTest / Jest test suite for the following module. Include edge cases, boundary conditions, mocking for external API calls, parameterized tests, and 100% test branch coverage:&#10;[Paste function or module here]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Write a comprehensive PyTest / Jest test suite for the following module. Include edge cases, boundary conditions, mocking for external API calls, parameterized tests, and 100% test branch coverage:
+[Paste function or module here]</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-code">CODE</span>
+                <span class="template-title">Security & Vulnerability Code Audit</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Perform a rigorous security audit of the following code. Inspect for OWASP Top 10 vulnerabilities (SQLi, XSS, CSRF, ReDoS, Auth bypass, SSRF). For each vulnerability found, explain the exploit vector and provide the secure remediated patch:&#10;[Paste snippet or configuration here]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Perform a rigorous security audit of the following code. Inspect for OWASP Top 10 vulnerabilities (SQLi, XSS, CSRF, ReDoS, Auth bypass, SSRF). For each vulnerability found, explain the exploit vector and provide the secure remediated patch:&#10;[Paste snippet or configuration here]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Perform a rigorous security audit of the following code. Inspect for OWASP Top 10 vulnerabilities (SQLi, XSS, CSRF, ReDoS, Auth bypass, SSRF). For each vulnerability found, explain the exploit vector and provide the secure remediated patch:
+[Paste snippet or configuration here]</code></pre>
+          </div>
+
+          <!-- Section B: Data Science & Visualizations -->
+          <div class="guide-section-header">📊 Data Science & Visualizations</div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-data">DATA</span>
+                <span class="template-title">Interactive Multi-Series Chart.js Dashboard</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Generate an interactive Chart.js visualization comparing [Metric 1] vs [Metric 2] across [Categories / Years]. Use high-contrast modern colors, custom tooltips, legend toggles, and render metric highlight cards above the chart.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Generate an interactive Chart.js visualization comparing [Metric 1] vs [Metric 2] across [Categories / Years]. Use high-contrast modern colors, custom tooltips, legend toggles, and render metric highlight cards above the chart.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Generate an interactive Chart.js visualization comparing [Metric 1] vs [Metric 2] across [Categories / Years]. Use high-contrast modern colors, custom tooltips, legend toggles, and render metric highlight cards above the chart.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-data">DATA</span>
+                <span class="template-title">Python Sandbox Simulation & Matplotlib Plot</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Run a Python simulation using numpy and matplotlib to model [System / Phenomenon, e.g., Monte Carlo stock trajectory, particle diffusion, epidemic spread]. Plot the simulation with dark_background style, shaded confidence intervals, and print descriptive statistics.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Run a Python simulation using numpy and matplotlib to model [System / Phenomenon, e.g., Monte Carlo stock trajectory, particle diffusion, epidemic spread]. Plot the simulation with dark_background style, shaded confidence intervals, and print descriptive statistics.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Run a Python simulation using numpy and matplotlib to model [System / Phenomenon, e.g., Monte Carlo stock trajectory, particle diffusion, epidemic spread]. Plot the simulation with dark_background style, shaded confidence intervals, and print descriptive statistics.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-data">DATA</span>
+                <span class="template-title">Pandas ETL & Feature Engineering Pipeline</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Write a production-ready Pandas ETL script for [Dataset Description]. Handle missing values, outliers via IQR, one-hot encoding, datetime feature extraction, rolling averages, and calculate Pearson correlations. Execute it in the sandbox and show the head and correlation matrix.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Write a production-ready Pandas ETL script for [Dataset Description]. Handle missing values, outliers via IQR, one-hot encoding, datetime feature extraction, rolling averages, and calculate Pearson correlations. Execute it in the sandbox and show the head and correlation matrix.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Write a production-ready Pandas ETL script for [Dataset Description]. Handle missing values, outliers via IQR, one-hot encoding, datetime feature extraction, rolling averages, and calculate Pearson correlations. Execute it in the sandbox and show the head and correlation matrix.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-data">DATA</span>
+                <span class="template-title">Compound Interest & Wealth Projection</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Simulate a 30-year investment portfolio in Python with an initial amount of $10,000 and monthly contributions of $500 at 8%, 10%, and 12% annual returns. Factor in 2.5% inflation. Plot the real vs nominal growth curves and print a tabular milestone breakdown.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Simulate a 30-year investment portfolio in Python with an initial amount of $10,000 and monthly contributions of $500 at 8%, 10%, and 12% annual returns. Factor in 2.5% inflation. Plot the real vs nominal growth curves and print a tabular milestone breakdown.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Simulate a 30-year investment portfolio in Python with an initial amount of $10,000 and monthly contributions of $500 at 8%, 10%, and 12% annual returns. Factor in 2.5% inflation. Plot the real vs nominal growth curves and print a tabular milestone breakdown.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-data">DATA</span>
+                <span class="template-title">Statistical Hypothesis Testing (A/B Test)</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Analyze an A/B test dataset with Control (N=10,000, conv=4.2%) vs Variant (N=10,200, conv=4.9%). Write a Python script to compute two-proportion z-test, p-value, 95% confidence intervals, and statistical power. Conclude if the result is statistically significant.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Analyze an A/B test dataset with Control (N=10,000, conv=4.2%) vs Variant (N=10,200, conv=4.9%). Write a Python script to compute two-proportion z-test, p-value, 95% confidence intervals, and statistical power. Conclude if the result is statistically significant.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Analyze an A/B test dataset with Control (N=10,000, conv=4.2%) vs Variant (N=10,200, conv=4.9%). Write a Python script to compute two-proportion z-test, p-value, 95% confidence intervals, and statistical power. Conclude if the result is statistically significant.</code></pre>
+          </div>
+
+          <!-- Section C: Academic, Math & Exam Prep -->
+          <div class="guide-section-header">🎓 Academic, Mathematics & Exam Prep</div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-acad">ACADEMIC</span>
+                <span class="template-title">Competitive Exam Master Preparation Blueprint</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Create a comprehensive, structured preparation plan for [Exam, e.g. JEE Advanced / GATE / UPSC / USMLE]. Structure it as a markdown document with a 6-month timeline, high-weightage topics breakdown, daily time-blocking schedule, top reference books, mock test strategy, and common traps to avoid. Save as [exam_prep_plan.md].">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Create a comprehensive, structured preparation plan for [Exam, e.g. JEE Advanced / GATE / UPSC / USMLE]. Structure it as a markdown document with a 6-month timeline, high-weightage topics breakdown, daily time-blocking schedule, top reference books, mock test strategy, and common traps to avoid. Save as [exam_prep_plan.md].">Copy</button>
+              </div>
+            </div>
+            <pre><code>Create a comprehensive, structured preparation plan for [Exam, e.g. JEE Advanced / GATE / UPSC / USMLE]. Structure it as a markdown document with a 6-month timeline, high-weightage topics breakdown, daily time-blocking schedule, top reference books, mock test strategy, and common traps to avoid. Save as [exam_prep_plan.md].</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-acad">ACADEMIC</span>
+                <span class="template-title">KaTeX LaTeX Proof & Derivation</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Provide a rigorous, step-by-step mathematical proof of [Theorem / Formula, e.g. Bayes Theorem, Singular Value Decomposition, Cauchy-Schwarz Inequality, Maxwell Equations]. Format every equation cleanly in display KaTeX math ($$...$$) and explain the physical or geometric intuition behind each step.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Provide a rigorous, step-by-step mathematical proof of [Theorem / Formula, e.g. Bayes Theorem, Singular Value Decomposition, Cauchy-Schwarz Inequality, Maxwell Equations]. Format every equation cleanly in display KaTeX math ($$...$$) and explain the physical or geometric intuition behind each step.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Provide a rigorous, step-by-step mathematical proof of [Theorem / Formula, e.g. Bayes Theorem, Singular Value Decomposition, Cauchy-Schwarz Inequality, Maxwell Equations]. Format every equation cleanly in display KaTeX math ($$...$$) and explain the physical or geometric intuition behind each step.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-acad">ACADEMIC</span>
+                <span class="template-title">Research Paper Synthesis & Critique</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Synthesize and critically evaluate the research landscape of [Topic / Paper Title]. Summarize core methodology, empirical benchmarks, mathematical formulations, foundational limitations, and future research directions in a structured report.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Synthesize and critically evaluate the research landscape of [Topic / Paper Title]. Summarize core methodology, empirical benchmarks, mathematical formulations, foundational limitations, and future research directions in a structured report.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Synthesize and critically evaluate the research landscape of [Topic / Paper Title]. Summarize core methodology, empirical benchmarks, mathematical formulations, foundational limitations, and future research directions in a structured report.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-acad">ACADEMIC</span>
+                <span class="template-title">Algorithm Complexity & Master Theorem Analysis</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Analyze the recurrence relation T(n) = aT(n/b) + f(n) for the following recursive algorithm. Apply the Master Theorem cases or recursion tree method, state the tight asymptotic bound (Big-Theta), and analyze worst-case auxiliary space complexity:&#10;[Paste algorithm description or recurrence here]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Analyze the recurrence relation T(n) = aT(n/b) + f(n) for the following recursive algorithm. Apply the Master Theorem cases or recursion tree method, state the tight asymptotic bound (Big-Theta), and analyze worst-case auxiliary space complexity:&#10;[Paste algorithm description or recurrence here]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Analyze the recurrence relation T(n) = aT(n/b) + f(n) for the following recursive algorithm. Apply the Master Theorem cases or recursion tree method, state the tight asymptotic bound (Big-Theta), and analyze worst-case auxiliary space complexity:
+[Paste algorithm description or recurrence here]</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-acad">ACADEMIC</span>
+                <span class="template-title">Differential Equation Solver & Phase Portrait</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Solve the following second-order non-homogeneous differential equation analytically with KaTeX math steps. Then write and run a Python script using scipy.integrate.solve_ivp to plot the trajectory and phase portrait:&#10;[Enter Differential Equation and Initial Conditions here]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Solve the following second-order non-homogeneous differential equation analytically with KaTeX math steps. Then write and run a Python script using scipy.integrate.solve_ivp to plot the trajectory and phase portrait:&#10;[Enter Differential Equation and Initial Conditions here]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Solve the following second-order non-homogeneous differential equation analytically with KaTeX math steps. Then write and run a Python script using scipy.integrate.solve_ivp to plot the trajectory and phase portrait:
+[Enter Differential Equation and Initial Conditions here]</code></pre>
+          </div>
+
+          <!-- Section D: Live Web Research & Fact Checking -->
+          <div class="guide-section-header">🌐 Live Web Research & Fact Checking</div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-research">RESEARCH</span>
+                <span class="template-title">Frontier Model Benchmark Matrix</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Search the web for the latest verified benchmark comparisons between [Model A, e.g. Claude 3.7 Sonnet], [Model B, e.g. GPT-4.5], and [Model C, e.g. Nemotron 3]. Compare MMLU-Pro, HumanEval, Math, and pricing per 1M tokens. Provide a markdown comparison table with cited sources.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Search the web for the latest verified benchmark comparisons between [Model A, e.g. Claude 3.7 Sonnet], [Model B, e.g. GPT-4.5], and [Model C, e.g. Nemotron 3]. Compare MMLU-Pro, HumanEval, Math, and pricing per 1M tokens. Provide a markdown comparison table with cited sources.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Search the web for the latest verified benchmark comparisons between [Model A, e.g. Claude 3.7 Sonnet], [Model B, e.g. GPT-4.5], and [Model C, e.g. Nemotron 3]. Compare MMLU-Pro, HumanEval, Math, and pricing per 1M tokens. Provide a markdown comparison table with cited sources.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-research">RESEARCH</span>
+                <span class="template-title">Deep Fact-Check & Verification Investigation</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Fact-check the following claim using real-time web sources. State whether the claim is TRUE, FALSE, PARTIALLY TRUE, or MISLEADING. Cite primary sources, authoritative institutions, or official filings to back up the conclusion:&#10;[Enter Claim to investigate]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Fact-check the following claim using real-time web sources. State whether the claim is TRUE, FALSE, PARTIALLY TRUE, or MISLEADING. Cite primary sources, authoritative institutions, or official filings to back up the conclusion:&#10;[Enter Claim to investigate]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Fact-check the following claim using real-time web sources. State whether the claim is TRUE, FALSE, PARTIALLY TRUE, or MISLEADING. Cite primary sources, authoritative institutions, or official filings to back up the conclusion:
+[Enter Claim to investigate]</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-research">RESEARCH</span>
+                <span class="template-title">Competitive Market & Pricing Intelligence</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Search the web and analyze the competitive landscape for [Industry / SaaS category]. Identify the top 5 players, their pricing tiers, key technological differentiators, customer reviews/pain points, and market gaps. Save as [market_analysis.md].">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Search the web and analyze the competitive landscape for [Industry / SaaS category]. Identify the top 5 players, their pricing tiers, key technological differentiators, customer reviews/pain points, and market gaps. Save as [market_analysis.md].">Copy</button>
+              </div>
+            </div>
+            <pre><code>Search the web and analyze the competitive landscape for [Industry / SaaS category]. Identify the top 5 players, their pricing tiers, key technological differentiators, customer reviews/pain points, and market gaps. Save as [market_analysis.md].</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-research">RESEARCH</span>
+                <span class="template-title">Technology Trend Radar & Due Diligence</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Conduct a technology trend radar analysis for [Technology, e.g. WebGPU, Post-Quantum Cryptography, AI Agents]. Categorize sub-technologies into Adopt, Trial, Assess, and Hold with technical justification and recent breakthroughs.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Conduct a technology trend radar analysis for [Technology, e.g. WebGPU, Post-Quantum Cryptography, AI Agents]. Categorize sub-technologies into Adopt, Trial, Assess, and Hold with technical justification and recent breakthroughs.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Conduct a technology trend radar analysis for [Technology, e.g. WebGPU, Post-Quantum Cryptography, AI Agents]. Categorize sub-technologies into Adopt, Trial, Assess, and Hold with technical justification and recent breakthroughs.</code></pre>
+          </div>
+
+          <!-- Section E: Business, Product & Strategy -->
+          <div class="guide-section-header">💼 Product, Strategy & Business</div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-biz">BIZ</span>
+                <span class="template-title">Product Requirement Document (PRD)</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Write a comprehensive Product Requirement Document (PRD) for [Feature / New Product]. Include Problem Statement, Target Personas, User Stories with Acceptance Criteria, Success Metrics (KPIs), Technical Constraints, and Scope Boundaries. Save as [product_spec_prd.md].">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Write a comprehensive Product Requirement Document (PRD) for [Feature / New Product]. Include Problem Statement, Target Personas, User Stories with Acceptance Criteria, Success Metrics (KPIs), Technical Constraints, and Scope Boundaries. Save as [product_spec_prd.md].">Copy</button>
+              </div>
+            </div>
+            <pre><code>Write a comprehensive Product Requirement Document (PRD) for [Feature / New Product]. Include Problem Statement, Target Personas, User Stories with Acceptance Criteria, Success Metrics (KPIs), Technical Constraints, and Scope Boundaries. Save as [product_spec_prd.md].</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-biz">BIZ</span>
+                <span class="template-title">Investor Pitch Deck Narrative & Slide Outline</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Build a 10-slide venture pitch deck outline for [Startup Idea]. Include Problem, Solution, Market Size (TAM/SAM/SOM), Product Demo outline, Business Model, Unit Economics, GTM Strategy, Competition, and Financial Ask.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Build a 10-slide venture pitch deck outline for [Startup Idea]. Include Problem, Solution, Market Size (TAM/SAM/SOM), Product Demo outline, Business Model, Unit Economics, GTM Strategy, Competition, and Financial Ask.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Build a 10-slide venture pitch deck outline for [Startup Idea]. Include Problem, Solution, Market Size (TAM/SAM/SOM), Product Demo outline, Business Model, Unit Economics, GTM Strategy, Competition, and Financial Ask.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-biz">BIZ</span>
+                <span class="template-title">Strategic SWOT & Execution Matrix</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Perform an actionable SWOT analysis for [Company / Project]. Map each Weakness and Threat into a high-priority tactical mitigation initiative with timeline and owner assignment.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Perform an actionable SWOT analysis for [Company / Project]. Map each Weakness and Threat into a high-priority tactical mitigation initiative with timeline and owner assignment.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Perform an actionable SWOT analysis for [Company / Project]. Map each Weakness and Threat into a high-priority tactical mitigation initiative with timeline and owner assignment.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-biz">BIZ</span>
+                <span class="template-title">Executive Decision Briefing Memo</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Draft a 1-page executive decision memo analyzing whether to [Choice A, e.g. Build in-house] vs [Choice B, e.g. Buy third-party solution]. Outline financial cost breakdown, risk trade-offs, scalability, and present a definitive recommended decision.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Draft a 1-page executive decision memo analyzing whether to [Choice A, e.g. Build in-house] vs [Choice B, e.g. Buy third-party solution]. Outline financial cost breakdown, risk trade-offs, scalability, and present a definitive recommended decision.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Draft a 1-page executive decision memo analyzing whether to [Choice A, e.g. Build in-house] vs [Choice B, e.g. Buy third-party solution]. Outline financial cost breakdown, risk trade-offs, scalability, and present a definitive recommended decision.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-biz">BIZ</span>
+                <span class="template-title">Customer Discovery & User Interview Script</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Create a 30-minute customer interview guide based on 'The Mom Test' principles for [Product Concept]. Formulate non-leading questions that uncover genuine past behavior, current spending, workflow frustrations, and willingness to pay.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Create a 30-minute customer interview guide based on 'The Mom Test' principles for [Product Concept]. Formulate non-leading questions that uncover genuine past behavior, current spending, workflow frustrations, and willingness to pay.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Create a 30-minute customer interview guide based on 'The Mom Test' principles for [Product Concept]. Formulate non-leading questions that uncover genuine past behavior, current spending, workflow frustrations, and willingness to pay.</code></pre>
+          </div>
+
+          <!-- Section F: Reasoning, Writing & Creative Problem Solving -->
+          <div class="guide-section-header">🧠 Deep Reasoning & Writing</div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-reason">REASON</span>
+                <span class="template-title">First-Principles Deconstruction</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Deconstruct [Complex Problem / Assumption] down to its foundational first-principles truths that cannot be deduced any further. From those fundamentals, reason up to create an unconventional, highly efficient solution.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Deconstruct [Complex Problem / Assumption] down to its foundational first-principles truths that cannot be deduced any further. From those fundamentals, reason up to create an unconventional, highly efficient solution.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Deconstruct [Complex Problem / Assumption] down to its foundational first-principles truths that cannot be deduced any further. From those fundamentals, reason up to create an unconventional, highly efficient solution.</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-reason">REASON</span>
+                <span class="template-title">Contract Redlining & Risk Review</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Review the following contract / terms of service agreement. Identify high-risk indemnity clauses, unilateral termination rights, non-standard IP ownership transfers, and recommend redline edits to protect our interests:&#10;[Paste Contract Text here]">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Review the following contract / terms of service agreement. Identify high-risk indemnity clauses, unilateral termination rights, non-standard IP ownership transfers, and recommend redline edits to protect our interests:&#10;[Paste Contract Text here]">Copy</button>
+              </div>
+            </div>
+            <pre><code>Review the following contract / terms of service agreement. Identify high-risk indemnity clauses, unilateral termination rights, non-standard IP ownership transfers, and recommend redline edits to protect our interests:
+[Paste Contract Text here]</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-reason">REASON</span>
+                <span class="template-title">Full Technical Tutorial with Code</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Write an engaging, step-by-step developer tutorial explaining [Concept / Framework, e.g. Building a RAG pipeline from scratch]. Include architectural diagrams, working copy-pasteable code, explanations of edge cases, and best practices. Format as [tutorial_guide.md].">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Write an engaging, step-by-step developer tutorial explaining [Concept / Framework, e.g. Building a RAG pipeline from scratch]. Include architectural diagrams, working copy-pasteable code, explanations of edge cases, and best practices. Format as [tutorial_guide.md].">Copy</button>
+              </div>
+            </div>
+            <pre><code>Write an engaging, step-by-step developer tutorial explaining [Concept / Framework, e.g. Building a RAG pipeline from scratch]. Include architectural diagrams, working copy-pasteable code, explanations of edge cases, and best practices. Format as [tutorial_guide.md].</code></pre>
+          </div>
+
+          <div class="guide-prompt-template">
+            <div class="template-header">
+              <div class="template-title-wrap">
+                <span class="template-cat-tag cat-reason">REASON</span>
+                <span class="template-title">FAANG Mock Technical Interview Simulation</span>
+              </div>
+              <div class="template-actions">
+                <button class="template-use-btn" type="button" data-use="Act as a Principal Staff Software Engineer conducting a system design and coding interview for [Role, e.g. Senior Backend Engineer]. Start by presenting the problem statement, wait for my clarifying questions, evaluate my responses critically, and guide me through trade-offs.">Use</button>
+                <button class="template-copy-btn" type="button" data-copy="Act as a Principal Staff Software Engineer conducting a system design and coding interview for [Role, e.g. Senior Backend Engineer]. Start by presenting the problem statement, wait for my clarifying questions, evaluate my responses critically, and guide me through trade-offs.">Copy</button>
+              </div>
+            </div>
+            <pre><code>Act as a Principal Staff Software Engineer conducting a system design and coding interview for [Role, e.g. Senior Backend Engineer]. Start by presenting the problem statement, wait for my clarifying questions, evaluate my responses critically, and guide me through trade-offs.</code></pre>
+          </div>
+        </div>
+
+        <!-- 5. Code Sandbox Tab -->
+        <div id="guideTab-sandbox" class="guide-tab-pane">
+          <div class="guide-card">
+            <h3>🐍 Live Python Execution Sandbox</h3>
+            <p>Cortex features a built-in isolated Python execution engine. When you ask Cortex to write or run Python code, it executes within an ephemeral subprocess sandbox:</p>
+            <ul class="guide-bullet-list">
+              <li><strong>Pre-installed Libraries:</strong> NumPy, Pandas, Matplotlib, SciPy, Requests, and standard library modules.</li>
+              <li><strong>Automatic Plot Harvesting:</strong> Any <code>plt.show()</code> or generated figure is automatically captured as high-resolution PNG/SVG and rendered inline in the chat bubble.</li>
+              <li><strong>Interactive Terminal Output:</strong> Stdout, Stderr, and execution runtime are formatted inside a collapsible code card with 1-click copy.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 6. Charts & Math Tab -->
+        <div id="guideTab-charts" class="guide-tab-pane">
+          <div class="guide-card">
+            <h3>📊 Visualizations & KaTeX Mathematics</h3>
+            <p>Cortex natively renders rich mathematical formulas and interactive client-side charts:</p>
+          </div>
+
+          <div class="guide-card">
+            <h4>$\sum$ KaTeX Math Formatting</h4>
+            <p>Inline math is enclosed in single dollar signs <code>$E = mc^2$</code>, and display formulas use double dollar signs:</p>
+            <pre><code>$$\mathcal{L}_{MoE} = \sum_{i=1}^{N} p_i \cdot \text{Loss}_i + \lambda \mathcal{L}_{balance}$$</code></pre>
+          </div>
+
+          <div class="guide-card">
+            <h4>📈 Interactive Chart.js</h4>
+            <p>When requesting charts, Cortex produces clean HTML/JS Chart.js canvas elements supporting Bar, Line, Doughnut, Radar, and Polar area charts with tooltips and responsive scaling.</p>
+          </div>
+        </div>
+
+        <!-- 7. Workspaces & Memory Tab -->
+        <div id="guideTab-workspaces" class="guide-tab-pane">
+          <div class="guide-card">
+            <h3>📂 Projects & Persistent Memory</h3>
+            <p>Keep your conversations and contextual instructions cleanly partitioned:</p>
+            <ul class="guide-bullet-list">
+              <li><strong>Project Workspaces:</strong> Group related research and codebases. Each project can have its own custom instructions.</li>
+              <li><strong>SQLite Memory Store:</strong> Cortex remembers your background, preferences, and personal directives across all sessions.</li>
+              <li><strong>Artifacts Archive:</strong> Every <code>.md</code> document or code artifact created is automatically indexed in your Artifacts tab for instant retrieval and split-panel reading.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <template id="tpl-empty-state">
+    <div class="empty-state">
+      <div class="empty-hero-line">
+        <span class="empty-logo-inline" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z" fill="#22c55e" fill-opacity="0.25" stroke="#22c55e" stroke-width="1.7" stroke-linejoin="round"/>
+            <circle cx="16" cy="16" r="2.5" fill="#4ade80"/>
+            <path d="M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <h1 id="emptyGreetingTitle" class="empty-greeting-single">Hey Pedro , Do you want to explore something with me ?</h1>
+      </div>
+    </div>
+  </template>
+
+  <!-- ==================== ONBOARDING TOUR OVERLAY & CARD ==================== -->
+  <div id="tourOverlay" class="tour-overlay" style="display: none;">
+    <div id="tourSpotlight" class="tour-spotlight"></div>
+  </div>
+
+  <div id="tourCard" class="tour-card" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+    <div class="tour-card-header">
+      <div class="tour-step-badge">
+        <span id="tourStepCurrent">1</span> of <span id="tourStepTotal">6</span>
+      </div>
+      <button id="tourCloseBtn" class="tour-close-btn" type="button" aria-label="Skip tour">✕</button>
+    </div>
+    <div class="tour-card-body">
+      <div class="tour-card-icon" id="tourIcon">🚀</div>
+      <h3 id="tourTitle" class="tour-title">Welcome to Cortex 3.1</h3>
+      <p id="tourDescription" class="tour-description">Experience autonomous multi-model AI with live sandboxed coding, real-time research, and interactive data visualization.</p>
+    </div>
+    <div class="tour-card-footer">
+      <button id="tourSkipBtn" class="tour-btn tour-skip-btn" type="button">Skip Tour</button>
+      <div class="tour-footer-right">
+        <button id="tourPrevBtn" class="tour-btn tour-prev-btn" type="button" style="display: none;">Back</button>
+        <button id="tourNextBtn" class="tour-btn tour-next-btn" type="button">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== FULL-SCREEN CONFETTI CANNON CANVAS ==================== -->
+  <canvas id="confettiCanvas" class="confetti-canvas" style="display: none;"></canvas>
+
+  <!-- ==================== CELEBRATION TOAST ==================== -->
+  <div id="celebrationToast" class="celebration-toast" style="display: none;">
+    <div class="celebration-toast-icon">🎉</div>
+    <div class="celebration-toast-content">
+      <span class="celebration-toast-title">All Done! Welcome aboard!</span>
+      <span class="celebration-toast-sub">You can now explore, code, and analyze anything on Cortex 3.1.</span>
+    </div>
+  </div>
+
+  <!-- Bottom Notification Toast for daily upload limit or alerts -->
+  <div id="quotaToast" class="quota-toast" style="display: none;">
+    <div class="quota-toast-icon">⚠️</div>
+    <div class="quota-toast-text" id="quotaToastText">Daily upload limit reached (10 files/day). Quota resets at 00:00 UTC.</div>
+  </div>
+
+  <script src="/static/app.js?v=20260916_v49"></script>
+</body>
+</html>
