@@ -398,6 +398,14 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
             (username_clean,),
         ).fetchone()
         if not row:
+            # On Vercel / serverless ephemeral containers:
+            # If the user registered on another container and is logging in on a new container,
+            # seamlessly create the account on this container with their credentials!
+            if (os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")) and len(password) >= 8:
+                try:
+                    return create_user(username_clean, password)
+                except Exception:
+                    pass
             return None
         # Guest accounts cannot authenticate via password credentials
         if bool(row["is_guest"]) or row["password_hash"] == "GUEST_ANONYMOUS":
@@ -582,6 +590,49 @@ def get_user_by_username(username: str) -> Optional[dict[str, Any]]:
         d = dict(row)
         d["is_guest"] = bool(d.get("is_guest", 0))
         return d
+
+
+def reconstitute_user(
+    user_id: str,
+    username: str,
+    email: str = "",
+    is_guest: bool = False,
+    avatar: str = "avatar-1",
+) -> dict[str, Any]:
+    """Reconstitute a cryptographically verified user into the current instance's database.
+
+    Critical for serverless / multi-container environments (e.g., Vercel, AWS Lambda)
+    where each container has an ephemeral SQLite file in /tmp.
+    """
+    clean_user = (username or "Explorer").strip().lower()
+    clean_email = (email or "").strip()
+    now = _utc_now_iso()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users (id, username, email, password_hash, salt, created_at, is_guest, avatar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                clean_user,
+                clean_email,
+                "SERVERLESS_VERIFIED_TOKEN",
+                "salt",
+                now,
+                1 if is_guest else 0,
+                avatar,
+            ),
+        )
+        conn.commit()
+    return get_user_by_id(user_id) or {
+        "id": user_id,
+        "username": clean_user,
+        "email": clean_email,
+        "is_guest": is_guest,
+        "created_at": now,
+        "avatar": avatar,
+    }
 
 
 def revoke_token(token_sig: str, user_id: str, expires_at: Optional[int] = None) -> None:

@@ -179,7 +179,12 @@ let currentUser = null;
 let authMode = "login"; // "login" | "register"
 
 function authHeaders(extra = {}) {
-  return { ...extra };
+  const token = localStorage.getItem("cortex_auth_token");
+  const headers = { ...extra };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 let currentConversationId = null;
@@ -2453,7 +2458,13 @@ async function loadConversations(autoSelectLatest = false) {
     }
     const res = await fetch(url, { headers: authHeaders() });
     if (res.status === 401) {
-      signOut();
+      const meRes = await fetch("/api/auth/me", { headers: authHeaders() }).catch(() => null);
+      if (!meRes || !meRes.ok) {
+        signOut();
+        return;
+      }
+      conversations = [];
+      renderConversationsList();
       return;
     }
     conversations = await res.json();
@@ -5374,9 +5385,6 @@ function showChatApp() {
   loadUserMemories();
   loadUserUsage();
   loadArtifactsCount();
-  if (!localStorage.getItem("cortex_tour_completed")) {
-    setTimeout(startOnboardingTour, 700);
-  }
   promptEl.focus();
 }
 
@@ -5442,7 +5450,7 @@ async function handleAuthSubmit(e) {
 
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-API-Client": "true" },
       body: JSON.stringify(bodyPayload),
     });
 
@@ -5452,13 +5460,17 @@ async function handleAuthSubmit(e) {
     }
 
     currentUser = data.user;
-    localStorage.removeItem("cortex_auth_token");
+    if (data.token) {
+      localStorage.setItem("cortex_auth_token", data.token);
+    }
     localStorage.setItem("cortex_active_conv", "new");
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);
     }
+    localStorage.setItem("cortex_tour_completed", "true");
     updateDynamicGreeting();
 
+    closeAuthModal();
     showChatApp();
     startNewChat();
     await loadProjects();
@@ -5487,6 +5499,14 @@ function signOut() {
   localStorage.removeItem("cortex_auth_token");
   localStorage.setItem("cortex_active_conv", "new");
   localStorage.removeItem("cortex_username");
+  const overlay = document.getElementById("tourOverlay") || tourOverlay;
+  const card = document.getElementById("tourCard") || tourCard;
+  if (overlay) overlay.style.display = "none";
+  if (card) card.style.display = "none";
+  const celToast = document.getElementById("celebrationToast") || celebrationToast;
+  if (celToast) celToast.style.display = "none";
+  const confetti = document.getElementById("confettiCanvas") || confettiCanvas;
+  if (confetti) confetti.style.display = "none";
   currentUser = null;
   conversations = [];
   messages = [];
@@ -5666,21 +5686,21 @@ function updatePasswordStrength(password) {
   if (!passwordStrengthWrap || !passwordStrengthBar || !passwordStrengthText) return;
   if (!password) {
     passwordStrengthBar.style.width = "0%";
-    passwordStrengthText.textContent = "Enter at least 4 characters";
+    passwordStrengthText.textContent = "Enter at least 8 characters";
     passwordStrengthText.style.color = "#64748b";
     return;
   }
 
   let score = 0;
-  if (password.length >= 4) score += 1;
   if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
   if (/[0-9]/.test(password)) score += 1;
   if (/[A-Z]/.test(password) || /[^A-Za-z0-9]/.test(password)) score += 1;
 
   if (score <= 1) {
     passwordStrengthBar.style.width = "25%";
     passwordStrengthBar.style.backgroundColor = "#e0685c";
-    passwordStrengthText.textContent = "Weak (minimum 4 characters)";
+    passwordStrengthText.textContent = "Weak (minimum 8 characters)";
     passwordStrengthText.style.color = "#ff8579";
   } else if (score === 2) {
     passwordStrengthBar.style.width = "50%";
@@ -5720,7 +5740,7 @@ async function handleGuestTestDrive() {
   try {
     const res = await fetch("/api/auth/guest", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-API-Client": "true" },
     });
 
     const data = await res.json();
@@ -5729,11 +5749,14 @@ async function handleGuestTestDrive() {
     }
 
     currentUser = data.user;
-    localStorage.removeItem("cortex_auth_token");
+    if (data.token) {
+      localStorage.setItem("cortex_auth_token", data.token);
+    }
     localStorage.setItem("cortex_active_conv", "new");
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);
     }
+    localStorage.setItem("cortex_tour_completed", "true");
     updateDynamicGreeting();
 
     closeAuthModal();

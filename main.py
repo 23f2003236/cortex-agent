@@ -301,11 +301,19 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 # Auth Token Security & Dependency
 # ---------------------------------------------------------------------------
 
-def generate_token(user_id: str, username: str, expires_in_seconds: int = 60 * 60 * 24 * 30) -> str:
+def generate_token(
+    user_id: str,
+    username: str,
+    email: str = "",
+    is_guest: bool = False,
+    expires_in_seconds: int = 60 * 60 * 24 * 30,
+) -> str:
     """Generate a tamper-proof HMAC-SHA256 signed token."""
     payload = {
         "uid": user_id,
         "usr": username,
+        "eml": email,
+        "gst": is_guest,
         "exp": int(time.time()) + expires_in_seconds,
     }
     payload_json = json.dumps(payload, separators=(",", ":"))
@@ -389,10 +397,12 @@ async def get_current_user(
 
     user = database.get_user_by_id(token_data["uid"])
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account no longer exists.",
-            headers={"WWW-Authenticate": "Bearer"},
+        # Reconstitute verified user for serverless (Vercel / AWS Lambda)
+        user = database.reconstitute_user(
+            user_id=token_data["uid"],
+            username=token_data.get("usr", "Explorer"),
+            email=token_data.get("eml", ""),
+            is_guest=bool(token_data.get("gst", False)),
         )
     return user
 
@@ -517,14 +527,14 @@ def register(payload: RegisterPayload, request: Request, response: Response):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Username '{clean_user}' is already taken.")
         raise HTTPException(status_code=400, detail=err_str)
 
-    token = generate_token(user["id"], user["username"])
+    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     resp = {
         "ok": True,
         "user": {
             "id": user["id"],
             "username": user["username"],
-            "email": user["email"],
+            "email": user.get("email", ""),
             "is_guest": False,
         },
     }
@@ -566,14 +576,15 @@ def login(payload: LoginPayload, request: Request, response: Response):
     database.reset_auth_attempts(f"login_user:{clean_user}")
     database.reset_auth_attempts(f"login_ip:{client_ip}")
 
-    token = generate_token(user["id"], user["username"])
+    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     resp = {
         "ok": True,
         "user": {
             "id": user["id"],
             "username": user["username"],
-            "email": user["email"],
+            "email": user.get("email", ""),
+            "is_guest": False,
         },
     }
     if is_api_client_request(request):
@@ -644,7 +655,7 @@ def guest_auth(request: Request, response: Response):
         pass
 
     user = database.create_guest_user()
-    token = generate_token(user["id"], user["username"], expires_in_seconds=60 * 60 * 24)
+    token = generate_token(user["id"], user["username"], is_guest=True, expires_in_seconds=60 * 60 * 24)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24)
     resp = {
         "ok": True,
