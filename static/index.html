@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20260913_v4" />
-  <link rel="stylesheet" href="/static/style.css?v=20260917_v52" />
+  <link rel="stylesheet" href="/static/style.css?v=20260917_v53" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="/static/vendor/katex/katex.min.js?v=20260913_v4"></script>
   <script src="/static/vendor/katex/mhchem.min.js?v=20260917_v1"></script>
@@ -44,7 +44,6 @@
         <nav class="landing-nav-links">
           <a href="#capabilities">Capabilities</a>
           <a href="#showcase">Agent 3.1</a>
-          <a href="#savings">Savings</a>
           <a href="#models">Models</a>
           <a href="#research">Research</a>
           <a href="#faqs">FAQs</a>
@@ -94,12 +93,7 @@
           <span>Launch Cortex Studio</span>
           <span class="cta-arrow-badge">Free Forever</span>
         </button>
-        <div class="hero-subtext">No credit card required &middot; Instant access &middot; 8 Active NIM Models</div>
-      </div>
-
-      <!-- Developer Counter Metric -->
-      <div class="hero-counter-wrap">
-        <span>Join <strong class="counter-number">414,403</strong> developers & researchers</span>
+        <div class="hero-subtext">No credit card required &middot; Instant access &middot; 5 Frontier NIM Models</div>
       </div>
 
       <!-- Comparison Matrix Card (Screenshot 1) -->
@@ -111,7 +105,7 @@
             </div>
             <div class="comp-info">
               <strong>Cortex Agent 3.1</strong>
-              <span>8 NIM Models &middot; Deep Reasoning &middot; Web Search</span>
+              <span>Frontier NIM Models &middot; Deep Reasoning &middot; Web Search</span>
             </div>
           </div>
           <div class="comp-bar-track">
@@ -144,20 +138,6 @@
           </div>
           <div class="comp-bar-track">
             <div class="comp-bar-fill competitor-fill" style="width: 58%;"></div>
-          </div>
-          <div class="comp-price red-text">$240 <small>/ yr</small></div>
-        </div>
-
-        <div class="comparison-row">
-          <div class="comp-brand">
-            <div class="comp-icon competitor-icon">⚡</div>
-            <div class="comp-info">
-              <strong>Cursor Pro</strong>
-              <span>Subscription tier required for agent mode</span>
-            </div>
-          </div>
-          <div class="comp-bar-track">
-            <div class="comp-bar-fill competitor-fill" style="width: 65%;"></div>
           </div>
           <div class="comp-price red-text">$240 <small>/ yr</small></div>
         </div>
@@ -259,6 +239,7 @@
               </button>
               <button class="sim-tab" data-tab="sandbox" type="button">
                 <span>⚡ Code Architecture</span>
+                <span class="tab-soon-badge">Sandbox Soon</span>
               </button>
               <button class="sim-tab" data-tab="artifact" type="button">
                 <span>📄 Generated Artifact</span>
@@ -346,6 +327,10 @@
                 <div class="sim-sandbox-header">
                   <span class="sim-sandbox-title">⚡ Production Code Architecture & Engineering</span>
                   <span class="sim-sandbox-pill">TYPE-CHECKED & TESTED</span>
+                </div>
+                <div class="sim-sandbox-banner">
+                  <span class="sandbox-pulse-badge">COMING SOON</span>
+                  <span><strong>Cloud Sandbox Execution:</strong> We will add live interactive container execution sandbox soon. Currently performing zero-latency static synthesis and architectural validation.</span>
                 </div>
                 <pre class="sim-code-preview"><code>import asyncio
 import time
@@ -480,60 +465,7 @@ class DistributedRateLimiter:
       </div>
     </section>
 
-    <!-- 4. Interactive Savings Calculator Section (Screenshot 3) -->
-    <section id="savings" class="landing-section savings-section">
-      <h2 class="section-title text-center hero-serif-title">See how much you can save</h2>
 
-      <div class="savings-container">
-        <!-- Left Card: Tool pills + Team size slider -->
-        <div class="savings-card savings-tools-card">
-          <div class="savings-pills-grid" id="savingsPillsGrid">
-            <button class="tool-pill" data-price="120" type="button"><span class="pill-icon">⯏</span> OpenCode $120</button>
-            <button class="tool-pill active" data-price="120" type="button"><span class="pill-icon">⌨</span> Copilot Pro $120</button>
-            <button class="tool-pill" data-price="200" type="button"><span class="pill-icon">✳</span> Perplexity Pro $200</button>
-            <button class="tool-pill" data-price="240" type="button"><span class="pill-icon">◉</span> Codex $240</button>
-            <button class="tool-pill" data-price="240" type="button"><span class="pill-icon">e</span> Emergent $240</button>
-            <button class="tool-pill active" data-price="240" type="button"><span class="pill-icon">❖</span> ChatGPT Plus $240</button>
-            <button class="tool-pill" data-price="240" type="button"><span class="pill-icon">✦</span> Gemini Advanced $240</button>
-            <button class="tool-pill" data-price="324" type="button"><span class="pill-icon">b</span> Bolt.new $324</button>
-            <button class="tool-pill" data-price="360" type="button"><span class="pill-icon">𝕏</span> Grok $360</button>
-            <button class="tool-pill" data-price="600" type="button"><span class="pill-icon">♥</span> Lovable $600</button>
-            <button class="tool-pill active" data-price="720" type="button"><span class="pill-icon">⬡</span> Cursor $720</button>
-            <button class="tool-pill" data-price="1080" type="button"><span class="pill-icon">⠵</span> Replit $1,080</button>
-            <button class="tool-pill active" data-price="1200" type="button"><span class="pill-icon">✴</span> Claude Code $1,200</button>
-            <button class="tool-pill" data-price="1200" type="button"><span class="pill-icon">❖</span> Factory $1,200</button>
-            <button class="tool-pill" data-price="1920" type="button"><span class="pill-icon">◓</span> Base44 $1,920</button>
-            <button class="tool-pill" data-price="2400" type="button"><span class="pill-icon">▷</span> Devin $2,400</button>
-          </div>
-
-          <div class="savings-slider-wrap">
-            <div class="slider-meta">
-              <span class="slider-label">Team size</span>
-              <span id="seatCountDisplay" class="slider-val">5 seats</span>
-            </div>
-            <input type="range" id="teamSeatSlider" class="custom-green-slider" min="1" max="25" value="5" step="1" />
-          </div>
-        </div>
-
-        <!-- Right Card: Amount saved + CTA -->
-        <div class="savings-card savings-result-card">
-          <div class="savings-meta-top">You save</div>
-          <div id="savingsAmountDisplay" class="savings-huge-number">$11,400</div>
-          <div class="savings-meta-sub">a year</div>
-
-          <div class="savings-zero-tag">Cortex is $0. Forever.</div>
-
-          <button id="savingsGetStartedBtn" class="hero-cta-btn savings-cta-btn" type="button">
-            <span>Launch Cortex Studio</span>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
-
-          <div id="savingsBreakdownText" class="savings-breakdown">
-            Replaces $2,280 per seat × 5 seats
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- 5. Interactive Frontier Models Fleet Showcase -->
     <section id="models" class="landing-section models-fleet-section">
@@ -835,7 +767,7 @@ class DistributedRateLimiter:
           <a href="#faqs" class="footer-link">FAQs</a>
           <a href="#" class="footer-link" onclick="showToast('Privacy Policy will be updated soon'); return false;">Privacy Policy</a>
           <a href="#" class="footer-link" onclick="showToast('Terms of Service will be updated soon'); return false;">Terms</a>
-          <a href="https://github.com" target="_blank" rel="noopener noreferrer" class="footer-link">GitHub</a>
+          <a href="#" class="footer-link" onclick="showToast('We will update this feature soon'); return false;">GitHub</a>
         </div>
 
         <div class="footer-copyright">
@@ -2480,13 +2412,14 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     <div class="empty-state">
       <div class="empty-hero-line">
         <span class="empty-logo-inline" aria-hidden="true">
-          <svg viewBox="0 0 32 32" width="30" height="30" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 32 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
             <path d="M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z" fill="#22c55e" fill-opacity="0.25" stroke="#22c55e" stroke-width="1.7" stroke-linejoin="round"/>
             <circle cx="16" cy="16" r="2.5" fill="#4ade80"/>
             <path d="M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
           </svg>
         </span>
+        <h1 id="emptyGreetingTitle" class="empty-greeting-single">Hey Explorer , Do you want to explore something with me ?</h1>
       </div>
     </div>
   </template>
@@ -2535,6 +2468,6 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     <div class="quota-toast-text" id="quotaToastText">Daily upload limit reached (10 files/day). Quota resets at 00:00 UTC.</div>
   </div>
 
-  <script src="/static/app.js?v=20260917_v52"></script>
+  <script src="/static/app.js?v=20260917_v53"></script>
 </body>
 </html>

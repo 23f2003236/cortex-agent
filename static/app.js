@@ -3272,8 +3272,14 @@ function formatDisplayName(raw) {
 }
 
 function getDynamicGreeting(username) {
+  const rawName =
+    username ||
+    (currentUser && currentUser.username) ||
+    localStorage.getItem("cortex_username") ||
+    "Explorer";
+  const name = formatDisplayName(rawName) || "Explorer";
   return {
-    title: "",
+    title: `Hey ${name} , Do you want to explore something with me ?`,
     subtitle: ""
   };
 }
