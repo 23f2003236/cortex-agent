@@ -258,6 +258,15 @@ app.add_middleware(
 )
 
 @app.middleware("http")
+async def db_lifecycle_middleware(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        database.close_connection()
+
+
+@app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -266,7 +275,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+        "script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; "
         "img-src 'self' data: blob: https:; "
@@ -279,6 +288,11 @@ async def add_security_headers(request: Request, call_next):
     if request.url.scheme == "https" or os.getenv("ENVIRONMENT") == "production" or os.getenv("CORTEX_ENV") == "production":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    database.close_all_connections()
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
@@ -472,6 +486,11 @@ class LoginPayload(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+def is_api_client_request(request: Request) -> bool:
+    """Check if the request originated from an external API/CLI client rather than a browser."""
+    return request.headers.get("X-API-Client", "").strip().lower() in ("true", "1")
+
+
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterPayload, request: Request, response: Response):
     client_ip = get_client_ip(request)
@@ -500,9 +519,8 @@ def register(payload: RegisterPayload, request: Request, response: Response):
 
     token = generate_token(user["id"], user["username"])
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
-    return {
+    resp = {
         "ok": True,
-        "token": token,
         "user": {
             "id": user["id"],
             "username": user["username"],
@@ -510,6 +528,9 @@ def register(payload: RegisterPayload, request: Request, response: Response):
             "is_guest": False,
         },
     }
+    if is_api_client_request(request):
+        resp["token"] = token
+    return resp
 
 
 @app.post("/api/auth/login")
@@ -547,9 +568,55 @@ def login(payload: LoginPayload, request: Request, response: Response):
 
     token = generate_token(user["id"], user["username"])
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
+    resp = {
+        "ok": True,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "email": user["email"],
+        },
+    }
+    if is_api_client_request(request):
+        resp["token"] = token
+    return resp
+
+
+@app.post("/api/auth/token")
+def api_token_auth(payload: LoginPayload, request: Request):
+    """Dedicated endpoint for external programmatic API clients to exchange credentials for a Bearer token."""
+    client_ip = get_client_ip(request)
+    clean_user = payload.username.strip().lower()
+
+    allowed_ip, wait_ip = database.check_and_record_auth_attempt(
+        f"login_ip:{client_ip}", max_attempts=30, window_seconds=900
+    )
+    if not allowed_ip:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many login attempts from this network. Please try again in {wait_ip} seconds.",
+        )
+
+    allowed_user, wait_user = database.check_and_record_auth_attempt(
+        f"login_user:{clean_user}", max_attempts=5, window_seconds=900
+    )
+    if not allowed_user:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Account temporarily locked due to repeated failed login attempts. Please try again in {wait_user} seconds.",
+        )
+
+    user = database.authenticate_user(payload.username, payload.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    database.reset_auth_attempts(f"login_user:{clean_user}")
+    database.reset_auth_attempts(f"login_ip:{client_ip}")
+
+    token = generate_token(user["id"], user["username"])
     return {
         "ok": True,
         "token": token,
+        "token_type": "bearer",
         "user": {
             "id": user["id"],
             "username": user["username"],
@@ -579,9 +646,8 @@ def guest_auth(request: Request, response: Response):
     user = database.create_guest_user()
     token = generate_token(user["id"], user["username"], expires_in_seconds=60 * 60 * 24)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24)
-    return {
+    resp = {
         "ok": True,
-        "token": token,
         "user": {
             "id": user["id"],
             "username": user["username"],
@@ -589,6 +655,9 @@ def guest_auth(request: Request, response: Response):
             "is_guest": True,
         },
     }
+    if is_api_client_request(request):
+        resp["token"] = token
+    return resp
 
 
 @app.get("/api/auth/me")
@@ -1270,22 +1339,31 @@ def run_tool_rounds_streaming(
     model_override: Optional[str] = None,
     tools_subset: Optional[list] = None,
     max_rounds: Optional[int] = None,
+    turn_budget: Optional[int] = None,
 ):
     """Run tool-calling rounds and yield live progress events:
     - ("tool_start", {"name": tool_name, "label": label, "args": tool_args})
     - ("tool_end", {"name": tool_name, "label": label, "result": preview})
+    - ("tool_tokens_total", accumulated_tool_tokens)
     - ("tools_used", tools_used)
     Mutates `messages` in place.
     """
     effective_tools = tools_subset if tools_subset is not None else TOOLS
     tools_by_name = {t.name: t for t in effective_tools}
     effective_rounds = max_rounds or MAX_TOOL_ROUNDS
+    budget_limit = turn_budget if turn_budget is not None else 100000
 
     llm = make_llm(model_override=model_override, streaming=False, max_tokens=1024)
     llm_with_tools = llm.bind_tools(effective_tools)
     tools_used: list[str] = []
+    accumulated_tool_tokens = 0
 
-    for _ in range(effective_rounds):
+    for round_idx in range(effective_rounds):
+        # Per-turn budget guard: if accumulated tool tokens leave insufficient room for synthesis, halt early
+        if accumulated_tool_tokens >= max(200, budget_limit - 200):
+            logger.info(f"Halting tool execution at round {round_idx}: accumulated tool tokens ({accumulated_tool_tokens}) reached turn budget ({budget_limit})")
+            break
+
         ai_message = None
         for attempt in range(3):
             try:
@@ -1297,6 +1375,26 @@ def run_tool_rounds_streaming(
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 raise
+
+        # Accumulate provider token usage for this tool round
+        round_tokens = 0
+        if ai_message:
+            meta = getattr(ai_message, "response_metadata", {}) or {}
+            usage = getattr(ai_message, "usage_metadata", None) or meta.get("token_usage") or meta.get("usage")
+            if usage and isinstance(usage, dict):
+                tot = usage.get("total_tokens")
+                if tot and isinstance(tot, (int, float)) and tot > 0:
+                    round_tokens = int(tot)
+                else:
+                    in_t = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+                    out_t = usage.get("output_tokens", usage.get("completion_tokens", 0))
+                    if isinstance(in_t, (int, float)) and isinstance(out_t, (int, float)) and (in_t + out_t) > 0:
+                        round_tokens = int(in_t + out_t)
+            if round_tokens == 0 and getattr(ai_message, "content", None):
+                in_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
+                out_chars = len(str(ai_message.content))
+                round_tokens = max(1, (in_chars + out_chars) // 4)
+        accumulated_tool_tokens += round_tokens
 
         tool_calls = getattr(ai_message, "tool_calls", None) or []
 
@@ -1361,6 +1459,7 @@ def run_tool_rounds_streaming(
             yield ("tool_end", {"name": tool_name, "label": label, "result": preview})
             messages.append(ToolMessage(content=result_text, tool_call_id=call["id"]))
 
+    yield ("tool_tokens_total", accumulated_tool_tokens)
     yield ("tools_used", tools_used)
 
 
@@ -2537,6 +2636,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         plot_token = _current_harvested_plots_ctx.set([])
         full_text = ""
         tools_used = []
+        turn_tool_tokens = 0
         quota_reserved = False
         provider_usage = None
         estimated_tokens = 1500
@@ -2658,7 +2758,13 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     raw_memory_cat = "preference"
 
             if run_tools:
-                for ev_type, payload in run_tool_rounds_streaming(messages, model_override=effective_model, tools_subset=tools_subset, max_rounds=max_rounds):
+                for ev_type, payload in run_tool_rounds_streaming(
+                    messages,
+                    model_override=effective_model,
+                    tools_subset=tools_subset,
+                    max_rounds=max_rounds,
+                    turn_budget=budget_tokens,
+                ):
                     if time.time() - last_lease_renew >= 30:
                         renew_user_stream(stream_id)
                         last_lease_renew = time.time()
@@ -2666,6 +2772,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                         yield event({"type": "tool_start", **payload})
                     elif ev_type == "tool_end":
                         yield event({"type": "tool_end", **payload})
+                    elif ev_type == "tool_tokens_total":
+                        turn_tool_tokens = int(payload)
                     elif ev_type == "tools_used":
                         tools_used = payload
 
@@ -2727,7 +2835,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 )
                 synthesis_messages.append(SystemMessage(content=directive_content))
 
-            llm = make_llm(model_override=effective_model, streaming=True, max_tokens=budget_tokens)
+            synthesis_budget = max(200, budget_tokens - turn_tool_tokens)
+            llm = make_llm(model_override=effective_model, streaming=True, max_tokens=synthesis_budget)
             max_attempts = 3
             is_truncated = False
             last_finish_reason = None
@@ -2778,8 +2887,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             if clean_chunk:
                                 full_text += clean_chunk
                                 yield event({"type": "token", "text": clean_chunk})
-                                # In-stream token guard: if generated tokens reach reserved budget, halt gracefully
-                                if (len(full_text) // 4) >= budget_tokens:
+                                # In-stream token guard: if total turn tokens reach reserved budget, halt gracefully
+                                if ((len(full_text) // 4) + turn_tool_tokens) >= budget_tokens:
                                     is_truncated = True
                                     trunc_note = "\n\n[Generation completed: Reached daily token allowance limit.]"
                                     full_text += trunc_note
@@ -2915,7 +3024,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             "Provide the complete, in-depth final answer now.]"
                         ))
                     ]
-                    fallback_llm = make_llm(model_override=effective_model, streaming=False, max_tokens=budget_tokens)
+                    fallback_llm = make_llm(model_override=effective_model, streaming=False, max_tokens=synthesis_budget)
                     res = fallback_llm.invoke(fallback_messages)
                     fb_usage = getattr(res, "usage_metadata", None) or getattr(res, "response_metadata", {}).get("token_usage") or getattr(res, "response_metadata", {}).get("usage")
                     if fb_usage and isinstance(fb_usage, dict):
@@ -2982,25 +3091,25 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if is_truncated:
                 yield event({"type": "truncated", "reason": "length", "conversation_id": conv_id})
 
-            # Calculate consumed tokens: reconcile with provider-reported token usage when available; fallback conservatively to character heuristic
+            # Calculate consumed tokens: reconcile provider-reported tokens across tool rounds and synthesis
             has_image_b64 = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content))
             image_token_cost = 800 if has_image_b64 else 0
-            consumed_tokens = None
+            synthesis_tokens = None
 
             if provider_usage and isinstance(provider_usage, dict):
                 total_tokens = provider_usage.get("total_tokens")
                 if total_tokens and isinstance(total_tokens, (int, float)) and total_tokens > 0:
-                    consumed_tokens = int(total_tokens) + image_token_cost
+                    synthesis_tokens = int(total_tokens)
                 else:
                     in_tok = provider_usage.get("input_tokens", provider_usage.get("prompt_tokens", 0))
                     out_tok = provider_usage.get("output_tokens", provider_usage.get("completion_tokens", 0))
                     if isinstance(in_tok, (int, float)) and isinstance(out_tok, (int, float)) and (in_tok + out_tok) > 0:
-                        consumed_tokens = int(in_tok + out_tok) + image_token_cost
+                        synthesis_tokens = int(in_tok + out_tok)
 
-            if consumed_tokens is None:
-                tool_actual_est = (len(tools_used) * 350) if tools_used else 0
-                consumed_tokens = max(1, (total_input_chars + len(full_text)) // 4 + image_token_cost + tool_actual_est)
+            if synthesis_tokens is None:
+                synthesis_tokens = max(1, (total_input_chars + len(full_text)) // 4)
 
+            consumed_tokens = turn_tool_tokens + synthesis_tokens + image_token_cost
             current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
             quota_reserved = False
 
@@ -3051,7 +3160,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if quota_reserved:
                 try:
                     partial_out = (len(full_text) // 4) if full_text.strip() else 0
-                    partial_tokens = max(0, estimated_input_tokens + image_token_cost + partial_out)
+                    partial_tokens = max(0, estimated_input_tokens + image_token_cost + turn_tool_tokens + partial_out)
                     database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=partial_tokens)
                 except Exception as rel_err:
                     logger.error(f"Error releasing quota in finally: {rel_err}")
