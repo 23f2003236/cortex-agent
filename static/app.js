@@ -301,6 +301,47 @@ function saveCachedUsage(tokensUsed, limit = 150000) {
   }
 }
 
+function getCachedMemories() {
+  try {
+    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_memories"))) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedMemories(list) {
+  try {
+    localStorage.setItem(getUserScopedKey("cortex_memories"), JSON.stringify(list || []));
+  } catch (e) {
+    console.warn("Failed to cache memories:", e);
+  }
+}
+
+function saveCachedMemory(mem) {
+  if (!mem || !mem.content) return;
+  try {
+    let list = getCachedMemories();
+    const idx = list.findIndex((m) => (m.id && mem.id && m.id === mem.id) || (m.content && m.content.toLowerCase().trim() === mem.content.toLowerCase().trim()));
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...mem };
+    } else {
+      list.unshift(mem);
+    }
+    saveCachedMemories(list);
+  } catch (e) {
+    console.warn("Failed to save memory:", e);
+  }
+}
+
+function deleteCachedMemory(memId) {
+  try {
+    let list = getCachedMemories().filter((m) => m.id !== memId);
+    saveCachedMemories(list);
+  } catch (e) {
+    console.warn("Failed to delete cached memory:", e);
+  }
+}
+
 let currentConversationId = null;
 let conversations = [];
 let messages = []; // { id, role, content, tools_used }
@@ -4518,6 +4559,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
         model: selectedModel,
         mode: currentMode,
         messages: historyForRequest,
+        client_memories: typeof getCachedMemories === "function" ? getCachedMemories() : undefined,
       }),
       signal: abortController.signal,
     });
@@ -4671,6 +4713,20 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           }
         } else if (payload.type === "truncated") {
           isTruncated = true;
+        } else if (payload.type === "memory_saved") {
+          if (payload.memory) {
+            saveCachedMemory(payload.memory);
+            const exists = userMemories.some(
+              (m) =>
+                (m.id && m.id === payload.memory.id) ||
+                (m.content && m.content.toLowerCase().trim() === payload.memory.content.toLowerCase().trim())
+            );
+            if (!exists) {
+              userMemories.unshift(payload.memory);
+            }
+            renderMemoriesList();
+            updateMemoryBadges();
+          }
         } else if (payload.type === "done") {
           if (payload.full_text) {
             fullText = payload.full_text;
@@ -5239,27 +5295,57 @@ let userMemories = [];
 
 async function loadUserMemories() {
   if (!currentUser) return;
+  const cached = getCachedMemories();
+  if (cached.length > 0) {
+    userMemories = cached;
+    renderMemoriesList();
+    updateMemoryBadges();
+  }
   try {
     const res = await fetch("/api/memories", { headers: authHeaders() });
     if (res.ok) {
-      userMemories = await res.json();
+      const serverMems = await res.json();
+      const map = new Map();
+      (Array.isArray(serverMems) ? serverMems : []).forEach((m) => {
+        if (m && m.id) map.set(m.id, m);
+      });
+      cached.forEach((m) => {
+        if (m && m.id && !map.has(m.id)) {
+          map.set(m.id, m);
+        }
+      });
+      userMemories = Array.from(map.values());
+      userMemories.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      saveCachedMemories(userMemories);
       renderMemoriesList();
       updateMemoryBadges();
     }
   } catch (err) {
     console.error("Failed to load memories:", err);
+    if (cached.length > 0) {
+      userMemories = cached;
+      renderMemoriesList();
+      updateMemoryBadges();
+    }
   }
 }
 
 async function loadUserInstructions() {
   if (!currentUser) return;
+  const cached = localStorage.getItem(getUserScopedKey("cortex_instructions"));
+  if (cached && customInstructionsTextarea) {
+    customInstructionsTextarea.value = cached;
+  }
   try {
     const res = await fetch("/api/user/instructions", { headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
+      const serverInst = data.instructions || "";
+      const finalInst = serverInst || cached || "";
       if (customInstructionsTextarea) {
-        customInstructionsTextarea.value = data.instructions || "";
+        customInstructionsTextarea.value = finalInst;
       }
+      localStorage.setItem(getUserScopedKey("cortex_instructions"), finalInst);
     }
   } catch (err) {
     console.error("Failed to load instructions:", err);
@@ -5334,6 +5420,19 @@ async function handleAddMemory() {
   const content = newMemoryInput?.value?.trim();
   if (!content) return;
   const category = newMemoryCategory?.value || "preference";
+  const tempId = "mem-" + Date.now();
+  const localMem = {
+    id: tempId,
+    content,
+    category,
+    created_at: new Date().toISOString(),
+  };
+  saveCachedMemory(localMem);
+  userMemories.unshift(localMem);
+  renderMemoriesList();
+  updateMemoryBadges();
+  if (newMemoryInput) newMemoryInput.value = "";
+
   try {
     if (addMemoryBtn) addMemoryBtn.disabled = true;
     const res = await fetch("/api/memories", {
@@ -5342,8 +5441,12 @@ async function handleAddMemory() {
       body: JSON.stringify({ content, category }),
     });
     if (res.ok) {
-      if (newMemoryInput) newMemoryInput.value = "";
-      await loadUserMemories();
+      const savedMem = await res.json();
+      const idx = userMemories.findIndex((m) => m.id === tempId);
+      if (idx >= 0) userMemories[idx] = savedMem;
+      saveCachedMemories(userMemories);
+      renderMemoriesList();
+      updateMemoryBadges();
     }
   } catch (err) {
     console.error("Failed to add memory:", err);
@@ -5353,16 +5456,15 @@ async function handleAddMemory() {
 }
 
 async function handleDeleteMemory(memId) {
+  userMemories = userMemories.filter((m) => m.id !== memId);
+  deleteCachedMemory(memId);
+  renderMemoriesList();
+  updateMemoryBadges();
   try {
-    const res = await fetch(`/api/memories/${memId}`, {
+    await fetch(`/api/memories/${memId}`, {
       method: "DELETE",
       headers: authHeaders(),
     });
-    if (res.ok) {
-      userMemories = userMemories.filter((m) => m.id !== memId);
-      renderMemoriesList();
-      updateMemoryBadges();
-    }
   } catch (err) {
     console.error("Failed to delete memory:", err);
   }
@@ -5370,16 +5472,15 @@ async function handleDeleteMemory(memId) {
 
 async function handleClearAllMemories() {
   if (!confirm("Are you sure you want to delete all saved memories? This cannot be undone.")) return;
+  userMemories = [];
+  saveCachedMemories([]);
+  renderMemoriesList();
+  updateMemoryBadges();
   try {
-    const res = await fetch("/api/memories", {
+    await fetch("/api/memories", {
       method: "DELETE",
       headers: authHeaders(),
     });
-    if (res.ok) {
-      userMemories = [];
-      renderMemoriesList();
-      updateMemoryBadges();
-    }
   } catch (err) {
     console.error("Failed to clear memories:", err);
   }
@@ -5387,6 +5488,7 @@ async function handleClearAllMemories() {
 
 async function handleSaveInstructions() {
   const instructions = customInstructionsTextarea?.value || "";
+  localStorage.setItem(getUserScopedKey("cortex_instructions"), instructions);
   try {
     if (saveInstructionsBtn) saveInstructionsBtn.disabled = true;
     const res = await fetch("/api/user/instructions", {

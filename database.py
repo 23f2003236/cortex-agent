@@ -1043,20 +1043,34 @@ def fork_conversation(
 
 # ---------------- Memories & Custom Instructions ----------------
 
-def add_memory(user_id: str, content: str, category: str = "preference") -> dict[str, Any]:
+def add_memory(user_id: str, content: str, category: str = "preference", mem_id: Optional[str] = None) -> dict[str, Any]:
     """Add a new persistent memory for a user."""
-    mem_id = str(uuid.uuid4())
+    clean_content = content.strip()
     now = _utc_now_iso()
     cat = (category or "preference").strip().lower()
-    clean_content = content.strip()
     with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id, user_id, content, category, created_at, updated_at FROM memories WHERE user_id = ? AND lower(trim(content)) = lower(trim(?))",
+            (user_id, clean_content),
+        ).fetchone()
+        if existing:
+            return dict(existing)
+
+        actual_id = mem_id or str(uuid.uuid4())
         conn.execute(
-            "INSERT INTO memories (id, user_id, content, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mem_id, user_id, clean_content, cat, now, now),
+            """
+            INSERT INTO memories (id, user_id, content, category, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+            content = excluded.content,
+            category = excluded.category,
+            updated_at = excluded.updated_at
+            """,
+            (actual_id, user_id, clean_content, cat, now, now),
         )
         conn.commit()
     return {
-        "id": mem_id,
+        "id": actual_id,
         "user_id": user_id,
         "content": clean_content,
         "category": cat,

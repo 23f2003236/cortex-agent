@@ -1553,6 +1553,115 @@ def run_tool_rounds_streaming(
     yield ("tools_used", tools_used)
 
 
+def _clean_and_categorize_fact(fact: str) -> tuple[Optional[str], str]:
+    if not fact:
+        return None, "preference"
+    # Strip common trailing pleasantries or question marks
+    clean = re.sub(
+        r"(?:for future reference|please|plz|across sessions|in future|okay\??|theek hai\??|samjhe\??|got it\??)[\.\s]*$",
+        "",
+        fact.strip(),
+        flags=re.IGNORECASE,
+    ).strip()
+    # Strip common leading fillers like "ki", "that", "bhai"
+    clean = re.sub(r"^(?:ki\s+|that\s+|bhai\s+|ye\s+|yeh\s+)", "", clean, flags=re.IGNORECASE).strip()
+    if len(clean) < 2:
+        return None, "preference"
+
+    low = clean.lower()
+    if any(k in low for k in ["project", "stack", "fastapi", "app", "payflow", "backend", "frontend", "repo", "architecture"]):
+        cat = "project"
+    elif any(k in low for k in ["rule", "never", "always", "mandatory", "strictly"]):
+        cat = "rule"
+    elif any(k in low for k in ["student", "engineer", "college", "degree", "name is", "live in", "from "]):
+        cat = "personal"
+    elif any(k in low for k in ["tech", "python", "javascript", "react", "typescript", "c++", "java", "sql", "pytorch", "tensorflow"]):
+        cat = "tech"
+    else:
+        cat = "preference"
+    return clean, cat
+
+
+def extract_explicit_memory_request(raw_content: str) -> tuple[Optional[str], str]:
+    """
+    Detect if the user is asking the agent to remember, store, or note down a fact/preference.
+    Returns (cleaned_fact, category) or (None, 'preference').
+    Handles standard English, conversational Hindi, and Hinglish.
+    """
+    if not raw_content:
+        return None, "preference"
+
+    text = raw_content.strip()
+
+    # 1. Hindi/Hinglish prefix: "memory me (save|add|store|daal|rakh)(?: do| kar(?:na)?)?"
+    # e.g. "memory me save kar ki mai ek engineering student hu"
+    # e.g. "memory me add karo: I am a student"
+    m_hi = re.search(
+        r"^(?:bhai\s+|hey\s+|cortex\s+|please\s+|plz\s+)?(?:apni\s+)?memory\s+me\s+(?:bhi\s+)?(?:save|add|store|daal|rakh)(?:\s+do|\s+karo|\s+kar|\s+karna)?(?:\s+ki|\s+ye|\s+yeh)?\s*[:,-]?\s*(.+)$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_hi:
+        return _clean_and_categorize_fact(m_hi.group(1))
+
+    # 2. English prefix: "(?:please\s+)?(?:save|store|add|keep|put)\s+(?:this\s+)?(?:in|into|to)\s+(?:your\s+|my\s+|persistent\s+)?memory"
+    # e.g. "save to memory: I am an engineering student"
+    # e.g. "add to memory that I prefer python"
+    m_en_save = re.search(
+        r"^(?:please\s+|plz\s+)?(?:save|store|add|keep|put|note(?:\s+down)?)\s+(?:this\s+)?(?:in|into|to)\s+(?:your\s+|my\s+|persistent\s+)?memory(?:\s+that|\s+this)?\s*[:,-]?\s*(.+)$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_en_save:
+        return _clean_and_categorize_fact(m_en_save.group(1))
+
+    # 3. "remember" prefix: "remember (that|this|,|:)? (.*)"
+    # e.g. "remember that I am an engineering student"
+    # e.g. "remember I am a data science student"
+    # e.g. "remember: my favorite language is Rust"
+    m_rem = re.search(
+        r"^(?:please\s+|plz\s+)?(?:always\s+)?remember(?:\s+that|\s+this|\s+my|\s+about\s+me)?\s*[:,-]?\s*(.+)$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_rem:
+        return _clean_and_categorize_fact(m_rem.group(1))
+
+    # 4. "yaad rakh / rakhna":
+    # e.g. "yaad rakhna ki mai ek student hu"
+    # e.g. "ye baat yaad rakh: mai python use karta hu"
+    m_yaad = re.search(
+        r"^(?:bhai\s+|cortex\s+|please\s+|plz\s+)?(?:hamesha\s+|ye\s+|yeh\s+)?yaad\s+rakh(?:na)?(?:\s+ki|\s+ye|\s+yeh)?\s*[:,-]?\s*(.+)$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_yaad:
+        return _clean_and_categorize_fact(m_yaad.group(1))
+
+    # 5. "keep in mind that ...":
+    m_mind = re.search(
+        r"^(?:please\s+)?keep\s+in\s+mind(?:\s+that)?\s*[:,-]?\s*(.+)$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_mind:
+        return _clean_and_categorize_fact(m_mind.group(1))
+
+    # 6. Suffix patterns:
+    # e.g. "I am an engineering student, remember this"
+    # e.g. "I am a data science student, isko yaad rakhna"
+    # e.g. "I prefer dark mode, save to memory"
+    m_suffix = re.search(
+        r"^(.+?)[,\.\-—]+\s*(?:please\s+)?(?:remember\s+(?:this|that)|(?:save|store|add)\s+(?:this\s+)?(?:to|in)\s+memory|memory\s+me\s+(?:save|add|rakh)|(?:isko\s+|ise\s+|ye\s+)?yaad\s+rakh(?:na)?)\s*[\.\?!]?$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_suffix:
+        return _clean_and_categorize_fact(m_suffix.group(1))
+
+    return None, "preference"
+
+
 def should_run_tools(raw_content: str, messages: list) -> bool:
     """Smart query classification for Auto Mode.
     Determines if tools (web_search, fetch_webpage, calculator, wikipedia, weather, datetime, remember)
@@ -1594,8 +1703,9 @@ def should_run_tools(raw_content: str, messages: list) -> bool:
     if re.search(r"\b(browse the internet|research on web|verify sources|fact[- ]check)\b", lower):
         return True
 
-    # 8. Memory & Preference Storing:
-    if re.search(r"\b(remember that|remember this|yaad rakh|yaad rakhna|note down that|save to memory|store in memory|keep in mind that|remember my|mera naam|my name is)\b", lower):
+    # 8. Memory & Preference Storing (robust multi-lingual detection):
+    mem_fact, _ = extract_explicit_memory_request(text)
+    if mem_fact:
         return True
 
     return False
@@ -1610,8 +1720,9 @@ def should_run_fast_tools(raw_content: str) -> bool:
     if not raw_content:
         return False
     lower = raw_content.lower().strip()
-    # 1. Memory saving
-    if re.search(r"\b(remember that|remember this|yaad rakh|yaad rakhna|note down that|save to memory|store in memory|keep in mind that)\b", lower):
+    # 1. Memory saving (robust multi-lingual detection)
+    mem_fact, _ = extract_explicit_memory_request(raw_content)
+    if mem_fact:
         return True
     # 2. Exact calculations
     if re.search(r"\b(calculate|sqrt\(|cbrt\(|sin\(|cos\(|tan\(|log10?\(|log2\()\b", lower):
@@ -1638,6 +1749,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = None
     mode: Optional[str] = "auto"
     messages: list[ChatMessage] = Field(default_factory=list, min_length=1, max_length=100)
+    client_memories: Optional[list[dict[str, Any]]] = None
 
     @field_validator("messages")
     @classmethod
@@ -2740,6 +2852,23 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     else:
                         title = existing_title or "Casual Chat"
 
+        # Multi-container memory synchronization:
+        if request.client_memories and isinstance(request.client_memories, list):
+            try:
+                existing_db_mems = {m["content"].strip().lower() for m in database.get_memories(current_user["id"])}
+                for cm in request.client_memories:
+                    c_content = (cm.get("content") or "").strip()
+                    if c_content and c_content.lower() not in existing_db_mems:
+                        database.add_memory(
+                            user_id=current_user["id"],
+                            content=c_content,
+                            category=cm.get("category") or "preference",
+                            mem_id=cm.get("id"),
+                        )
+                        existing_db_mems.add(c_content.lower())
+            except Exception as sync_err:
+                logger.warning(f"Error syncing client memories: {sync_err}")
+
         messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id)
 
         # Save user message to persistent DB
@@ -2856,31 +2985,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 return
             quota_reserved = True
 
-            # Check if user explicitly asked to save a memory
-            mem_match = re.search(
-                r"\b(remember that|remember this|yaad rakh|yaad rakhna|note down that|save to memory|store in memory|keep in mind that)\b\s*:?\s*(.+)",
-                raw_content,
-                re.IGNORECASE | re.DOTALL,
-            )
-            raw_memory_fact = None
-            raw_memory_cat = "preference"
-            if mem_match:
-                raw_memory_fact = mem_match.group(2).strip()
-                raw_memory_fact = re.sub(
-                    r"(?:for future reference|please|plz|across sessions|in future|okay\??|theek hai\??)[\.\s]*$",
-                    "",
-                    raw_memory_fact,
-                    flags=re.IGNORECASE,
-                ).strip()
-                low_fact = raw_memory_fact.lower()
-                if any(k in low_fact for k in ["project", "stack", "fastapi", "app", "payflow", "backend", "frontend"]):
-                    raw_memory_cat = "project"
-                elif any(k in low_fact for k in ["prefer", "like", "style", "functional", "typescript"]):
-                    raw_memory_cat = "preference"
-                elif any(k in low_fact for k in ["rule", "never", "always"]):
-                    raw_memory_cat = "rule"
-                else:
-                    raw_memory_cat = "preference"
+            # Check if user explicitly asked to save a memory (robust English + Hindi + Hinglish)
+            raw_memory_fact, raw_memory_cat = extract_explicit_memory_request(raw_content)
 
             if run_tools:
                 for ev_type, payload in run_tool_rounds_streaming(
@@ -2913,15 +3019,20 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 )
                 if not already_saved:
                     try:
-                        database.add_memory(user_id=current_user["id"], content=raw_memory_fact, category=raw_memory_cat)
+                        mem_record = database.add_memory(user_id=current_user["id"], content=raw_memory_fact, category=raw_memory_cat)
                         if "remember" not in tools_used:
                             tools_used.append("remember")
-                            yield event({"type": "tool_start", "name": "remember", "label": "Memory Storage", "args": {"fact": raw_memory_fact, "category": raw_memory_cat}})
-                            yield event({"type": "tool_end", "name": "remember", "label": "Memory Storage", "result": f"Saved to persistent memory: \"{raw_memory_fact}\""})
+                        yield event({"type": "tool_start", "name": "remember", "label": "Memory Storage", "args": {"fact": raw_memory_fact, "category": raw_memory_cat}})
+                        yield event({"type": "tool_end", "name": "remember", "label": "Memory Storage", "result": f"Saved to persistent memory: \"{raw_memory_fact}\""})
+                        yield event({"type": "memory_saved", "memory": mem_record})
                     except Exception as mem_err:
                         logger.warning(f"Memory fallback error: {mem_err}")
-                elif "remember" not in tools_used:
-                    tools_used.append("remember")
+                else:
+                    if "remember" not in tools_used:
+                        tools_used.append("remember")
+                    existing_match = next((m for m in existing_mems if raw_memory_fact.lower() in (m.get("content", "")).lower() or (m.get("content", "")).lower() in raw_memory_fact.lower()), None)
+                    if existing_match:
+                        yield event({"type": "memory_saved", "memory": existing_match})
 
                 messages.append(
                     SystemMessage(
@@ -3087,11 +3198,12 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                                     fact = rem_content
 
                             if fact:
-                                database.add_memory(user_id=current_user["id"], content=fact, category="preference")
+                                mem_record = database.add_memory(user_id=current_user["id"], content=fact, category="preference")
                                 if "remember" not in tools_used:
                                     tools_used.append("remember")
                                 yield event({"type": "tool_start", "name": "remember", "label": "Memory Storage", "args": {"fact": fact}})
                                 yield event({"type": "tool_end", "name": "remember", "label": "Memory Storage", "result": f"Saved: {fact}"})
+                                yield event({"type": "memory_saved", "memory": mem_record})
                                 reply = f"I have saved this to your persistent memory: **\"{fact}\"**"
                             else:
                                 reply = "I checked your stored memories, but I don't have any details saved for this yet. Feel free to share your preferences or project details!"
