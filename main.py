@@ -1058,7 +1058,7 @@ def fetch_webpage(url: str) -> str:
         if len(cleaned) < 120:
             return f"Note: Webpage at {clean_url} returned minimal text or requires JavaScript rendering. Please synthesize from the search results snippet."
 
-        max_chars = 9000
+        max_chars = 4500
         if len(cleaned) > max_chars:
             return f"Content of {clean_url} (first {max_chars} chars):\n{cleaned[:max_chars]}...\n[Truncated to {max_chars} characters]"
         return f"Content of {clean_url}:\n{cleaned}"
@@ -2847,6 +2847,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             research_snippets.append(c)
 
                 research_context = "\n\n".join(research_snippets)
+                if len(research_context) > 2500:
+                    research_context = research_context[:2500] + "\n...[Additional tool context in messages above]"
                 directive_content = (
                     "### Verified Real-Time Research Facts:\n"
                     f"{research_context}\n\n"
@@ -2861,7 +2863,10 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 )
                 synthesis_messages.append(SystemMessage(content=directive_content))
 
-            synthesis_budget = max(200, budget_tokens - turn_tool_tokens)
+            # Calculate synthesis budget: ensure synthesis has sufficient allowance to deliver
+            # a full, high-quality response bounded by the user's actual remaining daily quota
+            available_for_synthesis = max(200, remaining_allowance - (estimated_input_tokens + image_token_cost + turn_tool_tokens))
+            synthesis_budget = max(200, min(budget_tokens, available_for_synthesis))
             llm = make_llm(model_override=effective_model, streaming=True, max_tokens=synthesis_budget)
             max_attempts = 3
             is_truncated = False
