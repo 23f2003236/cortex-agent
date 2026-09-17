@@ -1352,17 +1352,43 @@ def run_tool_rounds_streaming(
     tools_by_name = {t.name: t for t in effective_tools}
     effective_rounds = max_rounds or MAX_TOOL_ROUNDS
     budget_limit = turn_budget if turn_budget is not None else 100000
-
-    llm = make_llm(model_override=model_override, streaming=False, max_tokens=1024)
-    llm_with_tools = llm.bind_tools(effective_tools)
     tools_used: list[str] = []
     accumulated_tool_tokens = 0
+    # Keep enough capacity for the user-facing synthesis after tool selection.
+    # A tool call needs a small completion allowance to emit a structured call.
+    synthesis_reserve = 200
+    min_tool_completion_tokens = 64
 
     for round_idx in range(effective_rounds):
-        # Per-turn budget guard: if accumulated tool tokens leave insufficient room for synthesis, halt early
-        if accumulated_tool_tokens >= max(200, budget_limit - 200):
-            logger.info(f"Halting tool execution at round {round_idx}: accumulated tool tokens ({accumulated_tool_tokens}) reached turn budget ({budget_limit})")
+        # Calculate the *next* tool call before invoking the provider.  The prior
+        # implementation only checked usage after a round had already consumed
+        # tokens, which allowed a single 1024-token tool call to exceed a small
+        # turn budget.
+        remaining_turn_budget = budget_limit - accumulated_tool_tokens
+        estimated_prompt_tokens = max(
+            1,
+            sum(len(str(getattr(message, "content", ""))) for message in messages) // 4,
+        )
+        tool_output_budget = min(
+            1024,
+            remaining_turn_budget - estimated_prompt_tokens - synthesis_reserve,
+        )
+        if tool_output_budget < min_tool_completion_tokens:
+            logger.info(
+                "Skipping tool execution at round %s: remaining turn budget (%s) "
+                "cannot cover prompt estimate (%s), minimum tool completion, and synthesis reserve.",
+                round_idx,
+                remaining_turn_budget,
+                estimated_prompt_tokens,
+            )
             break
+
+        llm = make_llm(
+            model_override=model_override,
+            streaming=False,
+            max_tokens=tool_output_budget,
+        )
+        llm_with_tools = llm.bind_tools(effective_tools)
 
         ai_message = None
         for attempt in range(3):

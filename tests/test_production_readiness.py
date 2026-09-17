@@ -669,6 +669,44 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertIn("tools_used", event_dict)
         self.assertIn("calculator", event_dict["tools_used"])
 
+    @patch("main.make_llm")
+    def test_tool_rounds_preflight_never_starts_an_unaffordable_round(self, mock_make_llm):
+        """Tool routing must reserve prompt and synthesis tokens before invoking a provider."""
+        from langchain_core.messages import HumanMessage
+
+        # A 100-token prompt in a 500-token turn leaves at most 200 output
+        # tokens after the 200-token synthesis reserve. The model must never be
+        # given the former unconditional 1024-token allowance.
+        tool_call_message = MagicMock()
+        tool_call_message.tool_calls = [{"name": "calculator", "args": {"expression": "2+2"}, "id": "call_1"}]
+        tool_call_message.content = ""
+        tool_call_message.usage_metadata = {"total_tokens": 250}
+        tool_call_message.response_metadata = {}
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke.return_value = tool_call_message
+        mock_make_llm.return_value = mock_llm
+
+        events = list(main.run_tool_rounds_streaming(
+            [HumanMessage(content="x" * 400)],
+            max_rounds=2,
+            turn_budget=500,
+        ))
+
+        self.assertLessEqual(mock_make_llm.call_args.kwargs["max_tokens"], 200)
+        self.assertLessEqual(dict(events)["tool_tokens_total"], 500)
+
+        # A larger prompt leaves less than the minimum structured-call output;
+        # skip tools altogether instead of starting a provider call that cannot
+        # fit inside the turn budget.
+        mock_make_llm.reset_mock()
+        events = list(main.run_tool_rounds_streaming(
+            [HumanMessage(content="x" * 1000)],
+            max_rounds=2,
+            turn_budget=500,
+        ))
+        self.assertFalse(mock_make_llm.called)
+        self.assertEqual(dict(events)["tool_tokens_total"], 0)
+
     # ---------------- 26. SQLite Connection Lifecycle ----------------
 
     def test_sqlite_connection_lifecycle_cleanup(self):
@@ -686,4 +724,3 @@ class TestProductionReadiness(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
