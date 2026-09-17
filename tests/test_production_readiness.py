@@ -45,7 +45,10 @@ class TestProductionReadiness(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.client.close()
+        database.close_all_connections()
         database.set_db_path(cls.orig_db_path)
+        database.close_all_connections()
         try:
             os.unlink(cls.temp_db.name)
         except Exception:
@@ -57,6 +60,9 @@ class TestProductionReadiness(unittest.TestCase):
         # Create unique user for each test
         self.test_username = f"test_user_{uuid.uuid4().hex[:8]}"
         self.user = database.create_user(self.test_username, "SecurePassword123!")
+
+    def tearDown(self):
+        database.close_all_connections()
 
     # ---------------- 1. Auth & Secrets ----------------
 
@@ -357,7 +363,8 @@ class TestProductionReadiness(unittest.TestCase):
         guest_resp = self.client.post("/api/auth/guest")
         self.assertEqual(guest_resp.status_code, 200)
         guest_data = guest_resp.json()
-        guest_token = guest_data["token"]
+        self.assertNotIn("token", guest_data, "Browser guest auth must omit token from response body")
+        self.assertIn("cortex_session", guest_resp.cookies, "Browser guest auth must set cortex_session cookie")
         guest_id = guest_data["user"]["id"]
 
         usage = database.get_daily_usage(guest_id)
@@ -371,7 +378,7 @@ class TestProductionReadiness(unittest.TestCase):
         resp = self.client.post(
             "/api/chat/stream",
             json=payload,
-            headers={"Authorization": f"Bearer {guest_token}"},
+            cookies={"cortex_session": guest_resp.cookies["cortex_session"]},
         )
         self.assertEqual(resp.status_code, 200)
         content = resp.content.decode("utf-8")
@@ -458,9 +465,17 @@ class TestProductionReadiness(unittest.TestCase):
         uname = f"cookie_user_{uuid.uuid4().hex[:8]}"
         reg_resp = self.client.post("/api/auth/register", json={"username": uname, "password": "StrongPassword123!"})
         self.assertEqual(reg_resp.status_code, 201)
+        self.assertNotIn("token", reg_resp.json(), "Browser registration response must omit token")
         self.assertIn("cortex_session", reg_resp.cookies)
         session_cookie = reg_resp.cookies.get("cortex_session")
         self.assertTrue(bool(session_cookie))
+
+        # Login also sets cookie and omits token
+        login_resp = self.client.post("/api/auth/login", json={"username": uname, "password": "StrongPassword123!"})
+        self.assertEqual(login_resp.status_code, 200)
+        self.assertNotIn("token", login_resp.json(), "Browser login response must omit token")
+        self.assertIn("cortex_session", login_resp.cookies)
+        session_cookie = login_resp.cookies.get("cortex_session")
 
         # Access /api/auth/me using ONLY the session cookie (no Authorization header)
         me_resp = self.client.get("/api/auth/me", cookies={"cortex_session": session_cookie})
@@ -557,6 +572,118 @@ class TestProductionReadiness(unittest.TestCase):
 
         database.release_stream_lease(sid2)
 
+    # ---------------- 23. API Client Bearer Token Auth ----------------
+
+    def test_api_client_bearer_token_auth(self):
+        """Verify explicit API clients receive Bearer tokens via X-API-Client header or /api/auth/token."""
+        # 1. Dedicated /api/auth/token endpoint
+        token_resp = self.client.post(
+            "/api/auth/token",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+        )
+        self.assertEqual(token_resp.status_code, 200)
+        token_data = token_resp.json()
+        self.assertIn("token", token_data)
+        self.assertEqual(token_data["token_type"], "bearer")
+        bearer_token = token_data["token"]
+
+        # 2. Access /api/auth/me using Bearer token
+        me_resp = self.client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {bearer_token}"},
+        )
+        self.assertEqual(me_resp.status_code, 200)
+        self.assertEqual(me_resp.json()["username"], self.test_username)
+
+        # 3. /api/auth/login with X-API-Client: true returns token
+        login_resp = self.client.post(
+            "/api/auth/login",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+            headers={"X-API-Client": "true"},
+        )
+        self.assertEqual(login_resp.status_code, 200)
+        self.assertIn("token", login_resp.json())
+
+        # 4. /api/auth/guest with X-API-Client: true returns token
+        guest_resp = self.client.post(
+            "/api/auth/guest",
+            headers={"X-API-Client": "true"},
+        )
+        self.assertEqual(guest_resp.status_code, 200)
+        self.assertIn("token", guest_resp.json())
+
+    # ---------------- 24. Strict CSP Hardening ----------------
+
+    def test_strict_csp_header_no_unsafe_inline(self):
+        """Verify Content-Security-Policy header does not contain unsafe-inline in script-src."""
+        resp = self.client.get("/api/health")
+        self.assertEqual(resp.status_code, 200)
+        csp = resp.headers.get("Content-Security-Policy", "")
+        self.assertTrue(bool(csp))
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("default-src 'self'", csp)
+        # Extract script-src directive
+        import re
+        script_src = re.search(r"script-src ([^;]+);", csp)
+        self.assertTrue(script_src, "Must define script-src in CSP")
+        self.assertNotIn("'unsafe-inline'", script_src.group(1), "Root CSP script-src must not contain 'unsafe-inline'")
+
+    # ---------------- 25. Multi-Round Tool Quota & Turn Budget ----------------
+
+    @patch("main.make_llm")
+    def test_tool_rounds_token_accumulation_and_budget_guard(self, mock_make_llm):
+        """Verify run_tool_rounds_streaming accumulates provider tokens and enforces turn budget limit."""
+        mock_llm = MagicMock()
+        # Round 1: returns a tool call with 350 tokens usage
+        msg1 = MagicMock()
+        msg1.tool_calls = [{"name": "calculator", "args": {"expression": "2+2"}, "id": "call_1"}]
+        msg1.content = ""
+        msg1.usage_metadata = {"total_tokens": 350}
+        msg1.response_metadata = {}
+
+        # Round 2: returns normal text (no more calls) with 100 tokens usage
+        msg2 = MagicMock()
+        msg2.tool_calls = []
+        msg2.content = "Done"
+        msg2.usage_metadata = {"total_tokens": 100}
+        msg2.response_metadata = {}
+
+        mock_llm.invoke.side_effect = [msg1, msg2]
+        mock_bound = MagicMock()
+        mock_bound.invoke.side_effect = [msg1, msg2]
+        mock_llm.bind_tools.return_value = mock_bound
+        mock_make_llm.return_value = mock_llm
+
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content="Calculate 2+2")]
+
+        events = list(main.run_tool_rounds_streaming(
+            messages,
+            max_rounds=3,
+            turn_budget=1000,
+        ))
+
+        event_dict = dict(events)
+        self.assertIn("tool_tokens_total", event_dict)
+        self.assertEqual(event_dict["tool_tokens_total"], 450)
+        self.assertIn("tools_used", event_dict)
+        self.assertIn("calculator", event_dict["tools_used"])
+
+    # ---------------- 26. SQLite Connection Lifecycle ----------------
+
+    def test_sqlite_connection_lifecycle_cleanup(self):
+        """Verify connection lifecycle correctly tracks and closes connections with zero resource leaks."""
+        # Ensure a connection is open
+        conn = database.get_connection()
+        self.assertIsNotNone(conn)
+        self.assertIn(conn, database._OPEN_CONNECTIONS)
+
+        # Cleanly close all connections
+        database.close_all_connections()
+        self.assertEqual(len(database._OPEN_CONNECTIONS), 0)
+        self.assertIsNone(getattr(database._local, "conn", None))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
