@@ -133,6 +133,7 @@ const userProfileMenu = document.getElementById("userProfileMenu");
 const userMenuAnchor = document.querySelector(".user-menu-anchor");
 const userMenuEmail = document.getElementById("userMenuEmail");
 const menuSettingsBtn = document.getElementById("menuSettingsBtn");
+const menuTourBtn = document.getElementById("menuTourBtn");
 const menuSignOutBtn = document.getElementById("menuSignOutBtn");
 
 // Settings Modal Elements
@@ -185,6 +186,119 @@ function authHeaders(extra = {}) {
     headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
+}
+
+// ---------------- Client-Side Hybrid Storage & Caching ----------------
+function getUserScopedKey(prefix) {
+  const uid = (currentUser && currentUser.id) ? currentUser.id : "guest";
+  return `${prefix}_${uid}`;
+}
+
+function getCachedConversations() {
+  try {
+    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_convs"))) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedConversations() {
+  try {
+    localStorage.setItem(getUserScopedKey("cortex_convs"), JSON.stringify(conversations || []));
+  } catch (e) {
+    console.warn("Failed to cache conversations:", e);
+  }
+}
+
+function getCachedMessages(convId) {
+  if (!convId) return [];
+  try {
+    return JSON.parse(localStorage.getItem(`cortex_msgs_${convId}`)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedMessages(convId, msgs) {
+  if (!convId || !Array.isArray(msgs)) return;
+  try {
+    localStorage.setItem(`cortex_msgs_${convId}`, JSON.stringify(msgs));
+  } catch (e) {
+    console.warn("Failed to cache messages:", e);
+  }
+}
+
+function getCachedArtifacts() {
+  try {
+    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_arts"))) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedArtifact(art) {
+  if (!art || !art.content) return;
+  try {
+    let list = getCachedArtifacts();
+    const idx = list.findIndex((a) => (a.filename && a.filename === art.filename) || (a.id && a.id === art.id));
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...art };
+    } else {
+      list.unshift(art);
+    }
+    localStorage.setItem(getUserScopedKey("cortex_arts"), JSON.stringify(list));
+    updateArtifactsBadge(list.length);
+  } catch (e) {
+    console.warn("Failed to cache artifact:", e);
+  }
+}
+
+function saveCachedArtifactsList(list) {
+  try {
+    localStorage.setItem(getUserScopedKey("cortex_arts"), JSON.stringify(list || []));
+    updateArtifactsBadge((list || []).length);
+  } catch (e) {
+    console.warn("Failed to save artifacts list:", e);
+  }
+}
+
+function updateArtifactsBadge(count) {
+  const c = Math.max(0, Number(count) || 0);
+  const countEl = document.getElementById("sidebarArtifactsCount") || sidebarArtifactsCount;
+  const viewCountEl = document.getElementById("artifactsCountBadge") || artifactsCountBadge;
+  const railCountEl = document.getElementById("railArtifactsCount");
+  if (countEl) countEl.textContent = c;
+  if (viewCountEl) viewCountEl.textContent = `${c} document${c === 1 ? "" : "s"}`;
+  if (railCountEl) {
+    railCountEl.textContent = c;
+    railCountEl.style.display = c > 0 ? "inline-flex" : "none";
+  }
+}
+
+function getCachedUsage() {
+  try {
+    const raw = localStorage.getItem(getUserScopedKey("cortex_usage"));
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    const today = new Date().toISOString().slice(0, 10);
+    if (data.date === today) return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedUsage(tokensUsed, limit = 150000) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(getUserScopedKey("cortex_usage"), JSON.stringify({
+      tokens_used: Number(tokensUsed) || 0,
+      tokens_limit: Number(limit) || 150000,
+      date: today
+    }));
+  } catch (e) {
+    console.warn("Failed to cache usage:", e);
+  }
 }
 
 let currentConversationId = null;
@@ -618,6 +732,17 @@ customRenderer.code = function (arg1, arg2) {
     artifactIdCounter++;
     const artifactId = "art-" + artifactIdCounter;
     artifactRegistry.set(artifactId, text);
+    const appTitle = filename && filename !== "index.html" ? filename : "Interactive Web Application";
+    saveCachedArtifact({
+      id: artifactId,
+      filename: filename || "index.html",
+      title: appTitle,
+      conversation_id: currentConversationId,
+      conv_title: (chatTitleHeader ? chatTitleHeader.textContent : "") || "Conversation",
+      type: "html",
+      content: text,
+      created_at: new Date().toISOString(),
+    });
 
     let highlighted = "";
     try {
@@ -625,8 +750,6 @@ customRenderer.code = function (arg1, arg2) {
     } catch {
       highlighted = escapeHtml(text);
     }
-
-    const appTitle = filename && filename !== "index.html" ? filename : "Interactive Web Application";
 
     return `
       <div class="artifact-card" data-artifact-id="${artifactId}">
@@ -698,6 +821,16 @@ customRenderer.code = function (arg1, arg2) {
     docIdCounter++;
     const docId = "doc-" + docIdCounter;
     docRegistry.set(docId, { filename, text });
+    saveCachedArtifact({
+      id: docId,
+      filename: filename || "document.md",
+      title: filename || "Document",
+      conversation_id: currentConversationId,
+      conv_title: (chatTitleHeader ? chatTitleHeader.textContent : "") || "Conversation",
+      type: "markdown",
+      content: text,
+      created_at: new Date().toISOString(),
+    });
 
     let renderedBody = "";
     try {
@@ -2451,6 +2584,14 @@ async function deleteProjectFromModal() {
 
 async function loadConversations(autoSelectLatest = false) {
   if (!currentUser) return;
+  const cached = getCachedConversations();
+  if (cached && cached.length > 0) {
+    if (!conversations || conversations.length === 0) {
+      conversations = cached;
+      renderConversationsList();
+    }
+  }
+
   try {
     let url = "/api/conversations";
     if (currentProjectId) {
@@ -2463,25 +2604,42 @@ async function loadConversations(autoSelectLatest = false) {
         signOut();
         return;
       }
-      conversations = [];
-      renderConversationsList();
       return;
     }
-    conversations = await res.json();
-    renderConversationsList();
+    if (res.ok) {
+      const serverConvs = await res.json();
+      const merged = Array.isArray(serverConvs) ? [...serverConvs] : [];
+      const seen = new Set(merged.map((c) => c.id));
+      for (const c of cached) {
+        if (!seen.has(c.id)) {
+          merged.push(c);
+          seen.add(c.id);
+        }
+      }
+      merged.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+      conversations = merged;
+      saveCachedConversations();
+      renderConversationsList();
+    }
     if (currentConversationId && currentConversationId !== "new") {
       const active = conversations.find((c) => c.id === currentConversationId);
       if (active && active.title) {
         chatTitleHeader.textContent = active.title;
       }
     }
-    if (autoSelect) {
+    if (autoSelectLatest) {
       let targetId = null;
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const qC = urlParams.get("c");
         if (qC && qC !== "new") targetId = qC;
       } catch {}
+      if (!targetId && conversations.length > 0) {
+        const activeStored = localStorage.getItem("cortex_active_conv");
+        if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
+          targetId = activeStored;
+        }
+      }
       if (targetId && targetId !== "new") {
         await switchConversation(targetId);
       }
@@ -2759,32 +2917,52 @@ async function switchConversation(id) {
   if (busy || id === currentConversationId) return;
   hideArtifactsView();
 
+  currentConversationId = id;
+  localStorage.setItem("cortex_active_conv", id);
+  try {
+    const url = new URL(window.location);
+    url.searchParams.set("c", id);
+    window.history.replaceState({}, "", url);
+  } catch {}
+
+  const conv = conversations.find((c) => c.id === id);
+  if (conv && conv.title) {
+    chatTitleHeader.textContent = conv.title;
+  }
+
+  // Instantly hydrate messages from local cache so the chat never disappears!
+  const cachedMsgs = getCachedMessages(id);
+  if (cachedMsgs && cachedMsgs.length > 0) {
+    messages = cachedMsgs;
+    rebuildChatFromMessages();
+  } else {
+    messages = [];
+    showEmptyState();
+  }
+
+  closeMobileSidebar();
+  renderConversationsList();
+
   try {
     const res = await fetch(`/api/conversations/${id}`, { headers: authHeaders() });
     if (res.status === 401) {
-      signOut();
+      const meRes = await fetch("/api/auth/me", { headers: authHeaders() }).catch(() => null);
+      if (!meRes || !meRes.ok) {
+        signOut();
+        return;
+      }
       return;
     }
-    if (!res.ok) return;
-    const data = await res.json();
-
-    currentConversationId = id;
-    localStorage.setItem("cortex_active_conv", id);
-    try {
-      const url = new URL(window.location);
-      url.searchParams.set("c", id);
-      window.history.replaceState({}, "", url);
-    } catch {}
-    chatTitleHeader.textContent = data.conversation.title || "Chat";
-    messages = data.messages || [];
-
-    closeMobileSidebar();
-    renderConversationsList();
-
-    if (!messages.length) {
-      showEmptyState();
-    } else {
-      rebuildChatFromMessages();
+    if (res.ok) {
+      const data = await res.json();
+      if (data.conversation && data.conversation.title) {
+        chatTitleHeader.textContent = data.conversation.title;
+      }
+      if (Array.isArray(data.messages) && data.messages.length > 0) {
+        messages = data.messages;
+        saveCachedMessages(id, messages);
+        rebuildChatFromMessages();
+      }
     }
   } catch (err) {
     console.error("Failed to switch conversation:", err);
@@ -2799,6 +2977,10 @@ async function deleteConversation(id) {
       return;
     }
     conversations = conversations.filter((c) => c.id !== id);
+    saveCachedConversations();
+    try {
+      localStorage.removeItem(`cortex_msgs_${id}`);
+    } catch {}
     if (currentConversationId === id) {
       localStorage.removeItem("cortex_active_conv");
       startNewChat();
@@ -2824,6 +3006,7 @@ async function archiveConversation(id, isArchived = true) {
     if (res.ok) {
       if (isArchived) {
         conversations = conversations.filter((c) => c.id !== id);
+        saveCachedConversations();
         if (currentConversationId === id) {
           localStorage.removeItem("cortex_active_conv");
           startNewChat();
@@ -4251,6 +4434,15 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       });
     }
 
+    if (currentConversationId) {
+      saveCachedMessages(currentConversationId, messages);
+      const conv = conversations.find((c) => c.id === currentConversationId);
+      if (conv) {
+        conv.updated_at = new Date().toISOString();
+      }
+      saveCachedConversations();
+    }
+
     if (toolSteps.length > 0) {
       shell.accordionEl.style.display = "block";
       shell.accordionTitle.innerHTML = `${ICONS.tool} Used ${toolsUsed.length} tools (${toolsUsed.map((t) => TOOL_LABELS[t] || t).join(", ")})`;
@@ -4388,14 +4580,23 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
             const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
             if (lastUserMsg) lastUserMsg.id = payload.user_message_id;
           }
-          if (payload.title) {
-            chatTitleHeader.textContent = payload.title;
-            const conv = conversations.find((c) => c.id === payload.conversation_id);
-            if (conv) {
-              conv.title = payload.title;
-              renderConversationsList();
-            }
+          const convTitle = payload.title || (messages[0]?.content ? messages[0].content.slice(0, 36) : "New Chat");
+          chatTitleHeader.textContent = convTitle;
+          const convIdx = conversations.findIndex((c) => c.id === payload.conversation_id);
+          if (convIdx >= 0) {
+            conversations[convIdx].title = convTitle;
+            conversations[convIdx].updated_at = new Date().toISOString();
+          } else {
+            conversations.unshift({
+              id: payload.conversation_id,
+              title: convTitle,
+              project_id: currentProjectId || null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
           }
+          saveCachedConversations();
+          renderConversationsList();
         } else if (payload.type === "tool_start") {
           shell.liveBadge.style.display = "inline-flex";
           let activeMsg = `Running ${payload.label || payload.name}…`;
@@ -4489,6 +4690,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           if (payload.usage) {
             const used = payload.usage.tokens_used ?? payload.usage.daily_tokens ?? 0;
             const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 150000;
+            saveCachedUsage(used, limit);
             updateUsageDisplay(used, limit);
           }
           loadArtifactsCount();
@@ -5386,6 +5588,14 @@ function showChatApp() {
   loadUserUsage();
   loadArtifactsCount();
   promptEl.focus();
+
+  // Onboarding Tour trigger for new users or fresh browser sessions
+  const tourCompleted = localStorage.getItem("cortex_tour_completed");
+  if (!tourCompleted) {
+    setTimeout(() => {
+      startOnboardingTour();
+    }, 700);
+  }
 }
 
 function openAuthModal(mode = "login") {
@@ -5467,7 +5677,10 @@ async function handleAuthSubmit(e) {
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);
     }
-    localStorage.setItem("cortex_tour_completed", "true");
+    if (authMode === "register") {
+      // Fresh new signup: enable full interactive tour and confetti celebration
+      localStorage.removeItem("cortex_tour_completed");
+    }
     updateDynamicGreeting();
 
     closeAuthModal();
@@ -5756,7 +5969,8 @@ async function handleGuestTestDrive() {
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);
     }
-    localStorage.setItem("cortex_tour_completed", "true");
+    // Guest test drive: enable full interactive tour and confetti celebration
+    localStorage.removeItem("cortex_tour_completed");
     updateDynamicGreeting();
 
     closeAuthModal();
@@ -6145,6 +6359,12 @@ menuSettingsBtn?.addEventListener("click", (e) => {
   openSettingsModal();
 });
 
+menuTourBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  closeUserProfileMenu();
+  startOnboardingTour();
+});
+
 menuSignOutBtn?.addEventListener("click", () => {
   closeUserProfileMenu();
   signOut();
@@ -6199,6 +6419,7 @@ document.addEventListener("keydown", (e) => {
 function updateUsageDisplay(tokensUsed, limit = 150000) {
   const used = Math.max(0, Number(tokensUsed) || 0);
   const maxLimit = Math.max(1, Number(limit) || 150000);
+  saveCachedUsage(used, maxLimit);
   const remaining = Math.max(0, maxLimit - used);
   const pct = Math.min(100, Math.max(0, (used / maxLimit) * 100));
 
@@ -6243,11 +6464,21 @@ function updateUsageDisplay(tokensUsed, limit = 150000) {
 
 async function loadUserUsage() {
   if (!currentUser) return;
+  const cached = getCachedUsage();
+  const cachedUsed = cached ? (Number(cached.tokens_used) || 0) : 0;
+  const cachedLimit = cached ? (Number(cached.tokens_limit) || 150000) : 150000;
+  if (cachedUsed > 0) {
+    updateUsageDisplay(cachedUsed, cachedLimit);
+  }
   try {
     const res = await fetch("/api/user/usage", { headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
-      updateUsageDisplay(data.tokens_used, data.tokens_limit || 150000);
+      const serverUsed = Number(data.tokens_used) || 0;
+      const serverLimit = Number(data.tokens_limit) || 150000;
+      const finalUsed = Math.max(serverUsed, cachedUsed);
+      const finalLimit = serverLimit || cachedLimit || 150000;
+      updateUsageDisplay(finalUsed, finalLimit);
     }
   } catch (err) {
     console.error("Failed to load daily usage:", err);
@@ -6271,21 +6502,22 @@ let allUserArtifacts = [];
 
 async function loadArtifactsCount() {
   if (!currentUser) return;
+  const cached = getCachedArtifacts();
+  updateArtifactsBadge(cached.length);
   try {
     const res = await fetch("/api/artifacts", { headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
-      allUserArtifacts = data.artifacts || [];
-      const countEl = document.getElementById("sidebarArtifactsCount") || sidebarArtifactsCount;
-      const viewCountEl = document.getElementById("artifactsCountBadge") || artifactsCountBadge;
-      const count = allUserArtifacts.length;
-      if (countEl) countEl.textContent = count;
-      if (viewCountEl) viewCountEl.textContent = `${count} document${count === 1 ? "" : "s"}`;
-      const railCountEl = document.getElementById("railArtifactsCount");
-      if (railCountEl) {
-        railCountEl.textContent = count;
-        railCountEl.style.display = count > 0 ? "inline-flex" : "none";
-      }
+      const serverList = data.artifacts || [];
+      const map = new Map();
+      serverList.forEach((a) => { if (a && (a.id || a.filename)) map.set(a.id || a.filename, a); });
+      cached.forEach((a) => {
+        const key = a.id || a.filename;
+        if (key && !map.has(key)) map.set(key, a);
+      });
+      allUserArtifacts = Array.from(map.values());
+      saveCachedArtifactsList(allUserArtifacts);
+      updateArtifactsBadge(allUserArtifacts.length);
     }
   } catch (err) {
     console.error("Failed to load artifacts count:", err);
@@ -6323,25 +6555,33 @@ function hideArtifactsView() {
 
 async function loadArtifacts() {
   if (!currentUser) return;
+  const cached = getCachedArtifacts();
+  if (cached.length > 0) {
+    allUserArtifacts = cached;
+    renderArtifactsList(allUserArtifacts);
+    updateArtifactsBadge(allUserArtifacts.length);
+  }
   try {
     const res = await fetch("/api/artifacts", { headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
-      allUserArtifacts = data.artifacts || [];
+      const serverList = data.artifacts || [];
+      const map = new Map();
+      serverList.forEach((a) => { if (a && (a.id || a.filename)) map.set(a.id || a.filename, a); });
+      cached.forEach((a) => {
+        const key = a.id || a.filename;
+        if (key && !map.has(key)) map.set(key, a);
+      });
+      allUserArtifacts = Array.from(map.values());
+      saveCachedArtifactsList(allUserArtifacts);
       renderArtifactsList(allUserArtifacts);
-      const countEl = document.getElementById("sidebarArtifactsCount") || sidebarArtifactsCount;
-      const viewCountEl = document.getElementById("artifactsCountBadge") || artifactsCountBadge;
-      const count = allUserArtifacts.length;
-      if (countEl) countEl.textContent = count;
-      if (viewCountEl) viewCountEl.textContent = `${count} document${count === 1 ? "" : "s"}`;
-      const railCountEl = document.getElementById("railArtifactsCount");
-      if (railCountEl) {
-        railCountEl.textContent = count;
-        railCountEl.style.display = count > 0 ? "inline-flex" : "none";
-      }
+      updateArtifactsBadge(allUserArtifacts.length);
     }
   } catch (err) {
     console.error("Failed to load artifacts:", err);
+    if (cached.length > 0) {
+      renderArtifactsList(cached);
+    }
   }
 }
 

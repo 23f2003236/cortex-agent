@@ -2090,6 +2090,17 @@ def create_new_conversation(
 def get_conversation_history(conv_id: str, current_user: dict = Depends(get_current_user)):
     conv = database.get_conversation(conv_id, user_id=current_user["id"])
     if not conv:
+        if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+            return {
+                "conversation": {
+                    "id": conv_id,
+                    "title": "Chat",
+                    "user_id": current_user["id"],
+                    "created_at": database._utc_now_iso(),
+                    "updated_at": database._utc_now_iso(),
+                },
+                "messages": [],
+            }
         raise HTTPException(status_code=404, detail="Conversation not found")
     messages = database.get_messages(conv_id)
     return {"conversation": conv, "messages": messages}

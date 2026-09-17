@@ -699,7 +699,13 @@ def create_conversation(
             if chk:
                 valid_project_id = project_id
         conn.execute(
-            "INSERT INTO conversations (id, title, created_at, updated_at, user_id, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+            """
+            INSERT INTO conversations (id, title, created_at, updated_at, user_id, project_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            updated_at = excluded.updated_at
+            """,
             (cid, title, now, now, user_id, valid_project_id),
         )
         conn.commit()
