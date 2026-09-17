@@ -733,6 +733,122 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertEqual(len(database._OPEN_CONNECTIONS), 0)
         self.assertIsNone(getattr(database._local, "conn", None))
 
+    # ---------------- 27. User Profile Avatar ----------------
+
+    def test_user_avatar_update(self):
+        """Verify user avatar can be updated via PATCH /api/user/profile and persists."""
+        login_res = self.client.post(
+            "/api/auth/login",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        # Update avatar
+        patch_res = self.client.patch("/api/user/profile", json={"avatar": "avatar-3"})
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertEqual(patch_res.json()["avatar"], "avatar-3")
+
+        # Verify auth_me returns updated avatar
+        me_res = self.client.get("/api/auth/me")
+        self.assertEqual(me_res.status_code, 200)
+        self.assertEqual(me_res.json()["avatar"], "avatar-3")
+
+    # ---------------- 28. Conversation Archiving ----------------
+
+    def test_conversation_archiving_and_filtering(self):
+        """Verify conversations can be archived and unarchived, and are filtered appropriately."""
+        login_res = self.client.post(
+            "/api/auth/login",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        # Create 2 conversations
+        conv1_res = self.client.post("/api/conversations", json={"title": "Chat 1"})
+        conv2_res = self.client.post("/api/conversations", json={"title": "Chat 2"})
+        c1_id = conv1_res.json()["id"]
+        c2_id = conv2_res.json()["id"]
+
+        # Both should be in active list
+        list_res = self.client.get("/api/conversations")
+        self.assertEqual(list_res.status_code, 200)
+        active_ids = [c["id"] for c in list_res.json()]
+        self.assertIn(c1_id, active_ids)
+        self.assertIn(c2_id, active_ids)
+
+        # Archive conv1
+        arc_res = self.client.patch(f"/api/conversations/{c1_id}/archive", json={"is_archived": True})
+        self.assertEqual(arc_res.status_code, 200)
+
+        # Active list should now only have conv2
+        list_res2 = self.client.get("/api/conversations")
+        active_ids2 = [c["id"] for c in list_res2.json()]
+        self.assertNotIn(c1_id, active_ids2)
+        self.assertIn(c2_id, active_ids2)
+
+        # Archived list should have conv1
+        archived_res = self.client.get("/api/conversations/archived")
+        self.assertEqual(archived_res.status_code, 200)
+        archived_ids = [c["id"] for c in archived_res.json()]
+        self.assertIn(c1_id, archived_ids)
+        self.assertNotIn(c2_id, archived_ids)
+
+        # Unarchive conv1
+        unarc_res = self.client.patch(f"/api/conversations/{c1_id}/archive", json={"is_archived": False})
+        self.assertEqual(unarc_res.status_code, 200)
+
+        # Now conv1 should be back in active list
+        list_res3 = self.client.get("/api/conversations")
+        active_ids3 = [c["id"] for c in list_res3.json()]
+        self.assertIn(c1_id, active_ids3)
+
+    # ---------------- 29. Full Account Deletion ----------------
+
+    def test_delete_user_account_cascades_all_data(self):
+        """Verify DELETE /api/user/account completely wipes user and all child data with zero orphaned rows."""
+        login_res = self.client.post(
+            "/api/auth/login",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        user_id = self.user["id"]
+
+        # Create conversation, message, memory, project
+        conv = database.create_conversation(user_id=user_id, title="Account Deletion Test")
+        database.add_message(conv["id"], "user", "Hello Cortex")
+        database.add_message(conv["id"], "assistant", "Hello! How can I help?")
+        database.add_memory(user_id=user_id, content="User prefers TypeScript", category="tech")
+        database.create_project(user_id=user_id, name="Project Alpha")
+
+        # Verify records exist
+        self.assertIsNotNone(database.get_user_by_id(user_id))
+        self.assertGreater(len(database.get_conversations(user_id)), 0)
+        self.assertGreater(len(database.get_messages(conv["id"])), 0)
+        self.assertGreater(len(database.get_memories(user_id)), 0)
+        self.assertGreater(len(database.get_projects(user_id)), 0)
+
+        # Delete account
+        del_res = self.client.delete("/api/user/account")
+        self.assertEqual(del_res.status_code, 200)
+        self.assertTrue(del_res.json()["ok"])
+
+        # Verify user is gone
+        self.assertIsNone(database.get_user_by_id(user_id))
+        self.assertEqual(len(database.get_conversations(user_id)), 0)
+        self.assertEqual(len(database.get_messages(conv["id"])), 0)
+        self.assertEqual(len(database.get_memories(user_id)), 0)
+        self.assertEqual(len(database.get_projects(user_id)), 0)
+
+        # Verify database foreign key integrity
+        with database.get_connection() as conn:
+            fk_errors = conn.execute("PRAGMA foreign_key_check;").fetchall()
+            self.assertEqual(len(fk_errors), 0, f"Foreign key errors found after deletion: {fk_errors}")
+
+        # Attempting to call /api/auth/me now should return 401
+        me_res = self.client.get("/api/auth/me")
+        self.assertEqual(me_res.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

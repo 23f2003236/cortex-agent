@@ -2543,6 +2543,13 @@ function createConversationItem(c) {
       <button class="conv-action-btn edit-btn" type="button" title="Rename chat" aria-label="Rename chat">
         ${ICONS.edit}
       </button>
+      <button class="conv-action-btn archive-btn" type="button" title="Archive chat" aria-label="Archive chat">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="21 8 21 21 3 21 3 8"></polyline>
+          <rect x="1" y="3" width="22" height="5"></rect>
+          <line x1="10" y1="12" x2="14" y2="12"></line>
+        </svg>
+      </button>
       <button class="conv-action-btn delete-btn" type="button" title="Delete chat" aria-label="Delete chat">
         ${ICONS.trash}
       </button>
@@ -2564,6 +2571,12 @@ function createConversationItem(c) {
   editBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     startInlineRename(item, c);
+  });
+
+  const archiveBtn = item.querySelector(".archive-btn");
+  archiveBtn?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await archiveConversation(c.id, true);
   });
 
   const delBtn = item.querySelector(".delete-btn");
@@ -2785,6 +2798,37 @@ async function deleteConversation(id) {
   }
 }
 
+async function archiveConversation(id, isArchived = true) {
+  try {
+    const res = await fetch(`/api/conversations/${id}/archive`, {
+      method: "PATCH",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ is_archived: isArchived }),
+    });
+    if (res.status === 401) {
+      signOut();
+      return;
+    }
+    if (res.ok) {
+      if (isArchived) {
+        conversations = conversations.filter((c) => c.id !== id);
+        if (currentConversationId === id) {
+          localStorage.removeItem("cortex_active_conv");
+          startNewChat();
+        } else {
+          renderConversationsList();
+        }
+        showToast("Chat archived.");
+      } else {
+        await loadConversations();
+        showToast("Chat restored to sidebar.");
+      }
+    }
+  } catch (err) {
+    console.error("Failed to update archive status:", err);
+  }
+}
+
 function showToast(message, duration = 3000) {
   let toast = document.querySelector(".cortex-toast");
   if (!toast) {
@@ -2902,18 +2946,25 @@ function startNewChat() {
 
 function setSidebarCollapsed(collapsed) {
   if (!appView) return;
+  const sidebarRail = document.getElementById("sidebarRail");
   if (collapsed) {
     appView.classList.add("sidebar-collapsed");
     sidebar?.classList.add("collapsed");
     localStorage.setItem("cortex_sidebar_collapsed", "true");
     if (collapseSidebarBtn) collapseSidebarBtn.setAttribute("title", "Expand sidebar (Ctrl+B)");
     if (toggleSidebarBtn) toggleSidebarBtn.setAttribute("title", "Expand sidebar (Ctrl+B)");
+    if (sidebarRail && window.innerWidth > 768) {
+      sidebarRail.style.display = "flex";
+    }
   } else {
     appView.classList.remove("sidebar-collapsed");
     sidebar?.classList.remove("collapsed");
     localStorage.setItem("cortex_sidebar_collapsed", "false");
     if (collapseSidebarBtn) collapseSidebarBtn.setAttribute("title", "Collapse sidebar (Ctrl+B)");
     if (toggleSidebarBtn) toggleSidebarBtn.setAttribute("title", "Collapse sidebar (Ctrl+B)");
+    if (sidebarRail) {
+      sidebarRail.style.display = "none";
+    }
   }
 }
 
@@ -2935,6 +2986,35 @@ function closeMobileSidebar() {
 toggleSidebarBtn?.addEventListener("click", toggleSidebar);
 collapseSidebarBtn?.addEventListener("click", () => setSidebarCollapsed(true));
 if (closeSidebarBtn) closeSidebarBtn.addEventListener("click", closeMobileSidebar);
+
+// Desktop Collapsed Icon Rail Event Listeners
+const railExpandBtn = document.getElementById("railExpandBtn");
+const railNewChatBtn = document.getElementById("railNewChatBtn");
+const railSearchBtn = document.getElementById("railSearchBtn");
+const railArtifactsBtn = document.getElementById("railArtifactsBtn");
+const railUserBtn = document.getElementById("railUserBtn");
+
+railExpandBtn?.addEventListener("click", () => setSidebarCollapsed(false));
+railNewChatBtn?.addEventListener("click", () => startNewChat());
+railSearchBtn?.addEventListener("click", () => {
+  setSidebarCollapsed(false);
+  setTimeout(() => {
+    chatSearchInput?.focus();
+  }, 120);
+});
+railArtifactsBtn?.addEventListener("click", () => showArtifactsView());
+railUserBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleUserProfileMenu();
+});
+
+window.addEventListener("resize", () => {
+  const sidebarRail = document.getElementById("sidebarRail");
+  if (sidebarRail) {
+    const isCollapsed = appView && appView.classList.contains("sidebar-collapsed");
+    sidebarRail.style.display = (isCollapsed && window.innerWidth > 768) ? "flex" : "none";
+  }
+});
 sidebarOverlay?.addEventListener("click", closeMobileSidebar);
 newChatBtn?.addEventListener("click", startNewChat);
 
@@ -4690,12 +4770,223 @@ function openSettingsModal() {
   if (settingsAvatar) settingsAvatar.textContent = initial;
 
   updateSettingsThemeButtons();
+  applyUserAvatar(currentUser?.avatar || "avatar-1");
   settingsModal.style.display = "flex";
 }
 
 function closeSettingsModal() {
   if (!settingsModal) return;
   settingsModal.style.display = "none";
+}
+
+function applyUserAvatar(avatarKey) {
+  const key = avatarKey || (currentUser && currentUser.avatar) || "avatar-1";
+  const userAvatar = document.getElementById("userAvatar");
+  const railUserAvatar = document.getElementById("railUserAvatar");
+  const settingsAvatar = document.getElementById("settingsAvatar");
+  const elements = [userAvatar, railUserAvatar, settingsAvatar];
+  const avatarClasses = ["avatar-1", "avatar-2", "avatar-3", "avatar-4", "avatar-5", "avatar-6"];
+
+  elements.forEach((el) => {
+    if (!el) return;
+    avatarClasses.forEach((cls) => el.classList.remove(cls));
+    el.classList.add(key);
+  });
+
+  const presetBtns = document.querySelectorAll("#settingsAvatarGrid .avatar-preset-btn");
+  presetBtns.forEach((btn) => {
+    if (btn.dataset.avatar === key) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+}
+
+// Wire avatar preset selection buttons
+document.querySelectorAll("#settingsAvatarGrid .avatar-preset-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const avatarKey = btn.dataset.avatar;
+    if (!avatarKey) return;
+    if (currentUser) currentUser.avatar = avatarKey;
+    applyUserAvatar(avatarKey);
+    try {
+      await fetch("/api/user/profile", {
+        method: "PATCH",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ avatar: avatarKey }),
+      });
+      showToast("Profile avatar updated.");
+    } catch (err) {
+      console.error("Failed to save avatar preference:", err);
+    }
+  });
+});
+
+// ---------------- Danger Zone: Permanent Account Deletion ----------------
+const deleteAccountBtn = document.getElementById("deleteAccountBtn");
+const deleteAccountModal = document.getElementById("deleteAccountModal");
+const cancelDeleteAccountBtn = document.getElementById("cancelDeleteAccountBtn");
+const confirmDeleteAccountBtn = document.getElementById("confirmDeleteAccountBtn");
+
+deleteAccountBtn?.addEventListener("click", () => {
+  if (deleteAccountModal) deleteAccountModal.style.display = "flex";
+});
+
+cancelDeleteAccountBtn?.addEventListener("click", () => {
+  if (deleteAccountModal) deleteAccountModal.style.display = "none";
+});
+
+deleteAccountModal?.addEventListener("click", (e) => {
+  if (e.target === deleteAccountModal) {
+    deleteAccountModal.style.display = "none";
+  }
+});
+
+confirmDeleteAccountBtn?.addEventListener("click", async () => {
+  try {
+    confirmDeleteAccountBtn.disabled = true;
+    confirmDeleteAccountBtn.textContent = "Deleting account...";
+    const res = await fetch("/api/user/account", {
+      method: "DELETE",
+      credentials: "include",
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      if (deleteAccountModal) deleteAccountModal.style.display = "none";
+      closeSettingsModal();
+      localStorage.clear();
+      sessionStorage.clear();
+      currentUser = null;
+      conversations = [];
+      messages = [];
+      userMemories = [];
+      userProjects = [];
+      showLandingPage();
+      showToast("Your account and all workspace data have been permanently deleted.");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.detail || "Failed to delete account. Please try again.");
+    }
+  } catch (err) {
+    console.error("Account deletion failed:", err);
+    alert("Network error while deleting account.");
+  } finally {
+    if (confirmDeleteAccountBtn) {
+      confirmDeleteAccountBtn.disabled = false;
+      confirmDeleteAccountBtn.textContent = "Yes, Delete Everything";
+    }
+  }
+});
+
+// ---------------- Archived Chats Modal Controller ----------------
+const menuArchivedChatsBtn = document.getElementById("menuArchivedChatsBtn");
+const archivedChatsModal = document.getElementById("archivedChatsModal");
+const archivedChatsCloseBtn = document.getElementById("archivedChatsCloseBtn");
+const archivedChatsDoneBtn = document.getElementById("archivedChatsDoneBtn");
+const archivedSearchInput = document.getElementById("archivedSearchInput");
+const archivedChatsList = document.getElementById("archivedChatsList");
+
+let cachedArchivedChats = [];
+
+function openArchivedChatsModal() {
+  closeUserProfileMenu();
+  if (!archivedChatsModal) return;
+  archivedChatsModal.style.display = "flex";
+  if (archivedSearchInput) archivedSearchInput.value = "";
+  loadArchivedChats();
+}
+
+function closeArchivedChatsModal() {
+  if (!archivedChatsModal) return;
+  archivedChatsModal.style.display = "none";
+}
+
+menuArchivedChatsBtn?.addEventListener("click", openArchivedChatsModal);
+archivedChatsCloseBtn?.addEventListener("click", closeArchivedChatsModal);
+archivedChatsDoneBtn?.addEventListener("click", closeArchivedChatsModal);
+archivedChatsModal?.addEventListener("click", (e) => {
+  if (e.target === archivedChatsModal) closeArchivedChatsModal();
+});
+
+archivedSearchInput?.addEventListener("input", () => {
+  renderArchivedChatsList(archivedSearchInput.value.trim().toLowerCase());
+});
+
+async function loadArchivedChats() {
+  if (!archivedChatsList) return;
+  archivedChatsList.innerHTML = `<div class="archived-empty-state">Loading archived conversations...</div>`;
+  try {
+    const res = await fetch("/api/conversations/archived", {
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      cachedArchivedChats = await res.json();
+      renderArchivedChatsList();
+    } else {
+      archivedChatsList.innerHTML = `<div class="archived-empty-state">Failed to load archived conversations.</div>`;
+    }
+  } catch (err) {
+    console.error("Failed to load archived chats:", err);
+    archivedChatsList.innerHTML = `<div class="archived-empty-state">Error loading archived chats.</div>`;
+  }
+}
+
+function renderArchivedChatsList(filterQuery = "") {
+  if (!archivedChatsList) return;
+  archivedChatsList.innerHTML = "";
+  const filtered = filterQuery
+    ? cachedArchivedChats.filter((c) => (c.title || "").toLowerCase().includes(filterQuery))
+    : cachedArchivedChats;
+
+  if (filtered.length === 0) {
+    archivedChatsList.innerHTML = `<div class="archived-empty-state">${filterQuery ? "No matching archived chats found." : "No archived conversations yet."}</div>`;
+    return;
+  }
+
+  filtered.forEach((conv) => {
+    const row = document.createElement("div");
+    row.className = "archived-chat-row";
+    const dateStr = conv.updated_at ? new Date(conv.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+    row.innerHTML = `
+      <div class="archived-chat-meta">
+        <span class="archived-chat-title" title="${escapeHtml(conv.title)}">${escapeHtml(conv.title)}</span>
+        <span class="archived-chat-date">${dateStr}</span>
+      </div>
+      <div class="archived-chat-actions">
+        <button class="btn-unarchive-chat" type="button" title="Restore to sidebar">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 14 4 9 9 4"></polyline>
+            <path d="M20 20v-7a4 4 0 0 0-4-4H4"></path>
+          </svg>
+          <span>Unarchive</span>
+        </button>
+        <button class="btn-delete-archived-chat" type="button" title="Permanently delete">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </div>
+    `;
+
+    const unarchiveBtn = row.querySelector(".btn-unarchive-chat");
+    unarchiveBtn?.addEventListener("click", async () => {
+      await archiveConversation(conv.id, false);
+      cachedArchivedChats = cachedArchivedChats.filter((c) => c.id !== conv.id);
+      renderArchivedChatsList(archivedSearchInput?.value.trim().toLowerCase() || "");
+    });
+
+    const deleteBtn = row.querySelector(".btn-delete-archived-chat");
+    deleteBtn?.addEventListener("click", async () => {
+      if (!confirm(`Permanently delete "${conv.title}"?\nThis cannot be undone.`)) return;
+      await deleteConversation(conv.id);
+      cachedArchivedChats = cachedArchivedChats.filter((c) => c.id !== conv.id);
+      renderArchivedChatsList(archivedSearchInput?.value.trim().toLowerCase() || "");
+    });
+
+    archivedChatsList.appendChild(row);
+  });
 }
 
 settingsThemeDarkBtn?.addEventListener("click", () => setTheme("dark"));
@@ -5066,7 +5357,11 @@ function showChatApp() {
   closeSettingsModal();
   if (currentUser) {
     if (userNameDisplay) userNameDisplay.textContent = currentUser.username;
-    if (userAvatar) userAvatar.textContent = (currentUser.username[0] || "U").toUpperCase();
+    const initial = (currentUser.username[0] || "U").toUpperCase();
+    if (userAvatar) userAvatar.textContent = initial;
+    const railUserAvatar = document.getElementById("railUserAvatar");
+    if (railUserAvatar) railUserAvatar.textContent = initial;
+    applyUserAvatar(currentUser.avatar || "avatar-1");
   }
   updateDynamicGreeting();
   const savedSidebarCollapsed = localStorage.getItem("cortex_sidebar_collapsed") === "true";
@@ -5932,6 +6227,11 @@ async function loadArtifactsCount() {
       const count = allUserArtifacts.length;
       if (countEl) countEl.textContent = count;
       if (viewCountEl) viewCountEl.textContent = `${count} document${count === 1 ? "" : "s"}`;
+      const railCountEl = document.getElementById("railArtifactsCount");
+      if (railCountEl) {
+        railCountEl.textContent = count;
+        railCountEl.style.display = count > 0 ? "inline-flex" : "none";
+      }
     }
   } catch (err) {
     console.error("Failed to load artifacts count:", err);
@@ -5980,6 +6280,11 @@ async function loadArtifacts() {
       const count = allUserArtifacts.length;
       if (countEl) countEl.textContent = count;
       if (viewCountEl) viewCountEl.textContent = `${count} document${count === 1 ? "" : "s"}`;
+      const railCountEl = document.getElementById("railArtifactsCount");
+      if (railCountEl) {
+        railCountEl.textContent = count;
+        railCountEl.style.display = count > 0 ? "inline-flex" : "none";
+      }
     }
   } catch (err) {
     console.error("Failed to load artifacts:", err);

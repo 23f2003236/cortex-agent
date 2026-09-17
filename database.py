@@ -64,7 +64,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def backup_db(target_path: Optional[Path] = None) -> Path:
@@ -165,10 +165,13 @@ def init_db() -> None:
             conn.execute("ALTER TABLE conversations ADD COLUMN custom_instructions TEXT DEFAULT ''")
         if "project_id" not in conv_cols:
             conn.execute("ALTER TABLE conversations ADD COLUMN project_id TEXT DEFAULT NULL REFERENCES projects(id) ON DELETE SET NULL")
+        if "is_archived" not in conv_cols:
+            conn.execute("ALTER TABLE conversations ADD COLUMN is_archived INTEGER DEFAULT 0")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_archived ON conversations(user_id, is_archived)")
 
-        # Migrate existing users table for custom_instructions, is_guest, and expires_at
+        # Migrate existing users table for custom_instructions, is_guest, expires_at, and avatar
         user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         if "custom_instructions" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
@@ -176,6 +179,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN is_guest INTEGER DEFAULT 0")
         if "expires_at" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL")
+        if "avatar" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT 'avatar-1'")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at)")
 
         # Migrate existing messages table for feedback column
@@ -280,6 +285,11 @@ def init_db() -> None:
                 "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (5, ?, 'Deterministic foreign-key orphan remediation across conversations, memories, projects, and daily usage')",
                 (now_iso,),
             )
+        if current_v < 6:
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (6, ?, 'Add user avatar presets and conversation archive support')",
+                (now_iso,),
+            )
 
         conn.commit()
 
@@ -363,6 +373,7 @@ def create_user(username: str, password: str, email: Optional[str] = None) -> di
         "email": (email or "").strip(),
         "is_guest": False,
         "created_at": now,
+        "avatar": "avatar-1",
     }
 
 
@@ -370,7 +381,7 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
     username_clean = username.strip().lower()
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, password_hash, salt, created_at, is_guest FROM users WHERE username = ?",
+            "SELECT id, username, email, password_hash, salt, created_at, is_guest, COALESCE(avatar, 'avatar-1') as avatar FROM users WHERE username = ?",
             (username_clean,),
         ).fetchone()
         if not row:
@@ -394,6 +405,7 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
                 "email": row["email"],
                 "is_guest": bool(row["is_guest"]),
                 "created_at": row["created_at"],
+                "avatar": row["avatar"] or "avatar-1",
             }
         return None
 
@@ -422,6 +434,7 @@ def create_guest_user(ttl_hours: int = 24) -> dict[str, Any]:
         "is_guest": True,
         "created_at": now,
         "expires_at": expires_at,
+        "avatar": "avatar-1",
     }
 
 
@@ -535,7 +548,7 @@ def release_stream_lease(stream_id: str) -> None:
 def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, created_at, is_guest FROM users WHERE id = ?",
+            "SELECT id, username, email, created_at, is_guest, COALESCE(avatar, 'avatar-1') as avatar FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
         if not row:
@@ -548,7 +561,7 @@ def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
 def get_user_by_username(username: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, created_at, is_guest FROM users WHERE username = ?",
+            "SELECT id, username, email, created_at, is_guest, COALESCE(avatar, 'avatar-1') as avatar FROM users WHERE username = ?",
             (username.strip().lower(),),
         ).fetchone()
         if not row:
@@ -581,6 +594,30 @@ def is_token_revoked(token_sig: str) -> bool:
         return row is not None
 
 
+def update_user_avatar(user_id: str, avatar: str) -> bool:
+    """Update avatar preset identifier for the user."""
+    with get_connection() as conn:
+        cursor = conn.execute("UPDATE users SET avatar = ? WHERE id = ?", (avatar, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_user_account(user_id: str) -> bool:
+    """Completely and permanently delete user and cascade across all related tables."""
+    with get_connection() as conn:
+        _begin_immediate(conn)
+        conn.execute("DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id = ?)", (user_id,))
+        conn.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM memories WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM projects WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM daily_usage WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM active_stream_leases WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM revoked_tokens WHERE user_id = ?", (user_id,))
+        cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
 # ---------------- Conversation Management ----------------
 
 def create_conversation(
@@ -605,29 +642,35 @@ def create_conversation(
     return {"id": cid, "title": title, "created_at": now, "updated_at": now, "user_id": user_id, "project_id": valid_project_id}
 
 
-def get_conversations(user_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+def get_conversations(
+    user_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    is_archived: bool = False,
+) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        cols = "id, title, created_at, updated_at, user_id, project_id, COALESCE(is_pinned, 0) as is_pinned"
+        cols = "id, title, created_at, updated_at, user_id, project_id, COALESCE(is_pinned, 0) as is_pinned, COALESCE(is_archived, 0) as is_archived"
+        arch_val = 1 if is_archived else 0
         if user_id and project_id:
             cursor = conn.execute(
-                f"SELECT {cols} FROM conversations WHERE user_id = ? AND project_id = ? ORDER BY is_pinned DESC, updated_at DESC",
-                (user_id, project_id),
+                f"SELECT {cols} FROM conversations WHERE user_id = ? AND project_id = ? AND COALESCE(is_archived, 0) = ? ORDER BY is_pinned DESC, updated_at DESC",
+                (user_id, project_id, arch_val),
             )
         elif user_id:
             cursor = conn.execute(
-                f"SELECT {cols} FROM conversations WHERE user_id = ? ORDER BY is_pinned DESC, updated_at DESC",
-                (user_id,),
+                f"SELECT {cols} FROM conversations WHERE user_id = ? AND COALESCE(is_archived, 0) = ? ORDER BY is_pinned DESC, updated_at DESC",
+                (user_id, arch_val),
             )
         else:
             cursor = conn.execute(
-                f"SELECT {cols} FROM conversations ORDER BY is_pinned DESC, updated_at DESC"
+                f"SELECT {cols} FROM conversations WHERE COALESCE(is_archived, 0) = ? ORDER BY is_pinned DESC, updated_at DESC",
+                (arch_val,),
             )
         return [dict(row) for row in cursor.fetchall()]
 
 
 def get_conversation(conv_id: str, user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
-        cols = "id, title, created_at, updated_at, user_id, project_id, COALESCE(is_pinned, 0) as is_pinned"
+        cols = "id, title, created_at, updated_at, user_id, project_id, COALESCE(is_pinned, 0) as is_pinned, COALESCE(is_archived, 0) as is_archived"
         if user_id:
             cursor = conn.execute(
                 f"SELECT {cols} FROM conversations WHERE id = ? AND user_id = ?",
@@ -670,6 +713,19 @@ def toggle_pin_conversation(conv_id: str, is_pinned: Optional[bool] = None, user
         cursor = conn.execute(query_upd, tuple(params_upd))
         conn.commit()
         return bool(new_val) if cursor.rowcount > 0 else None
+
+
+def archive_conversation(conv_id: str, is_archived: bool, user_id: str) -> bool:
+    """Archive or unarchive a conversation for a user."""
+    with get_connection() as conn:
+        now = _utc_now_iso()
+        val = 1 if is_archived else 0
+        cursor = conn.execute(
+            "UPDATE conversations SET is_archived = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (val, now, conv_id, user_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def update_conversation_title(conv_id: str, title: str, user_id: Optional[str] = None) -> bool:

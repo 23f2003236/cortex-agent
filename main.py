@@ -668,6 +668,7 @@ def auth_me(current_user: dict = Depends(get_current_user)):
         "email": current_user.get("email", ""),
         "is_guest": bool(current_user.get("is_guest", False)),
         "created_at": current_user.get("created_at", ""),
+        "avatar": current_user.get("avatar", "avatar-1"),
     }
 
 
@@ -690,6 +691,58 @@ def logout(
             database.revoke_token(parts[1], current_user["id"], exp)
     response.delete_cookie(key="cortex_session", path="/")
     return {"ok": True, "message": "Successfully logged out."}
+
+
+class UpdateProfilePayload(BaseModel):
+    avatar: Optional[str] = None
+    custom_instructions: Optional[str] = None
+
+
+@app.patch("/api/user/profile")
+def update_profile(
+    payload: UpdateProfilePayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update user profile preferences such as avatar preset or custom instructions."""
+    user_id = current_user["id"]
+    if payload.avatar is not None:
+        database.update_user_avatar(user_id, payload.avatar.strip())
+    if payload.custom_instructions is not None:
+        database.set_user_custom_instructions(user_id, payload.custom_instructions)
+    updated = database.get_user_by_id(user_id) or current_user
+    return {
+        "ok": True,
+        "avatar": updated.get("avatar", "avatar-1"),
+        "custom_instructions": updated.get("custom_instructions", ""),
+    }
+
+
+@app.delete("/api/user/account")
+def delete_user_account(
+    request: Request,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Permanently delete user account, all associated data, conversations, and revoke session."""
+    user_id = current_user["id"]
+    # Revoke current token
+    raw_token = request.cookies.get("cortex_session", "").strip()
+    if not raw_token and authorization:
+        raw_token = authorization[7:].strip() if authorization.startswith("Bearer ") else authorization.strip()
+    if raw_token and "." in raw_token:
+        parts = raw_token.split(".")
+        if len(parts) == 2:
+            token_data = verify_token(raw_token)
+            exp = token_data.get("exp", int(time.time()) + 3600) if token_data else int(time.time()) + 3600
+            database.revoke_token(parts[1], user_id, exp)
+
+    success = database.delete_user_account(user_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete account.")
+
+    response.delete_cookie(key="cortex_session", path="/")
+    return {"ok": True, "message": "Account and all associated data permanently deleted."}
 
 
 # ---------------------------------------------------------------------------
@@ -1997,6 +2050,12 @@ def list_conversations(
     return database.get_conversations(user_id=current_user["id"], project_id=project_id)
 
 
+@app.get("/api/conversations/archived")
+def list_archived_conversations(current_user: dict = Depends(get_current_user)):
+    """List all archived conversations for the current user."""
+    return database.get_conversations(user_id=current_user["id"], is_archived=True)
+
+
 class CreateConversationPayload(BaseModel):
     title: Optional[str] = "New Chat"
     project_id: Optional[str] = None
@@ -2064,6 +2123,24 @@ def pin_conversation(
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"ok": True, "is_pinned": result}
+
+
+class ArchiveConversationPayload(BaseModel):
+    is_archived: Optional[bool] = None
+
+
+@app.patch("/api/conversations/{conv_id}/archive")
+def archive_conversation(
+    conv_id: str,
+    payload: Optional[ArchiveConversationPayload] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Archive or unarchive a conversation."""
+    target_val = payload.is_archived if payload and payload.is_archived is not None else True
+    success = database.archive_conversation(conv_id, is_archived=target_val, user_id=current_user["id"])
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"ok": True, "is_archived": target_val}
 
 
 def _format_user_message(content: str) -> HumanMessage:

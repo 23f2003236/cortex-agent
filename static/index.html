@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20260913_v4" />
-  <link rel="stylesheet" href="/static/style.css?v=20260916_v49" />
+  <link rel="stylesheet" href="/static/style.css?v=20260917_v50" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="/static/vendor/katex/katex.min.js?v=20260913_v4"></script>
   <script src="/static/vendor/katex/mhchem.min.js?v=20260917_v1"></script>
@@ -875,7 +875,7 @@ class DistributedRateLimiter:
           <div class="auth-perk-item">
             <div class="perk-check">✓</div>
             <div>
-              <strong>100,000 Free Daily Tokens</strong>
+              <strong>150,000 Free Daily Tokens</strong>
               <span>Refreshes every 24h at 00:00 UTC</span>
             </div>
           </div>
@@ -1010,6 +1010,38 @@ class DistributedRateLimiter:
           </div>
         </div>
 
+        <!-- Profile Avatar Selector -->
+        <div class="settings-section">
+          <label class="settings-section-title">Profile Avatar</label>
+          <p class="settings-section-desc">Choose a personal avatar for your profile & sidebar</p>
+          <div class="settings-avatar-grid" id="settingsAvatarGrid">
+            <button type="button" class="avatar-preset-btn active" data-avatar="avatar-1" title="Neon Emerald">
+              <div class="avatar-preset-circle avatar-1">⚡</div>
+              <span class="avatar-preset-name">Emerald</span>
+            </button>
+            <button type="button" class="avatar-preset-btn" data-avatar="avatar-2" title="Cyber Violet">
+              <div class="avatar-preset-circle avatar-2">🔮</div>
+              <span class="avatar-preset-name">Violet</span>
+            </button>
+            <button type="button" class="avatar-preset-btn" data-avatar="avatar-3" title="Electric Azure">
+              <div class="avatar-preset-circle avatar-3">🌊</div>
+              <span class="avatar-preset-name">Azure</span>
+            </button>
+            <button type="button" class="avatar-preset-btn" data-avatar="avatar-4" title="Amber Sunset">
+              <div class="avatar-preset-circle avatar-4">🔥</div>
+              <span class="avatar-preset-name">Amber</span>
+            </button>
+            <button type="button" class="avatar-preset-btn" data-avatar="avatar-5" title="Crimson Nova">
+              <div class="avatar-preset-circle avatar-5">✨</div>
+              <span class="avatar-preset-name">Crimson</span>
+            </button>
+            <button type="button" class="avatar-preset-btn" data-avatar="avatar-6" title="Obsidian Stealth">
+              <div class="avatar-preset-circle avatar-6">🌌</div>
+              <span class="avatar-preset-name">Obsidian</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Appearance & Theme Selector -->
         <div class="settings-section">
           <label class="settings-section-title">Appearance</label>
@@ -1031,10 +1063,86 @@ class DistributedRateLimiter:
             </button>
           </div>
         </div>
+
+        <!-- Danger Zone: Account Deletion -->
+        <div class="settings-section settings-danger-section">
+          <label class="settings-section-title danger-title">Danger Zone</label>
+          <p class="settings-section-desc">Permanently delete your account and all associated workspace data</p>
+          <div class="danger-card">
+            <div class="danger-info">
+              <span class="danger-name">Delete Account</span>
+              <span class="danger-desc">Permanently erase your account, all chats, messages, memories, instructions, and projects. This action cannot be undone.</span>
+            </div>
+            <button type="button" id="deleteAccountBtn" class="btn-danger-action">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              <span>Delete Account</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="settings-footer">
         <button id="settingsModalDoneBtn" class="settings-done-btn" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== DELETE ACCOUNT CONFIRMATION MODAL ==================== -->
+  <div id="deleteAccountModal" class="settings-modal-overlay" style="display: none;" aria-hidden="true">
+    <div class="delete-account-card">
+      <div class="delete-account-icon-wrap">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+      </div>
+      <h3 class="delete-account-title">Delete your Cortex account?</h3>
+      <p class="delete-account-desc">
+        This will <strong>permanently erase</strong> your account, chat conversations, messages, memories, and workspace projects. <strong>This action cannot be undone.</strong>
+      </p>
+      <div class="delete-account-actions">
+        <button type="button" id="cancelDeleteAccountBtn" class="btn-cancel-delete">Cancel</button>
+        <button type="button" id="confirmDeleteAccountBtn" class="btn-confirm-delete">Yes, Delete Everything</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== ARCHIVED CHATS MODAL ==================== -->
+  <div id="archivedChatsModal" class="settings-modal-overlay" style="display: none;" aria-hidden="true">
+    <div class="archived-chats-card">
+      <button id="archivedChatsCloseBtn" class="settings-close-btn" type="button" aria-label="Close Archived Chats">✕</button>
+      <div class="settings-header">
+        <div class="settings-header-icon archived-icon-bg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="21 8 21 21 3 21 3 8"></polyline>
+            <rect x="1" y="3" width="22" height="5"></rect>
+            <line x1="10" y1="12" x2="14" y2="12"></line>
+          </svg>
+        </div>
+        <div>
+          <h2 class="settings-title">Archived Chats</h2>
+          <p class="settings-subtitle">Review, unarchive, or permanently remove archived conversations</p>
+        </div>
+      </div>
+
+      <div class="archived-search-wrap">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="archivedSearchInput" placeholder="Filter archived conversations..." autocomplete="off" />
+      </div>
+
+      <div id="archivedChatsList" class="archived-chats-list">
+        <!-- Populated dynamically via JS -->
+      </div>
+
+      <div class="settings-footer">
+        <button id="archivedChatsDoneBtn" class="settings-done-btn" type="button">Done</button>
       </div>
     </div>
   </div>
@@ -1207,6 +1315,49 @@ class DistributedRateLimiter:
 
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar">
+      <!-- Desktop Collapsed Icon Rail (Matches Qwen/ChatGPT sleek rail) -->
+      <div id="sidebarRail" class="sidebar-rail desktop-only" style="display: none;">
+        <div class="sidebar-rail-top">
+          <!-- 1. Expand Toggle Button -->
+          <button id="railExpandBtn" class="rail-icon-btn" type="button" title="Expand sidebar (Ctrl+B)" aria-label="Expand sidebar">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+              <polyline points="14 9 17 12 14 15"></polyline>
+            </svg>
+          </button>
+          <!-- 2. New Chat Button -->
+          <button id="railNewChatBtn" class="rail-icon-btn" type="button" title="New chat (Ctrl+Shift+O)" aria-label="New chat">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+          </button>
+          <!-- 3. Search Button -->
+          <button id="railSearchBtn" class="rail-icon-btn" type="button" title="Search chats (Ctrl+K)" aria-label="Search chats">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </button>
+          <!-- 4. Artifacts Button -->
+          <button id="railArtifactsBtn" class="rail-icon-btn" type="button" title="Artifacts Library" aria-label="Artifacts Library">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <span id="railArtifactsCount" class="rail-count-badge" style="display: none;">0</span>
+          </button>
+        </div>
+        <div class="sidebar-rail-spacer"></div>
+        <div class="sidebar-rail-bottom">
+          <button id="railUserBtn" class="rail-user-avatar-btn" type="button" title="User Profile & Settings" aria-label="User Profile">
+            <div class="user-avatar" id="railUserAvatar">U</div>
+          </button>
+        </div>
+      </div>
+
       <div class="sidebar-header">
         <div class="brand" id="sidebarBrandBtn">
           <div class="logo" aria-hidden="true">
@@ -1281,38 +1432,6 @@ class DistributedRateLimiter:
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
-
-          <!-- Claude-Style Profile Popup Menu -->
-          <div id="userProfileMenu" class="user-profile-menu" style="display: none;">
-            <div class="user-menu-header">
-              <span class="user-menu-label">Signed in as</span>
-              <span class="user-menu-email" id="userMenuEmail">user@cortex.ai</span>
-            </div>
-            <div class="user-menu-divider"></div>
-            <button id="menuMemoriesBtn" class="user-menu-item" type="button">
-              <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2a5 5 0 0 1 5 5v1a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"></path>
-                <path d="M19 11v1a7 7 0 0 1-14 0v-1"></path>
-                <line x1="12" y1="19" x2="12" y2="23"></line>
-                <line x1="8" y1="23" x2="16" y2="23"></line>
-              </svg>
-              <span>Memory & Instructions</span>
-            </button>
-            <button id="menuSettingsBtn" class="user-menu-item" type="button">
-              <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-              <span>Settings</span>
-            </button>
-            <div class="user-menu-divider"></div>
-            <button id="menuSignOutBtn" class="user-menu-item user-menu-logout" type="button">
-              <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
-              </svg>
-              <span>Log out</span>
-            </button>
-          </div>
         </div>
 
         <!-- Collapse Sidebar Button (Moved from top to bottom) -->
@@ -1321,6 +1440,46 @@ class DistributedRateLimiter:
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
+        </button>
+      </div>
+
+      <!-- Claude-Style Profile Popup Menu -->
+      <div id="userProfileMenu" class="user-profile-menu" style="display: none;">
+        <div class="user-menu-header">
+          <span class="user-menu-label">Signed in as</span>
+          <span class="user-menu-email" id="userMenuEmail">user@cortex.ai</span>
+        </div>
+        <div class="user-menu-divider"></div>
+        <button id="menuSettingsBtn" class="user-menu-item" type="button">
+          <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Settings</span>
+        </button>
+        <button id="menuArchivedChatsBtn" class="user-menu-item" type="button">
+          <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="21 8 21 21 3 21 3 8"></polyline>
+            <rect x="1" y="3" width="22" height="5"></rect>
+            <line x1="10" y1="12" x2="14" y2="12"></line>
+          </svg>
+          <span>Archived Chats</span>
+        </button>
+        <button id="menuMemoriesBtn" class="user-menu-item" type="button">
+          <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a5 5 0 0 1 5 5v1a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"></path>
+            <path d="M19 11v1a7 7 0 0 1-14 0v-1"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+          <span>Memory & Instructions</span>
+        </button>
+        <div class="user-menu-divider"></div>
+        <button id="menuSignOutBtn" class="user-menu-item user-menu-logout" type="button">
+          <svg class="menu-item-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+          <span>Log out</span>
         </button>
       </div>
     </aside>
@@ -1704,7 +1863,7 @@ class DistributedRateLimiter:
           <div class="guide-card">
             <h4>⚡ Daily Quotas & Free Tier Highlights</h4>
             <ul class="guide-bullet-list">
-              <li><strong>100,000 Tokens/Day:</strong> Full access to NVIDIA NIM frontier reasoning models with live progress tracking in the top bar.</li>
+              <li><strong>150,000 Tokens/Day:</strong> Full access to NVIDIA NIM frontier reasoning models with live progress tracking in the top bar.</li>
               <li><strong>10 Uploads/Day:</strong> Attach documents (PDF, CSV, Excel, Code) and screenshots for vision OCR analysis.</li>
               <li><strong>Zero Subscriptions:</strong> No $20/mo fees, no credit card required, 100% private.</li>
             </ul>
@@ -2219,13 +2378,21 @@ class DistributedRateLimiter:
         <div id="guideTab-charts" class="guide-tab-pane">
           <div class="guide-card">
             <h3>📊 Visualizations & KaTeX Mathematics</h3>
-            <p>Cortex natively renders rich mathematical formulas and interactive client-side charts:</p>
+            <p>Cortex natively renders rich mathematical formulas, scientific chemistry notations, and interactive client-side charts:</p>
           </div>
 
           <div class="guide-card">
             <h4>$\sum$ KaTeX Math Formatting</h4>
             <p>Inline math is enclosed in single dollar signs <code>$E = mc^2$</code>, and display formulas use double dollar signs:</p>
             <pre><code>$$\mathcal{L}_{MoE} = \sum_{i=1}^{N} p_i \cdot \text{Loss}_i + \lambda \mathcal{L}_{balance}$$</code></pre>
+          </div>
+
+          <div class="guide-card">
+            <h4>⚗️ KaTeX Chemistry Reactions (\ce{...} via mhchem)</h4>
+            <p>Write standard IUPAC chemical equations, precipitation indicators, and stoichiometry using <code>\ce{...}</code> syntax inside display or inline KaTeX blocks:</p>
+            <pre><code>$$\ce{2H2 + O2 -> 2H2O}$$
+$$\ce{CaCO3 + 2HCl -> CaCl2 + CO2 ^ + H2O}$$
+$$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
           </div>
 
           <div class="guide-card">
@@ -2237,10 +2404,11 @@ class DistributedRateLimiter:
         <!-- 7. Workspaces & Memory Tab -->
         <div id="guideTab-workspaces" class="guide-tab-pane">
           <div class="guide-card">
-            <h3>📂 Projects & Persistent Memory</h3>
+            <h3>📂 Projects, Forking & Persistent Memory</h3>
             <p>Keep your conversations and contextual instructions cleanly partitioned:</p>
             <ul class="guide-bullet-list">
               <li><strong>Project Workspaces:</strong> Group related research and codebases. Each project can have its own custom instructions.</li>
+              <li><strong>🔀 Conversation Forking (Branching Chats):</strong> Explore alternative reasoning branches without losing original context. Hover over any assistant response and click <strong>Fork</strong> (🔀) to branch off instantly.</li>
               <li><strong>SQLite Memory Store:</strong> Cortex remembers your background, preferences, and personal directives across all sessions.</li>
               <li><strong>Artifacts Archive:</strong> Every <code>.md</code> document or code artifact created is automatically indexed in your Artifacts tab for instant retrieval and split-panel reading.</li>
             </ul>
@@ -2310,6 +2478,6 @@ class DistributedRateLimiter:
     <div class="quota-toast-text" id="quotaToastText">Daily upload limit reached (10 files/day). Quota resets at 00:00 UTC.</div>
   </div>
 
-  <script src="/static/app.js?v=20260916_v49"></script>
+  <script src="/static/app.js?v=20260917_v50"></script>
 </body>
 </html>
