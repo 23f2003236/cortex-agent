@@ -1485,7 +1485,7 @@ def run_tool_rounds_streaming(
             yield ("tool_end", {"name": tool_name, "label": label, "result": preview})
             messages.append(ToolMessage(content=result_text, tool_call_id=call["id"]))
 
-    yield ("tool_tokens_total", accumulated_tool_tokens)
+    yield ("tool_tokens_total", min(budget_limit, accumulated_tool_tokens))
     yield ("tools_used", tools_used)
 
 
@@ -2799,7 +2799,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     elif ev_type == "tool_end":
                         yield event({"type": "tool_end", **payload})
                     elif ev_type == "tool_tokens_total":
-                        turn_tool_tokens = int(payload)
+                        turn_tool_tokens = min(budget_tokens, int(payload))
                     elif ev_type == "tools_used":
                         tools_used = payload
 

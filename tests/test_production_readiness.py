@@ -707,6 +707,18 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertFalse(mock_make_llm.called)
         self.assertEqual(dict(events)["tool_tokens_total"], 0)
 
+        # Invariant check: even if provider over-reports tokens, tool_tokens_total never exceeds turn_budget
+        tool_call_message.usage_metadata = {"total_tokens": 9999}
+        mock_llm.bind_tools.return_value.invoke.return_value = tool_call_message
+        mock_make_llm.reset_mock()
+        mock_make_llm.return_value = mock_llm
+        events = list(main.run_tool_rounds_streaming(
+            [HumanMessage(content="x" * 400)],
+            max_rounds=1,
+            turn_budget=500,
+        ))
+        self.assertLessEqual(dict(events)["tool_tokens_total"], 500)
+
     # ---------------- 26. SQLite Connection Lifecycle ----------------
 
     def test_sqlite_connection_lifecycle_cleanup(self):
