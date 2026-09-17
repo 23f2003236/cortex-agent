@@ -5312,6 +5312,49 @@ body.light-theme .chart-header {
   padding: 0 10px;
 }
 
+.auth-alt-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.google-auth-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text, #f1f5f9);
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 10px 14px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.google-auth-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .google-auth-btn {
+  background: #ffffff;
+  border-color: #d1d5db;
+  color: #1f2937;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .google-auth-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
 .auth-demo-btn {
   width: 100%;
   display: flex;
@@ -5559,6 +5602,224 @@ body.light-theme .chart-header {
   color: #ff8579;
 }
 
+/* User Menu Usage Item with Hover Flyout */
+.user-menu-usage-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  cursor: default;
+}
+
+.menu-usage-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.usage-icon {
+  color: var(--accent, #22c55e);
+  flex-shrink: 0;
+}
+
+.menu-usage-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-usage-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.menu-usage-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--accent, #22c55e);
+  font-weight: 600;
+}
+
+.menu-usage-mini-track {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+[data-theme="light"] .menu-usage-mini-track {
+  background: #e2e8f0;
+}
+
+.menu-usage-mini-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+/* Hover Flyout Card for Daily Token Quota */
+.usage-flyout-card {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: -10px;
+  width: 250px;
+  background: #181b20;
+  border: 1px solid #2d333a;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 25px rgba(34, 197, 94, 0.08);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+  transform: translateX(-4px);
+  z-index: 250;
+}
+
+.usage-flyout-card::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  bottom: 24px;
+  width: 8px;
+  height: 8px;
+  background: #181b20;
+  border-left: 1px solid #2d333a;
+  border-bottom: 1px solid #2d333a;
+  transform: rotate(45deg);
+}
+
+.user-menu-usage-item:hover .usage-flyout-card,
+.user-menu-usage-item:focus-within .usage-flyout-card {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+[data-theme="light"] .usage-flyout-card {
+  background: #ffffff !important;
+  border-color: #d4dae2 !important;
+  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.12) !important;
+}
+
+[data-theme="light"] .usage-flyout-card::before {
+  background: #ffffff;
+  border-left-color: #d4dae2;
+  border-bottom-color: #d4dae2;
+}
+
+.flyout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="light"] .flyout-header {
+  border-bottom-color: #edf0f5;
+}
+
+.flyout-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flyout-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.flyout-percent-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.flyout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.flyout-label {
+  color: var(--muted);
+}
+
+.flyout-val {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.flyout-remaining {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: #22c55e;
+}
+
+.flyout-progress-track {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  margin: 10px 0 12px;
+  overflow: hidden;
+}
+
+[data-theme="light"] .flyout-progress-track {
+  background: #e2e8f0;
+}
+
+.flyout-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+.flyout-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] .flyout-footer {
+  border-top-color: #edf0f5;
+  color: #64748b;
+}
+
+.flyout-footer svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
 /* ==========================================================================
    SETTINGS MODAL
    ========================================================================== */
@@ -5581,11 +5842,15 @@ body.light-theme .chart-header {
   border: 1px solid #2a313a;
   border-radius: 18px;
   width: 100%;
-  max-width: 440px;
-  padding: 28px 26px 24px;
+  max-width: 500px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
   position: relative;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(34, 197, 94, 0.08);
   animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
 }
 
 [data-theme="light"] .settings-modal-card {
@@ -5596,8 +5861,9 @@ body.light-theme .chart-header {
 
 .settings-close-btn {
   position: absolute;
-  top: 18px;
+  top: 16px;
   right: 18px;
+  z-index: 10;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--muted);
@@ -5626,9 +5892,9 @@ body.light-theme .chart-header {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 22px;
-  padding-bottom: 16px;
+  padding: 22px 24px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
 }
 
 [data-theme="light"] .settings-header {
@@ -5664,6 +5930,9 @@ body.light-theme .chart-header {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .settings-section {
@@ -5808,15 +6077,18 @@ body.light-theme .chart-header {
 }
 
 .settings-footer {
-  margin-top: 24px;
-  padding-top: 16px;
+  margin-top: 0;
+  padding: 14px 24px 18px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
+  background: rgba(20, 24, 29, 0.95);
 }
 
 [data-theme="light"] .settings-footer {
   border-top-color: #edf0f5 !important;
+  background: #f8fafc !important;
 }
 
 .settings-done-btn {
@@ -8616,8 +8888,10 @@ body.light-theme .quota-toast {
 .settings-avatar-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 10px;
+  gap: 8px;
   margin-top: 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 @media (max-width: 500px) {
@@ -8630,13 +8904,15 @@ body.light-theme .quota-toast {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   background: rgba(255, 255, 255, 0.03);
   border: 1.5px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
-  padding: 10px 4px 8px;
+  padding: 8px 3px 6px;
   cursor: pointer;
   transition: all 0.2s ease;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 [data-theme="light"] .avatar-preset-btn {
@@ -8662,21 +8938,26 @@ body.light-theme .quota-toast {
 }
 
 .avatar-preset-circle {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .avatar-preset-name {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 500;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .avatar-preset-btn.active .avatar-preset-name {

@@ -104,6 +104,7 @@ const passwordStrengthWrap = document.getElementById("passwordStrengthWrap");
 const passwordStrengthBar = document.getElementById("passwordStrengthBar");
 const passwordStrengthText = document.getElementById("passwordStrengthText");
 const authDemoBtn = document.getElementById("authDemoBtn");
+const googleAuthBtn = document.getElementById("googleAuthBtn");
 const showcaseDemoBtn = document.getElementById("showcaseDemoBtn");
 
 // Interactive Claude Code Terminal Simulator Elements
@@ -3076,6 +3077,7 @@ function toggleUserProfileMenu() {
     const rawName = (currentUser && currentUser.username) || localStorage.getItem("cortex_username") || "user";
     const email = currentUser?.email || `${rawName.toLowerCase()}@cortex.ai`;
     if (userMenuEmail) userMenuEmail.textContent = email;
+    loadUserUsage();
     userProfileMenu.style.display = "block";
     if (userProfileBtn) userProfileBtn.setAttribute("aria-expanded", "true");
     userMenuAnchor?.classList.add("is-open");
@@ -5398,7 +5400,7 @@ function openAuthModal(mode = "login") {
     tabRegister?.classList.add("active");
     tabSignIn?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Create Free Account";
-    if (authModalSubtitle) authModalSubtitle.textContent = "Start with 100,000 free tokens & your private workspace";
+    if (authModalSubtitle) authModalSubtitle.textContent = "Start with 150,000 free tokens & your private workspace";
     if (emailGroup) emailGroup.style.display = "flex";
     if (passwordStrengthWrap) {
       passwordStrengthWrap.style.display = "flex";
@@ -5765,6 +5767,9 @@ async function handleGuestTestDrive() {
 
 authDemoBtn?.addEventListener("click", handleGuestTestDrive);
 showcaseDemoBtn?.addEventListener("click", handleGuestTestDrive);
+googleAuthBtn?.addEventListener("click", () => {
+  showToast("We will update this feature soon");
+});
 
 // Claude Code Terminal Simulator Engine
 const simPresetsData = {
@@ -6171,19 +6176,47 @@ document.addEventListener("keydown", (e) => {
 
 // 1. Daily Quota Usage & Notification Toast
 function updateUsageDisplay(tokensUsed, limit = 150000) {
-  const usageText = document.getElementById("topbarUsageText");
-  const usageBar = document.getElementById("topbarUsageBar");
-  if (!usageText) return;
   const used = Math.max(0, Number(tokensUsed) || 0);
+  const maxLimit = Math.max(1, Number(limit) || 150000);
+  const remaining = Math.max(0, maxLimit - used);
+  const pct = Math.min(100, Math.max(0, (used / maxLimit) * 100));
+
   let formattedUsed = used.toLocaleString();
   if (used >= 1000) {
     formattedUsed = (used / 1000).toFixed(used >= 10000 ? 0 : 1) + "k";
   }
-  const formattedLimit = Math.round(limit / 1000) + "k";
-  usageText.textContent = `${formattedUsed} / ${formattedLimit}`;
-  if (usageBar) {
-    const pct = Math.min(100, Math.max(0, (used / limit) * 100));
-    usageBar.style.width = `${pct}%`;
+  const formattedLimit = Math.round(maxLimit / 1000) + "k";
+
+  // Topbar display (if present)
+  const usageText = document.getElementById("topbarUsageText");
+  const usageBar = document.getElementById("topbarUsageBar");
+  if (usageText) usageText.textContent = `${formattedUsed} / ${formattedLimit}`;
+  if (usageBar) usageBar.style.width = `${pct}%`;
+
+  // Profile menu usage badge & bar
+  const menuUsageBadge = document.getElementById("menuUsageBadge");
+  const menuUsageBar = document.getElementById("menuUsageBar");
+  if (menuUsageBadge) menuUsageBadge.textContent = `${formattedUsed} / ${formattedLimit}`;
+  if (menuUsageBar) menuUsageBar.style.width = `${pct}%`;
+
+  // Detailed flyout card
+  const flyoutPercentBadge = document.getElementById("flyoutPercentBadge");
+  const flyoutUsedText = document.getElementById("flyoutUsedText");
+  const flyoutRemainingText = document.getElementById("flyoutRemainingText");
+  const flyoutProgressBar = document.getElementById("flyoutProgressBar");
+
+  if (flyoutPercentBadge) flyoutPercentBadge.textContent = `${Math.round(pct)}%`;
+  if (flyoutUsedText) flyoutUsedText.textContent = `${used.toLocaleString()} tokens`;
+  if (flyoutRemainingText) flyoutRemainingText.textContent = `${remaining.toLocaleString()} tokens`;
+  if (flyoutProgressBar) {
+    flyoutProgressBar.style.width = `${pct}%`;
+    if (pct > 90) {
+      flyoutProgressBar.style.background = "linear-gradient(90deg, #ef4444, #dc2626)";
+    } else if (pct > 75) {
+      flyoutProgressBar.style.background = "linear-gradient(90deg, #f59e0b, #d97706)";
+    } else {
+      flyoutProgressBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
+    }
   }
 }
 
