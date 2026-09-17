@@ -12,19 +12,41 @@ from typing import Any, Optional
 
 DB_PATH = Path(__file__).resolve().parent / "cortex.db"
 _local = threading.local()
+_OPEN_CONNECTIONS: set[sqlite3.Connection] = set()
+_CONN_LOCK = threading.Lock()
 
 
-def set_db_path(new_path: Path) -> None:
-    """Dynamically set DB_PATH and reset thread-local connection (useful for isolated tests)."""
-    global DB_PATH
-    DB_PATH = Path(new_path)
+def close_connection() -> None:
+    """Close and remove connection for the current thread."""
     conn = getattr(_local, "conn", None)
     if conn is not None:
+        _local.conn = None
+        with _CONN_LOCK:
+            _OPEN_CONNECTIONS.discard(conn)
         try:
             conn.close()
         except Exception:
             pass
-        _local.conn = None
+
+
+def close_all_connections() -> None:
+    """Close all open SQLite connections across all threads."""
+    with _CONN_LOCK:
+        conns = list(_OPEN_CONNECTIONS)
+        _OPEN_CONNECTIONS.clear()
+    for c in conns:
+        try:
+            c.close()
+        except Exception:
+            pass
+    _local.conn = None
+
+
+def set_db_path(new_path: Path) -> None:
+    """Dynamically set DB_PATH and close all existing connections across threads."""
+    global DB_PATH
+    close_all_connections()
+    DB_PATH = Path(new_path)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -37,6 +59,8 @@ def get_connection() -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         _local.conn = conn
+        with _CONN_LOCK:
+            _OPEN_CONNECTIONS.add(conn)
     return conn
 
 
