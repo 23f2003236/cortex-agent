@@ -38,7 +38,7 @@ const artifactTitle = document.getElementById("artifactTitle");
 const artifactSubtitle = document.getElementById("artifactSubtitle");
 const artifactTabPreview = document.getElementById("artifactTabPreview");
 const artifactTabCode = document.getElementById("artifactTabCode");
-const artifactIframe = document.getElementById("artifactIframe");
+let artifactIframe = document.getElementById("artifactIframe");
 const artifactCodeWrap = document.getElementById("artifactCodeWrap");
 const artifactCodeContent = document.getElementById("artifactCodeContent");
 const artifactCopyBtn = document.getElementById("artifactCopyBtn");
@@ -899,6 +899,9 @@ function extractMath(text) {
     return `%%INLINE_CODE_${inlineCodes.length - 1}%%`;
   });
 
+  // Heal chemistry notation quirks like \DeltaH -> \Delta H
+  s = s.replace(/\\DeltaH\b/g, "\\Delta H");
+
   // Unwrap display math inside blockquotes so it doesn't break marked's blockquote parser
   s = s.replace(/^[ \t]*>[ \t]*\$\$([\s\S]*?)\$\$/gm, (_m, math) => {
     return `\n\n$$\n${math.trim()}\n$$\n\n`;
@@ -933,6 +936,22 @@ function extractMath(text) {
     }
     const key = `math_i_${id++}`;
     const tex = math.trim();
+    mathMap.set(key, { tex, display: false });
+    return `<span class="cortex-math-inline" data-math-id="${key}" data-tex="${encodeURIComponent(tex)}"></span>`;
+  });
+
+  // Standalone chemical reaction formulas on their own line: \ce{...}
+  s = s.replace(/(?:^|\n)[ \t]*(\\ce\{[^\n}]+\})[ \t]*(?=\n|$)/g, (_m, chem) => {
+    const key = `math_d_${id++}`;
+    const tex = chem.trim();
+    mathMap.set(key, { tex, display: true });
+    return `\n\n<div class="cortex-math-display" data-math-id="${key}" data-tex="${encodeURIComponent(tex)}"></div>\n\n`;
+  });
+
+  // Inline chemical formulas: \ce{...}
+  s = s.replace(/(\\ce\{[^{}\n]+\})/g, (_m, chem) => {
+    const key = `math_i_${id++}`;
+    const tex = chem.trim();
     mathMap.set(key, { tex, display: false });
     return `<span class="cortex-math-inline" data-math-id="${key}" data-tex="${encodeURIComponent(tex)}"></span>`;
   });
@@ -1733,10 +1752,29 @@ function openArtifactPanel({ filename, content, type }) {
     if (window.hljs) hljs.highlightElement(artifactCodeContent);
   }
 
-  // Populate Preview iframe
-  if (artifactIframe) {
-    // CRITICAL: Omit 'allow-same-origin' to isolate from parent window and localStorage
-    artifactIframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
+  // Ensure split panel is visible and Preview tab is active FIRST
+  setArtifactTab("preview");
+  artifactSplitPanel.style.display = "flex";
+  appView?.classList.add("has-artifact-open");
+
+  // Populate Preview iframe with a clean fresh instance to eliminate Chromium opaque-origin srcdoc race/unload bugs
+  const parent = artifactIframe?.parentNode || document.querySelector(".artifact-panel-body");
+  let frame = artifactIframe;
+  if (parent) {
+    const newIframe = document.createElement("iframe");
+    newIframe.id = "artifactIframe";
+    newIframe.className = "artifact-iframe";
+    newIframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
+    if (artifactIframe && artifactIframe.parentNode === parent) {
+      parent.replaceChild(newIframe, artifactIframe);
+    } else {
+      parent.insertBefore(newIframe, parent.firstChild);
+    }
+    artifactIframe = newIframe;
+    frame = newIframe;
+  }
+
+  if (frame) {
     const isDark = !document.body.classList.contains("light-theme");
     if (resolvedType === "html") {
       let finalDoc = resolvedContent;
@@ -1767,9 +1805,9 @@ function openArtifactPanel({ filename, content, type }) {
         const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
         finalDoc = cspMeta + finalDoc;
       }
-      artifactIframe.srcdoc = finalDoc;
+      frame.srcdoc = finalDoc;
     } else if (resolvedType === "svg") {
-      artifactIframe.srcdoc = `<!DOCTYPE html>
+      frame.srcdoc = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -1823,7 +1861,7 @@ function openArtifactPanel({ filename, content, type }) {
         );
       }
 
-      artifactIframe.srcdoc = `<!DOCTYPE html>
+      frame.srcdoc = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -1990,6 +2028,7 @@ function openArtifactPanel({ filename, content, type }) {
     }
   </style>
   <script src="/static/vendor/katex/katex.min.js?v=20260913_v4"></script>
+  <script src="/static/vendor/katex/mhchem.min.js?v=20260917_v1"></script>
   <script src="/static/vendor/katex/auto-render.min.js?v=20260913_v4"></script>
   <script src="/static/vendor/chart.umd.min.js?v=20260914_v1"></script>
 </head>
@@ -2029,13 +2068,10 @@ function openArtifactPanel({ filename, content, type }) {
 </body>
 </html>`;
     } else {
-      artifactIframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:monospace;padding:20px;background:${isDark ? "#0d0f12" : "#f5f5f5"};color:${isDark ? "#e4e4e7" : "#111"};white-space:pre-wrap;line-height:1.5;}</style></head><body>${escapeHtml(resolvedContent)}</body></html>`;
+      frame.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:monospace;padding:20px;background:${isDark ? "#0d0f12" : "#f5f5f5"};color:${isDark ? "#e4e4e7" : "#111"};white-space:pre-wrap;line-height:1.5;}</style></head><body>${escapeHtml(resolvedContent)}</body></html>`;
     }
   }
 
-  setArtifactTab("preview");
-  artifactSplitPanel.style.display = "flex";
-  appView?.classList.add("has-artifact-open");
   setTimeout(() => {
     window.dispatchEvent(new Event("resize"));
     if (typeof initCharts === "function") initCharts(chatEl);
@@ -2053,15 +2089,16 @@ function closeArtifactPanel() {
 }
 
 function setArtifactTab(tab) {
+  const currentFrame = document.getElementById("artifactIframe") || artifactIframe;
   if (tab === "preview") {
     artifactTabPreview?.classList.add("active");
     artifactTabCode?.classList.remove("active");
-    if (artifactIframe) artifactIframe.style.display = "block";
+    if (currentFrame) currentFrame.style.display = "block";
     if (artifactCodeWrap) artifactCodeWrap.style.display = "none";
   } else {
     artifactTabCode?.classList.add("active");
     artifactTabPreview?.classList.remove("active");
-    if (artifactIframe) artifactIframe.style.display = "none";
+    if (currentFrame) currentFrame.style.display = "none";
     if (artifactCodeWrap) artifactCodeWrap.style.display = "block";
   }
 }
@@ -4358,7 +4395,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           }
           if (payload.usage) {
             const used = payload.usage.tokens_used ?? payload.usage.daily_tokens ?? 0;
-            const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 100000;
+            const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 150000;
             updateUsageDisplay(used, limit);
           }
           loadArtifactsCount();
@@ -5838,7 +5875,7 @@ document.addEventListener("keydown", (e) => {
 // ==================== CORTEX 3.1 UX & ARCHITECTURAL SUITE ====================
 
 // 1. Daily Quota Usage & Notification Toast
-function updateUsageDisplay(tokensUsed, limit = 100000) {
+function updateUsageDisplay(tokensUsed, limit = 150000) {
   const usageText = document.getElementById("topbarUsageText");
   const usageBar = document.getElementById("topbarUsageBar");
   if (!usageText) return;
@@ -5861,7 +5898,7 @@ async function loadUserUsage() {
     const res = await fetch("/api/user/usage", { headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
-      updateUsageDisplay(data.tokens_used, data.tokens_limit || 100000);
+      updateUsageDisplay(data.tokens_used, data.tokens_limit || 150000);
     }
   } catch (err) {
     console.error("Failed to load daily usage:", err);

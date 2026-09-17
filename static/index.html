@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/static/style.css?v=20260916_v49" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="/static/vendor/katex/katex.min.js?v=20260913_v4"></script>
+  <script src="/static/vendor/katex/mhchem.min.js?v=20260917_v1"></script>
   <script src="/static/vendor/katex/auto-render.min.js?v=20260913_v4"></script>
   <script src="/static/vendor/chart.umd.min.js?v=20260914_v1"></script>
   <script src="/static/vendor/marked.min.js?v=20260914_v1"></script>
@@ -207,7 +208,7 @@
           <!-- Feature Metric Highlights -->
           <div class="showcase-stats-grid">
             <div class="showcase-stat-item">
-              <span class="showcase-stat-val">100k</span>
+              <span class="showcase-stat-val">150k</span>
               <span class="showcase-stat-label">Daily Tokens / Free</span>
             </div>
             <div class="showcase-stat-item">
@@ -1340,9 +1341,9 @@ class DistributedRateLimiter:
         </div>
         <div class="topbar-actions">
           <!-- Daily Token Usage Tracker Pill -->
-          <div id="topbarUsagePill" class="topbar-usage-pill" title="Daily Token Usage (100k tokens/day limit. Resets at midnight UTC)">
+          <div id="topbarUsagePill" class="topbar-usage-pill" title="Daily Token Usage (150k tokens/day limit. Resets at midnight UTC)">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            <span id="topbarUsageText">0 / 100k</span>
+            <span id="topbarUsageText">0 / 150k</span>
             <div class="usage-progress-bar"><div id="topbarUsageBar" class="usage-progress-fill" style="width: 0%;"></div></div>
           </div>
 
@@ -1648,7 +1649,7 @@ class DistributedRateLimiter:
         </div>
       </div>
       <div class="artifact-panel-body">
-        <iframe id="artifactIframe" class="artifact-iframe" sandbox="allow-scripts allow-modals allow-forms"></iframe>
+        <iframe id="artifactIframe" class="artifact-iframe" sandbox="allow-scripts allow-forms allow-popups allow-modals"></iframe>
         <div id="artifactCodeWrap" class="artifact-code-wrap" style="display: none;">
           <pre><code id="artifactCodeContent"></code></pre>
         </div>

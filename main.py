@@ -143,7 +143,7 @@ SYSTEM_PROMPT = os.getenv(
     "- ACCURATE CHARTS WHEN REQUESTED: When the user EXPLICITLY asks for a chart, the chart must be strictly accurate, quantitatively factual, and professionally labeled. Never output fake, random, or low-effort placeholder data. Format as ```chart with strictly valid JSON (balanced brackets, double quotes, no trailing commas) matching the Chart.js config structure (type, data: { labels: [...], datasets: [{ label: '...', data: [...] }] }, options).\n"
     "- CODE BLOCKS & ARTIFACTS: Programming code examples (HTML, CSS, JS, Python, SQL) MUST use standard markdown code blocks (e.g. ```html, ```css, ```python). Only format code as a dedicated downloadable artifact (e.g. ```html:app or ```python:filename=script.py) when the user explicitly requests to build an interactive web app or generate a standalone file. For standard code explanations, use regular code fences.\n"
     "- COMPLETENESS & PACING: Budget your explanations to deliver comprehensive conceptual depth, clean architecture breakdowns, and focused code snippets that reach a definitive conclusion. NEVER dump endless multi-thousand-line source code files that cause responses to hit token limits or cut off mid-sentence.\n"
-    "- MATHEMATICS & FORMULAS: Format display equations on their own lines using $$...$$ (outside blockquotes, never prefix with >) and inline math with $...$ (never \\( or \\[).\n\n"
+    "- MATHEMATICS & CHEMICAL EQUATIONS: Format display math and chemical reactions on their own lines using $$...$$ (outside blockquotes, never prefix with >) and inline math with $...$ (never \\( or \\[). For chemical reactions and formulas, use KaTeX mhchem syntax like $$\\ce{N2(g) + 3H2(g) <=> 2NH3(g)}$$ or standard reaction arrows (\\rightarrow, \\rightleftharpoons).\n\n"
     "4. ATTACHED DOCUMENTS & SCANNED PDF POLICY:\n"
     "- When the user attaches a document or PDF where the extractable text is minimal, corrupted, or scanned (e.g. mostly repeated watermarks, photocopy images, or fragmentary lines), politely explain that the uploaded PDF contains scanned page images with limited selectable digital text.\n"
     "- NEVER STOP THERE OR LEAVE THE USER EMPTY-HANDED! If the user's prompt or filename indicates a recognizable topic, subject, textbook chapter, or concept (e.g., 'Selina Class 9 Physics Chapter 3 Laws of Motion', NCERT, standard algorithms, legal/business topics), PROACTIVELY DELIVER the complete, thorough, chapter-wise summary or answer using your deep domain knowledge (and DuckDuckGo web search if specific questions or exercises need lookup). Always ensure the user receives immediate, high-value assistance.\n\n"
@@ -1351,7 +1351,7 @@ def run_tool_rounds_streaming(
     effective_tools = tools_subset if tools_subset is not None else TOOLS
     tools_by_name = {t.name: t for t in effective_tools}
     effective_rounds = max_rounds or MAX_TOOL_ROUNDS
-    budget_limit = turn_budget if turn_budget is not None else 100000
+    budget_limit = turn_budget if turn_budget is not None else 150000
     tools_used: list[str] = []
     accumulated_tool_tokens = 0
     # Keep enough capacity for the user-facing synthesis after tool selection.
@@ -2672,7 +2672,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             usage_info = database.get_daily_usage(current_user["id"])
             current_used = usage_info.get("tokens_used", 0)
             current_reserved = usage_info.get("reserved_tokens", 0)
-            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 100000))
+            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 150000))
             remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
 
             # Determine whether tools should be executed early to account for tool rounds in quota reservation
