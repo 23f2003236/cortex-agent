@@ -2382,7 +2382,7 @@ function closeProjectModal() {
 async function saveProjectFromModal() {
   const name = (projectNameInput ? projectNameInput.value : "").trim();
   if (!name) {
-    alert("Please enter a project name.");
+    showToast("Please enter a project name.");
     return;
   }
   const description = (projectDescInput ? projectDescInput.value : "").trim();
@@ -2415,7 +2415,7 @@ async function saveProjectFromModal() {
     loadConversations(false);
   } catch (err) {
     console.error("Save project error:", err);
-    alert(err.message || "Failed to save project.");
+    showToast(err.message || "Failed to save project.");
   }
 }
 
@@ -2438,7 +2438,7 @@ async function deleteProjectFromModal() {
     loadConversations(false);
   } catch (err) {
     console.error("Delete project error:", err);
-    alert(err.message || "Failed to delete project.");
+    showToast(err.message || "Failed to delete project.");
   }
 }
 
@@ -3272,14 +3272,8 @@ function formatDisplayName(raw) {
 }
 
 function getDynamicGreeting(username) {
-  const rawName =
-    username ||
-    (currentUser && currentUser.username) ||
-    localStorage.getItem("cortex_username") ||
-    "Pedro";
-  const name = formatDisplayName(rawName) || "Pedro";
   return {
-    title: `Hey ${name} , Do you want to explore something with me ?`,
+    title: "",
     subtitle: ""
   };
 }
@@ -4676,7 +4670,7 @@ const exportChatBtn = document.getElementById("exportChatBtn");
 
 function exportCurrentChatAsMarkdown() {
   if (!messages || !messages.length) {
-    alert("No messages to export yet. Start a conversation first!");
+    showToast("No messages to export yet. Start a conversation first!");
     return;
   }
 
@@ -4868,11 +4862,11 @@ confirmDeleteAccountBtn?.addEventListener("click", async () => {
       showToast("Your account and all workspace data have been permanently deleted.");
     } else {
       const err = await res.json().catch(() => ({}));
-      alert(err.detail || "Failed to delete account. Please try again.");
+      showToast(err.detail || "Failed to delete account. Please try again.");
     }
   } catch (err) {
     console.error("Account deletion failed:", err);
-    alert("Network error while deleting account.");
+    showToast("Network error while deleting account.");
   } finally {
     if (confirmDeleteAccountBtn) {
       confirmDeleteAccountBtn.disabled = false;
@@ -6124,15 +6118,13 @@ menuSettingsBtn?.addEventListener("click", (e) => {
 
 menuSignOutBtn?.addEventListener("click", () => {
   closeUserProfileMenu();
-  if (confirm("Are you sure you want to sign out of Cortex?")) {
-    signOut();
-  }
+  signOut();
+  showToast("Signed out successfully.");
 });
 
 signOutBtn?.addEventListener("click", () => {
-  if (confirm("Are you sure you want to sign out of Cortex?")) {
-    signOut();
-  }
+  signOut();
+  showToast("Signed out successfully.");
 });
 
 // Global Keyboard Shortcuts (Ctrl+B for sidebar, Ctrl+K or / for search)

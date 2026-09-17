@@ -7,10 +7,23 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
-DB_PATH = Path(__file__).resolve().parent / "cortex.db"
+_DEFAULT_DB = Path(__file__).resolve().parent / "cortex.db"
+if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    _TMP_DB = Path(tempfile.gettempdir()) / "cortex.db"
+    if _DEFAULT_DB.exists() and not _TMP_DB.exists():
+        try:
+            shutil.copy2(_DEFAULT_DB, _TMP_DB)
+        except Exception:
+            pass
+    DB_PATH = _TMP_DB
+else:
+    DB_PATH = _DEFAULT_DB
 _local = threading.local()
 _OPEN_CONNECTIONS: set[sqlite3.Connection] = set()
 _CONN_LOCK = threading.Lock()

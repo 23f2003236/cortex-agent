@@ -7792,47 +7792,35 @@ body.light-theme .project-textarea {
 
 /* ==================== CORTEX 3.1 UX & SUITE ENHANCEMENTS ==================== */
 
-/* 1. Single-line Hero Greeting */
+/* 1. Single-line Hero Greeting & Empty State Logo */
 .empty-hero-line {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  max-width: 100%;
-  padding: 8px 16px;
+  margin-bottom: 24px;
 }
 
 .empty-logo-inline {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
-  border-radius: 11px;
+  border-radius: 14px;
   background: radial-gradient(circle, rgba(34, 197, 94, 0.22) 0%, rgba(34, 197, 94, 0.05) 80%);
   border: 1.5px solid rgba(34, 197, 94, 0.35);
-  box-shadow: 0 4px 16px rgba(34, 197, 94, 0.2);
+  box-shadow: 0 6px 24px rgba(34, 197, 94, 0.25);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.empty-logo-inline:hover {
+  transform: scale(1.05);
+  box-shadow: 0 8px 30px rgba(34, 197, 94, 0.35);
 }
 
 .empty-greeting-single {
-  font-family: var(--font-display, 'Space Grotesk', sans-serif);
-  font-weight: 600;
-  font-size: clamp(17px, 2.3vw, 23px);
-  margin: 0;
-  letter-spacing: -0.015em;
-  color: var(--text, #f1f5f9);
-  white-space: nowrap;
-}
-@media (max-width: 640px) {
-  .empty-hero-line {
-    white-space: normal;
-    text-align: left;
-  }
-  .empty-greeting-single {
-    white-space: normal;
-    font-size: 17px;
-  }
+  display: none;
 }
 
 /* 2. Topbar Usage Pill */

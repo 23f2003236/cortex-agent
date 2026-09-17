@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20260913_v4" />
-  <link rel="stylesheet" href="/static/style.css?v=20260917_v51" />
+  <link rel="stylesheet" href="/static/style.css?v=20260917_v52" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="/static/vendor/katex/katex.min.js?v=20260913_v4"></script>
   <script src="/static/vendor/katex/mhchem.min.js?v=20260917_v1"></script>
@@ -833,10 +833,9 @@ class DistributedRateLimiter:
           <a href="#models" class="footer-link">Models</a>
           <a href="#research" class="footer-link">Research</a>
           <a href="#faqs" class="footer-link">FAQs</a>
-          <!-- Disabled policy links as specifically requested -->
-          <span class="footer-link-disabled" title="Currently inactive">Privacy Policy (Off)</span>
-          <span class="footer-link-disabled" title="Currently inactive">Terms of Service (Off)</span>
-          <span class="footer-link-disabled" title="Currently inactive">GitHub (Off)</span>
+          <a href="#" class="footer-link" onclick="showToast('Privacy Policy will be updated soon'); return false;">Privacy Policy</a>
+          <a href="#" class="footer-link" onclick="showToast('Terms of Service will be updated soon'); return false;">Terms</a>
+          <a href="https://github.com" target="_blank" rel="noopener noreferrer" class="footer-link">GitHub</a>
         </div>
 
         <div class="footer-copyright">
@@ -2481,14 +2480,13 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     <div class="empty-state">
       <div class="empty-hero-line">
         <span class="empty-logo-inline" aria-hidden="true">
-          <svg viewBox="0 0 32 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 32 32" width="30" height="30" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
             <path d="M16 8.5L22.5 12.25V19.75L16 23.5L9.5 19.75V12.25L16 8.5Z" fill="#22c55e" fill-opacity="0.25" stroke="#22c55e" stroke-width="1.7" stroke-linejoin="round"/>
             <circle cx="16" cy="16" r="2.5" fill="#4ade80"/>
             <path d="M16 3V8.5M16 23.5V29M5 9.5L9.5 12.25M22.5 19.75L27 22.5M27 9.5L22.5 12.25M9.5 19.75L5 22.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
           </svg>
         </span>
-        <h1 id="emptyGreetingTitle" class="empty-greeting-single">Hey Pedro , Do you want to explore something with me ?</h1>
       </div>
     </div>
   </template>
@@ -2537,6 +2535,6 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     <div class="quota-toast-text" id="quotaToastText">Daily upload limit reached (10 files/day). Quota resets at 00:00 UTC.</div>
   </div>
 
-  <script src="/static/app.js?v=20260917_v51"></script>
+  <script src="/static/app.js?v=20260917_v52"></script>
 </body>
 </html>
