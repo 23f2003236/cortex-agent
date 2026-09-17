@@ -3420,20 +3420,124 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+function isTextOrCodeFile(file) {
+  if (!file) return false;
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  const textExts = ["txt", "md", "csv", "tsv", "json", "py", "js", "html", "css", "yaml", "yml", "xml", "c", "cpp", "h", "hpp", "java", "rs", "go", "php", "sql", "sh", "bat", "log"];
+  return textExts.includes(ext) || file.type.startsWith("text/");
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result || "");
+    reader.onerror = (err) => reject(err);
+    reader.readAsText(file);
+  });
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result || "");
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressImageIfNeeded(file, maxDimension = 1600, quality = 0.85) {
+  if (!file) return file;
+  const isImg = file.type.startsWith("image/") || /\.(png|jpe?g|webp|bmp)$/i.test(file.name);
+  if (!isImg) return file;
+  if (file.type === "image/svg+xml" || file.name.endsWith(".svg") || file.name.endsWith(".gif")) {
+    return file;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        let { width, height } = img;
+        if (width <= maxDimension && height <= maxDimension && file.size < 400 * 1024) {
+          resolve(file);
+          return;
+        }
+
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+        canvas.toBlob(
+          (blob) => {
+            if (blob && (blob.size < file.size || width < img.naturalWidth)) {
+              const newFile = new File([blob], file.name.replace(/\.[^.]+$/, mime === "image/png" ? ".png" : ".jpg"), {
+                type: mime,
+                lastModified: Date.now(),
+              });
+              resolve(newFile);
+            } else {
+              resolve(file);
+            }
+          },
+          mime,
+          quality
+        );
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(file);
+      };
+      img.src = objectUrl;
+    } catch {
+      resolve(file);
+    }
+  });
+}
+
 async function uploadSingleFile(file) {
   if (!file) return;
 
-  const formData = new FormData();
-  formData.append("file", file);
+  const isImg = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(file.name);
+  const chipIcon = attachmentPreview?.querySelector(".attachment-icon");
+  if (chipIcon) chipIcon.textContent = isImg ? "🖼️" : "📄";
+  if (attachmentName) attachmentName.textContent = isImg ? `Optimizing ${file.name}…` : `Uploading ${file.name}…`;
+  if (attachmentSize) attachmentSize.textContent = "";
+  if (attachmentPreview) attachmentPreview.style.display = "flex";
 
   try {
     if (attachBtn) attachBtn.disabled = true;
-    const isImg = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(file.name);
-    const chipIcon = attachmentPreview.querySelector(".attachment-icon");
-    if (chipIcon) chipIcon.textContent = isImg ? "🖼️" : "📄";
-    attachmentName.textContent = `Uploading ${file.name}…`;
-    attachmentSize.textContent = "";
-    attachmentPreview.style.display = "flex";
+
+    // 1. Client-side auto-downscale & compression for images to ensure fast uploads & reasonable token use
+    let uploadPayload = file;
+    if (isImg && file.type !== "image/svg+xml" && !file.name.endsWith(".svg") && !file.name.endsWith(".gif")) {
+      try {
+        uploadPayload = await compressImageIfNeeded(file, 1600, 0.85);
+      } catch (cErr) {
+        console.warn("Client image compression bypassed:", cErr);
+      }
+    }
+
+    if (attachmentName) attachmentName.textContent = `Uploading ${file.name}…`;
+
+    const formData = new FormData();
+    formData.append("file", uploadPayload);
 
     const res = await fetch("/api/upload", {
       method: "POST",
@@ -3447,16 +3551,72 @@ async function uploadSingleFile(file) {
     }
 
     if (!res.ok) {
-      let detail = "Upload failed";
+      let detail = "";
       try {
         const err = await res.json();
-        detail = err.detail || detail;
-      } catch {}
-      if (res.status === 429 || detail.toLowerCase().includes("limit") || detail.toLowerCase().includes("quota") || detail.toLowerCase().includes("exhausted")) {
-        showQuotaToast("⚠️ Daily upload limit reached (10 files/day). Your upload quota will refresh tomorrow at 00:00 UTC.");
-      } else {
-        showQuotaToast("Upload error: " + detail);
+        detail = err.detail || "";
+      } catch {
+        try {
+          const txt = await res.text();
+          if (txt && !txt.includes("<!DOCTYPE") && !txt.includes("<html") && txt.length < 150) {
+            detail = txt.trim();
+          }
+        } catch {}
       }
+
+      if (res.status === 429 || (detail && (detail.toLowerCase().includes("limit") || detail.toLowerCase().includes("quota") || detail.toLowerCase().includes("exhausted")))) {
+        showQuotaToast("⚠️ Daily upload limit reached (10 files/day). Your upload quota will refresh tomorrow at 00:00 UTC.");
+        clearAttachment();
+        return;
+      }
+
+      // 2. Resilient Client-Side Fallback for text/code or images if serverless endpoint is interrupted:
+      if (isTextOrCodeFile(file)) {
+        try {
+          const textContent = await readFileAsText(file);
+          if (textContent) {
+            const maxLen = 12000;
+            attachedFile = {
+              filename: file.name,
+              size: file.size,
+              text: textContent.slice(0, maxLen),
+              char_count: textContent.length,
+              truncated: textContent.length > maxLen,
+              is_image: false,
+              image_data_url: null,
+            };
+            if (attachmentName) attachmentName.textContent = file.name;
+            if (attachmentSize) attachmentSize.textContent = `(${formatBytes(file.size)}${attachedFile.truncated ? " - truncated" : ""})`;
+            if (attachmentPreview) attachmentPreview.style.display = "flex";
+            return;
+          }
+        } catch {}
+      } else if (isImg) {
+        try {
+          const dataUrl = await readFileAsDataURL(uploadPayload);
+          if (dataUrl) {
+            attachedFile = {
+              filename: file.name,
+              size: uploadPayload.size,
+              text: `[Attached Image: ${file.name} (${formatBytes(uploadPayload.size)})]\n(Visual Image Base64: ${dataUrl})`,
+              char_count: dataUrl.length,
+              truncated: false,
+              is_image: true,
+              image_data_url: dataUrl,
+            };
+            if (chipIcon) {
+              chipIcon.innerHTML = `<img src="${dataUrl}" alt="thumb" class="attachment-thumb-mini" />`;
+            }
+            if (attachmentName) attachmentName.textContent = file.name;
+            if (attachmentSize) attachmentSize.textContent = `(${formatBytes(uploadPayload.size)})`;
+            if (attachmentPreview) attachmentPreview.style.display = "flex";
+            return;
+          }
+        } catch {}
+      }
+
+      const errMsg = detail || (res.status === 413 ? "File exceeds serverless upload limit. Please try a smaller file." : "Upload encountered a server error. Please try again.");
+      showQuotaToast("Upload error: " + errMsg);
       clearAttachment();
       return;
     }
@@ -3471,11 +3631,34 @@ async function uploadSingleFile(file) {
         chipIcon.textContent = isImg ? "🖼️" : "📄";
       }
     }
-    attachmentName.textContent = data.filename;
-    attachmentSize.textContent = `(${formatBytes(data.size)}${data.truncated ? " - truncated" : ""})`;
-    attachmentPreview.style.display = "flex";
+    if (attachmentName) attachmentName.textContent = data.filename;
+    if (attachmentSize) attachmentSize.textContent = `(${formatBytes(data.size)}${data.truncated ? " - truncated" : ""})`;
+    if (attachmentPreview) attachmentPreview.style.display = "flex";
   } catch (err) {
-    showQuotaToast("Upload error: " + err.message);
+    // Client fallback if network call threw an error (e.g. offline or interrupted)
+    if (isTextOrCodeFile(file)) {
+      try {
+        const textContent = await readFileAsText(file);
+        if (textContent) {
+          const maxLen = 12000;
+          attachedFile = {
+            filename: file.name,
+            size: file.size,
+            text: textContent.slice(0, maxLen),
+            char_count: textContent.length,
+            truncated: textContent.length > maxLen,
+            is_image: false,
+            image_data_url: null,
+          };
+          if (attachmentName) attachmentName.textContent = file.name;
+          if (attachmentSize) attachmentSize.textContent = `(${formatBytes(file.size)}${attachedFile.truncated ? " - truncated" : ""})`;
+          if (attachmentPreview) attachmentPreview.style.display = "flex";
+          return;
+        }
+      } catch {}
+    }
+
+    showQuotaToast("Upload error: " + (err.message || "Failed to process file"));
     clearAttachment();
   } finally {
     if (attachBtn) attachBtn.disabled = false;

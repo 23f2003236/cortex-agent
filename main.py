@@ -1266,23 +1266,32 @@ def get_model_max_tokens(model_id: str) -> int:
 
 
 def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> int:
-    """Dynamically determine maximum token budget based on model limits, query intent, and mode."""
+    """Dynamically determine maximum token budget based on model limits, query intent, and mode.
+    Strips heavy file/image attachment wrappers to evaluate user's core intent without token explosion."""
     model_max = get_model_max_tokens(model_id)
 
     if (mode or "").lower() == "fast":
-        return min(model_max, 16384)
+        return min(model_max, 2048)
 
-    lower = (prompt or "").lower().strip()
+    # Strip attachment blocks (documents, images, tables, webpages) to evaluate user query intent:
+    clean_query = re.sub(
+        r"\[Attached (?:Document|Spreadsheet|Word Document|Image|SVG Vector|Webpage)[^\]]*\][\s\S]*?(?:\`\`\`|\)|$)",
+        "",
+        prompt or "",
+        flags=re.IGNORECASE,
+    ).strip()
+    eval_prompt = clean_query if clean_query else (prompt or "").strip()
+    lower = eval_prompt.lower()
 
-    # Exhaustive technical requests, masterclasses, code implementations, or deep architecture:
+    # Exhaustive technical requests, masterclasses, or deep architecture:
     exhaustive_keywords = [
         "masterclass", "complete guide", "from scratch", "comprehensive",
         "in-depth", "deep dive", "step-by-step", "full implementation",
         "all chapters", "detailed breakdown", "entire architecture",
         "write complete", "detailed analysis", "complete roadmap"
     ]
-    if any(k in lower for k in exhaustive_keywords) or len(lower) > 800:
-        return model_max  # Up to 32,768 tokens!
+    if any(k in lower for k in exhaustive_keywords) or ((mode or "").lower() == "thinking" and len(lower) > 300):
+        return min(model_max, 8192)
 
     # Casual greetings or trivial queries:
     casual_keywords = [
@@ -1292,8 +1301,8 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
     if len(lower.split()) <= 6 and any(k in lower for k in casual_keywords):
         return min(model_max, 1024)
 
-    # Standard general-purpose response budget:
-    return min(model_max, 16384)
+    # Standard general-purpose response budget (e.g. "solve this question", coding, reasoning):
+    return min(model_max, 3072)
 
 
 # ---------------------------------------------------------------------------
@@ -1856,7 +1865,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
     elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
         if ext == ".png" and not raw_content.startswith(b"\x89PNG\r\n\x1a\n"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid PNG file: missing PNG signature.")
-        elif ext in (".jpg", ".jpeg") and not raw_content.startswith(b"\xff\xd8\xff"):
+        elif ext in (".jpg", ".jpeg") and not raw_content.startswith(b"\xff\xd8"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid JPEG file: missing JPEG signature.")
         elif ext == ".gif" and not (raw_content.startswith(b"GIF87a") or raw_content.startswith(b"GIF89a")):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Corrupt or invalid GIF file: missing GIF signature.")
@@ -2057,24 +2066,71 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
             extracted_text = raw_decoded
     elif ext in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]:
         import io
-        from PIL import Image
+        width, height = 800, 600
+        processed_bytes = raw_content
+        mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else f"image/{ext.lstrip('.')}"
 
         try:
+            from PIL import Image, ImageOps
             with Image.open(io.BytesIO(raw_content)) as img:
-                width, height = img.size
-                if width > 4096 or height > 4096:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Image dimensions {width}x{height} exceed maximum permitted size (4096 x 4096 px).",
-                    )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid image file: {exc}")
+                # Auto-orient based on EXIF tag (handles smartphone camera rotation)
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
 
-        kb = max(1, len(raw_content) // 1024)
-        mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else f"image/{ext.lstrip('.')}"
-        b64_str = base64.b64encode(raw_content).decode("ascii")
+                width, height = img.size
+                # Auto-downscale if larger than 1600px in either dimension to prevent token/memory explosion
+                if width > 1600 or height > 1600:
+                    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                    width, height = img.size
+
+                out_buf = io.BytesIO()
+                if ext in [".jpg", ".jpeg"]:
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    img.save(out_buf, format="JPEG", quality=85, optimize=True)
+                    processed_bytes = out_buf.getvalue()
+                    mime = "image/jpeg"
+                elif ext == ".png":
+                    if img.mode == "P":
+                        img = img.convert("RGBA")
+                    img.save(out_buf, format="PNG", optimize=True)
+                    processed_bytes = out_buf.getvalue()
+                    mime = "image/png"
+                elif ext == ".webp":
+                    img.save(out_buf, format="WEBP", quality=85)
+                    processed_bytes = out_buf.getvalue()
+                    mime = "image/webp"
+                else:
+                    processed_bytes = raw_content
+        except Exception as img_err:
+            logger.info(f"Image processing note ({img_err}), falling back to direct byte read")
+            processed_bytes = raw_content
+            try:
+                if ext == ".png" and len(raw_content) >= 24:
+                    import struct
+                    width, height = struct.unpack(">II", raw_content[16:24])
+                elif ext in (".jpg", ".jpeg") and len(raw_content) >= 4:
+                    idx = 2
+                    while idx < len(raw_content) - 8:
+                        if raw_content[idx] == 0xFF:
+                            marker = raw_content[idx + 1]
+                            if marker in (0xC0, 0xC2):
+                                import struct
+                                height, width = struct.unpack(">HH", raw_content[idx + 5:idx + 9])
+                                break
+                            elif marker in (0xD9, 0xDA):
+                                break
+                            else:
+                                idx += 2 + int.from_bytes(raw_content[idx + 2:idx + 4], "big")
+                        else:
+                            idx += 1
+            except Exception:
+                pass
+
+        kb = max(1, len(processed_bytes) // 1024)
+        b64_str = base64.b64encode(processed_bytes).decode("ascii")
         data_url = f"data:{mime};base64,{b64_str}"
         extracted_text = (
             f"[Attached Image: {filename} ({kb} KB, {width}x{height} px)]\n"
@@ -2382,6 +2438,17 @@ def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id
                 r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)",
                 "[Previous turn image attachment]",
                 msg.content or "",
+            )
+            # Also strip heavy document bodies from older turns (preserving user's follow-up questions)
+            hist_clean = re.sub(
+                r"\[Attached Document:\s*([^\]]+)\]\n```[\s\S]*?```",
+                r"[Previous turn document: \1 (content already processed)]",
+                hist_clean,
+            )
+            hist_clean = re.sub(
+                r"\[Structured Tabular Data:\s*([^\]]+)\]\n[\s\S]*?(?=\n\n|\Z)",
+                r"[Previous turn table: \1 (content already processed)]",
+                hist_clean,
             )
             messages.append(HumanMessage(content=hist_clean))
         else:
@@ -3349,9 +3416,14 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                         synthesis_tokens = int(in_tok + out_tok)
 
             if synthesis_tokens is None:
-                synthesis_tokens = max(1, (total_input_chars + len(full_text)) // 4)
+                context_tok = min(total_input_chars // 4, 3000)
+                synthesis_tokens = max(1, context_tok + len(full_text) // 4)
 
             consumed_tokens = turn_tool_tokens + synthesis_tokens + image_token_cost
+            # Per-turn safety ceiling: guarantees a single file/photo query never drains 30,000 tokens
+            turn_ceiling = max(1500, min(budget_tokens + 2500, 8192))
+            consumed_tokens = min(consumed_tokens, turn_ceiling)
+
             current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
             quota_reserved = False
 
