@@ -174,16 +174,11 @@ let currentProjectId = ""; // Empty string means "All Chats"
 let userProjects = [];
 let editingProjectId = null;
 
-let authToken = null;
 let currentUser = null;
 let authMode = "login"; // "login" | "register"
 
 function authHeaders(extra = {}) {
-  const headers = { ...extra };
-  if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`;
-  }
-  return headers;
+  return { ...extra };
 }
 
 let currentConversationId = null;
@@ -1406,7 +1401,7 @@ function initArtifacts(containerEl) {
 
       let safeHtml = rawHtml;
       if (!safeHtml.includes("Content-Security-Policy")) {
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
         safeHtml = cspMeta + safeHtml;
       }
       iframe.srcdoc = safeHtml;
@@ -1769,7 +1764,7 @@ function openArtifactPanel({ filename, content, type }) {
 </html>`;
       }
       if (!finalDoc.includes("Content-Security-Policy")) {
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https: blob:; connect-src 'none';">\n`;
         finalDoc = cspMeta + finalDoc;
       }
       artifactIframe.srcdoc = finalDoc;
@@ -2247,7 +2242,7 @@ function isNearBottom() {
 // ---------------- Project Workspaces ----------------
 
 async function loadProjects() {
-  if (!authToken) return;
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/projects", { headers: authHeaders() });
     if (res.status === 401) return;
@@ -2411,8 +2406,8 @@ async function deleteProjectFromModal() {
 
 // ---------------- Sidebar & Conversations ----------------
 
-async function loadConversations(autoSelect = false) {
-  if (!authToken) return;
+async function loadConversations(autoSelectLatest = false) {
+  if (!currentUser) return;
   try {
     let url = "/api/conversations";
     if (currentProjectId) {
@@ -4700,7 +4695,7 @@ const instructionsSaveStatus = document.getElementById("instructionsSaveStatus")
 let userMemories = [];
 
 async function loadUserMemories() {
-  if (!authToken) return;
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/memories", { headers: authHeaders() });
     if (res.ok) {
@@ -4714,7 +4709,7 @@ async function loadUserMemories() {
 }
 
 async function loadUserInstructions() {
-  if (!authToken) return;
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/user/instructions", { headers: authHeaders() });
     if (res.ok) {
@@ -5122,7 +5117,6 @@ async function handleAuthSubmit(e) {
       throw new Error(data.detail || "Authentication failed.");
     }
 
-    authToken = data.token;
     currentUser = data.user;
     localStorage.removeItem("cortex_auth_token");
     localStorage.setItem("cortex_active_conv", "new");
@@ -5159,7 +5153,6 @@ function signOut() {
   localStorage.removeItem("cortex_auth_token");
   localStorage.setItem("cortex_active_conv", "new");
   localStorage.removeItem("cortex_username");
-  authToken = null;
   currentUser = null;
   conversations = [];
   messages = [];
@@ -5212,7 +5205,6 @@ async function checkAuth() {
       localStorage.removeItem("cortex_auth_token");
       localStorage.removeItem("cortex_username");
       localStorage.setItem("cortex_active_conv", "new");
-      authToken = null;
       currentUser = null;
       showLandingPage();
       loadHealth();
@@ -5225,7 +5217,7 @@ async function checkAuth() {
 
 // Landing Page & Auth Event Listeners
 function handleLaunchOrRegister() {
-  if (currentUser || authToken) {
+  if (currentUser) {
     showChatApp();
     if (!currentConversationId || currentConversationId === "new") {
       startNewChat();
@@ -5402,7 +5394,6 @@ async function handleGuestTestDrive() {
       throw new Error(data.detail || "Guest test drive failed.");
     }
 
-    authToken = data.token;
     currentUser = data.user;
     localStorage.removeItem("cortex_auth_token");
     localStorage.setItem("cortex_active_conv", "new");
@@ -5865,7 +5856,7 @@ function updateUsageDisplay(tokensUsed, limit = 100000) {
 }
 
 async function loadUserUsage() {
-  if (!authToken) return;
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/user/usage", { headers: authHeaders() });
     if (res.ok) {
@@ -5893,7 +5884,7 @@ function showQuotaToast(message) {
 let allUserArtifacts = [];
 
 async function loadArtifactsCount() {
-  if (!authToken) return;
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/artifacts", { headers: authHeaders() });
     if (res.ok) {
@@ -5940,7 +5931,7 @@ function hideArtifactsView() {
 }
 
 async function loadArtifacts() {
-  if (!authToken) return;
+  if (!currentUser) return;
   try {
     const res = await fetch("/api/artifacts", { headers: authHeaders() });
     if (res.ok) {
