@@ -2958,12 +2958,6 @@ async function loadConversations(autoSelectLatest = false) {
         const qC = urlParams.get("c");
         if (qC && qC !== "new") targetId = qC;
       } catch {}
-      if (!targetId && conversations.length > 0) {
-        const activeStored = localStorage.getItem("cortex_active_conv");
-        if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
-          targetId = activeStored;
-        }
-      }
       if (targetId && targetId !== "new") {
         await switchConversation(targetId);
       }
@@ -6673,14 +6667,8 @@ async function executeResetAndLogin(identifier, password, rememberMe = true) {
       syncFullWorkspaceState(false);
     }
 
-    const activeStored = localStorage.getItem("cortex_active_conv");
-    if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
-      await switchConversation(activeStored);
-    } else if (conversations && conversations.length > 0) {
-      await switchConversation(conversations[0].id);
-    } else {
-      startNewChat();
-    }
+    // Fresh new chat screen on login / entry
+    startNewChat();
   } catch (err) {
     if (authErrorAlert) {
       authErrorAlert.innerHTML = `<div class="auth-error-text">${escapeHtml(err.message)}</div>`;
@@ -6778,15 +6766,8 @@ async function handleAuthSubmit(e) {
       syncFullWorkspaceState(false);
     }
 
-    // Auto-restore active or recent conversation so chats never appear missing
-    const activeStored = localStorage.getItem("cortex_active_conv");
-    if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
-      await switchConversation(activeStored);
-    } else if (conversations && conversations.length > 0) {
-      await switchConversation(conversations[0].id);
-    } else {
-      startNewChat();
-    }
+    // Fresh new chat screen on login / registration / entry
+    startNewChat();
   } catch (err) {
     if (authErrorAlert) {
       const isAuthFail = authMode === "login" && (
@@ -6951,14 +6932,7 @@ async function checkAuth() {
       if (targetConvId) {
         await switchConversation(targetConvId);
       } else {
-        const activeStored = localStorage.getItem("cortex_active_conv");
-        if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
-          await switchConversation(activeStored);
-        } else if (conversations && conversations.length > 0) {
-          await switchConversation(conversations[0].id);
-        } else {
-          startNewChat();
-        }
+        startNewChat();
       }
 
       dismissSplash();
