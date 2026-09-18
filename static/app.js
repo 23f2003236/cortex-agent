@@ -201,6 +201,59 @@ function authHeaders(extra = {}) {
   return headers;
 }
 
+function isConvPinned(c) {
+  if (!c) return false;
+  return c.is_pinned === 1 || c.is_pinned === true || c.is_pinned === "1" || c.is_pinned === "true";
+}
+
+// ---------------- Cross-Tab / Cross-Window Live Synchronization ----------------
+const cortexSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("cortex_workspace_channel") : null;
+
+function broadcastWorkspaceUpdate(type = "WORKSPACE_UPDATED", payload = {}) {
+  if (cortexSyncChannel) {
+    try {
+      cortexSyncChannel.postMessage({ type, payload, timestamp: Date.now() });
+    } catch {}
+  }
+}
+
+if (cortexSyncChannel) {
+  cortexSyncChannel.onmessage = async (event) => {
+    const { type } = event.data || {};
+    if (type === "WORKSPACE_UPDATED" || type === "CONVERSATION_UPDATED" || type === "USAGE_UPDATED") {
+      if (currentUser) {
+        await loadConversations(false);
+        await loadUserUsage();
+        await loadArtifactsCount();
+        await loadProjects();
+      }
+    }
+  };
+}
+
+let lastFocusSyncTime = 0;
+function handleWindowFocusSync() {
+  const now = Date.now();
+  if (now - lastFocusSyncTime < 2500) return; // Debounce 2.5s
+  lastFocusSyncTime = now;
+  if (currentUser) {
+    loadConversations(false);
+    loadUserUsage();
+    loadArtifactsCount();
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("focus", handleWindowFocusSync);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        handleWindowFocusSync();
+      }
+    });
+  }
+}
+
 // ---------------- Client-Side Hybrid Storage & Caching ----------------
 function getUserIdentifier() {
   if (currentUser && currentUser.username && !currentUser.is_guest) {
@@ -2867,16 +2920,16 @@ async function loadConversations(autoSelectLatest = false) {
     if (currentProjectId) {
       url += `?project_id=${encodeURIComponent(currentProjectId)}`;
     }
-    const res = await fetch(url, { headers: authHeaders() });
+    let res = await fetch(url, { headers: authHeaders() });
     if (res.status === 401) {
       const meRes = await fetch("/api/auth/me", { headers: authHeaders() }).catch(() => null);
       if (!meRes || !meRes.ok) {
         signOut();
         return;
       }
-      return;
+      res = await fetch(url, { headers: authHeaders() });
     }
-    if (res.ok) {
+    if (res && res.ok) {
       const serverConvs = await res.json();
       let merged = Array.isArray(serverConvs) ? [...serverConvs] : [];
       const seen = new Set(merged.map((c) => c.id));
@@ -2943,8 +2996,8 @@ function renderConversationsList() {
     return;
   }
 
-  const pinned = filtered.filter((c) => c.is_pinned === 1 || c.is_pinned === true);
-  const recent = filtered.filter((c) => !c.is_pinned);
+  const pinned = filtered.filter((c) => isConvPinned(c));
+  const recent = filtered.filter((c) => !isConvPinned(c));
 
   if (pinned.length > 0) {
     const pinnedHeader = document.createElement("div");
@@ -2966,7 +3019,7 @@ function renderConversationsList() {
 }
 
 function createConversationItem(c) {
-  const isPinned = c.is_pinned === 1 || c.is_pinned === true;
+  const isPinned = isConvPinned(c);
   const item = document.createElement("div");
   item.className = `conversation-item ${c.id === currentConversationId ? "active" : ""} ${isPinned ? "pinned" : ""}`;
   item.dataset.id = c.id;
@@ -3032,8 +3085,8 @@ function createConversationItem(c) {
 
 function sortConversationsList() {
   conversations.sort((a, b) => {
-    const aPin = (a.is_pinned === 1 || a.is_pinned === true || a.is_pinned === "1") ? 1 : 0;
-    const bPin = (b.is_pinned === 1 || b.is_pinned === true || b.is_pinned === "1") ? 1 : 0;
+    const aPin = isConvPinned(a) ? 1 : 0;
+    const bPin = isConvPinned(b) ? 1 : 0;
     if (bPin !== aPin) return bPin - aPin;
     const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
     const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
@@ -3044,7 +3097,7 @@ function sortConversationsList() {
 async function togglePinConversation(id) {
   const conv = conversations.find((c) => c.id === id);
   if (!conv) return;
-  const currentStatus = conv.is_pinned === 1 || conv.is_pinned === true || conv.is_pinned === "1";
+  const currentStatus = isConvPinned(conv);
   const newStatus = !currentStatus;
 
   // Immediate optimistic update and cache persistence
@@ -3052,6 +3105,7 @@ async function togglePinConversation(id) {
   sortConversationsList();
   renderConversationsList();
   saveCachedConversations();
+  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
 
   try {
     const res = await fetch(`/api/conversations/${id}/pin`, {
@@ -3070,6 +3124,7 @@ async function togglePinConversation(id) {
         sortConversationsList();
         renderConversationsList();
         saveCachedConversations();
+        broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
       }
     }
   } catch (err) {
@@ -3160,7 +3215,9 @@ async function renameConversation(id, newTitle) {
       signOut();
       return;
     }
-    if (!res.ok && conv) {
+    if (res.ok) {
+      broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
+    } else if (conv) {
       conv.title = oldTitle;
       if (id === currentConversationId) chatTitleHeader.textContent = oldTitle;
       renderConversationsList();
@@ -3205,15 +3262,13 @@ async function switchConversation(id) {
 
   // Instantly hydrate messages from local cache so the chat never disappears!
   const cachedMsgs = getCachedMessages(id);
-  if (cachedMsgs && cachedMsgs.length > 0) {
+  if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
     messages = cachedMsgs;
     rebuildChatFromMessages();
   } else {
+    chatArea.innerHTML = "";
     messages = [];
-    showEmptyState();
   }
-
-  closeMobileSidebar();
   renderConversationsList();
 
   try {
@@ -3251,6 +3306,7 @@ async function deleteConversation(id) {
     }
     conversations = conversations.filter((c) => c.id !== id);
     saveCachedConversations();
+    broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
     try {
       localStorage.removeItem(`cortex_msgs_${id}`);
     } catch {}
@@ -3275,6 +3331,7 @@ async function archiveConversation(id, isArchived = true) {
   }
   saveCachedArchivedIds(archivedSet);
   saveCachedConversations();
+  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
 
   if (isArchived) {
     if (currentConversationId === id) {
@@ -4962,6 +5019,8 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     if (typeof syncFullWorkspaceState === "function") {
       syncFullWorkspaceState(false);
     }
+    broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: currentConversationId });
+    broadcastWorkspaceUpdate("USAGE_UPDATED");
   };
 
   const finishError = (detail) => {
@@ -7703,6 +7762,8 @@ async function showArtifactsView() {
   if (sidebarBtn) sidebarBtn.classList.add("active");
 
   closeMobileSidebar();
+  loadConversations(false);
+  loadUserUsage();
   await loadArtifacts();
 }
 
