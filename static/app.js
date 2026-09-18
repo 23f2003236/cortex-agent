@@ -145,6 +145,12 @@ const settingsUsername = document.getElementById("settingsUsername");
 const settingsEmail = document.getElementById("settingsEmail");
 const settingsThemeDarkBtn = document.getElementById("settingsThemeDarkBtn");
 const settingsThemeLightBtn = document.getElementById("settingsThemeLightBtn");
+const forceSyncWorkspaceBtn = document.getElementById("forceSyncWorkspaceBtn");
+const exportWorkspaceBtn = document.getElementById("exportWorkspaceBtn");
+const importWorkspaceBtn = document.getElementById("importWorkspaceBtn");
+const importWorkspaceFileInput = document.getElementById("importWorkspaceFileInput");
+const syncStatusBadge = document.getElementById("syncStatusBadge");
+const syncStatusText = document.getElementById("syncStatusText");
 
 // Image Lightbox Modal Elements
 const imageLightboxModal = document.getElementById("imageLightboxModal");
@@ -4945,6 +4951,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     if (toolsUsed.includes("remember")) {
       loadUserMemories();
     }
+    // Indestructible persistence: sync turn & usage to cloud
+    if (typeof syncFullWorkspaceState === "function") {
+      syncFullWorkspaceState(false);
+    }
   };
 
   const finishError = (detail) => {
@@ -5506,6 +5516,330 @@ document.querySelectorAll("#settingsAvatarGrid .avatar-preset-btn").forEach((btn
     }
   });
 });
+
+// ---------------- Local-First Workspace Preservation & Cloud Sync ----------------
+async function syncFullWorkspaceState(isManual = false) {
+  if (!currentUser) return;
+
+  const badgeEl = document.getElementById("syncStatusBadge") || syncStatusBadge;
+  const textEl = document.getElementById("syncStatusText") || syncStatusText;
+
+  if (badgeEl) badgeEl.classList.add("syncing");
+  if (textEl) textEl.textContent = "Syncing...";
+
+  try {
+    // 1. Gather all conversations from cache & memory
+    const cachedConvs = getCachedConversations();
+    const convMap = new Map();
+    (conversations || []).forEach((c) => { if (c && c.id) convMap.set(c.id, c); });
+    (cachedConvs || []).forEach((c) => { if (c && c.id && !convMap.has(c.id)) convMap.set(c.id, c); });
+    const allConvs = Array.from(convMap.values());
+
+    // 2. Gather messages across all conversations
+    const allMsgs = [];
+    for (const c of allConvs) {
+      if (!c.id) continue;
+      const msgs = getCachedMessages(c.id);
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        msgs.forEach((m) => {
+          if (m && m.content) {
+            allMsgs.push({
+              id: m.id,
+              conversation_id: c.id,
+              role: m.role || "user",
+              content: m.content,
+              tools_used: m.tools_used,
+              feedback: m.feedback || 0,
+              created_at: m.created_at || c.created_at,
+            });
+          }
+        });
+      }
+    }
+    // Also include currently active messages if currentConversationId
+    if (currentConversationId && Array.isArray(messages) && messages.length > 0) {
+      const activeIds = new Set(allMsgs.filter((m) => m.conversation_id === currentConversationId).map((m) => m.id || m.content));
+      messages.forEach((m) => {
+        const key = m.id || m.content;
+        if (!activeIds.has(key)) {
+          allMsgs.push({
+            id: m.id,
+            conversation_id: currentConversationId,
+            role: m.role || "user",
+            content: m.content,
+            tools_used: m.tools_used,
+            feedback: m.feedback || 0,
+          });
+        }
+      });
+    }
+
+    // 3. Gather memories
+    const mems = getCachedMemories();
+
+    // 4. Gather projects
+    let projs = userProjects;
+    if (!projs || !projs.length) {
+      try {
+        projs = JSON.parse(localStorage.getItem(getUserScopedKey("cortex_projects"))) || [];
+      } catch {
+        projs = [];
+      }
+    }
+
+    // 5. Gather monotonic token usage
+    const usage = getCachedUsage();
+    const tokensUsed = usage ? (Number(usage.tokens_used) || 0) : 0;
+
+    const payload = {
+      conversations: allConvs,
+      messages: allMsgs,
+      memories: mems,
+      projects: projs,
+      tokens_used: tokensUsed,
+    };
+
+    const res = await fetch("/api/sync/state", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (badgeEl) badgeEl.classList.remove("syncing");
+      if (textEl) textEl.textContent = "Synced";
+      if (isManual) {
+        showToast(`Workspace preserved in cloud! (${data.conversations || 0} chats, ${data.messages || 0} msgs synced)`);
+      }
+    } else if (res.status === 401) {
+      if (badgeEl) badgeEl.classList.remove("syncing");
+      if (textEl) textEl.textContent = "Session Expired";
+    } else {
+      if (badgeEl) badgeEl.classList.remove("syncing");
+      if (textEl) textEl.textContent = "Offline (Saved locally)";
+    }
+  } catch (err) {
+    console.warn("Continuous cloud sync deferred (local copy intact):", err);
+    if (badgeEl) badgeEl.classList.remove("syncing");
+    if (textEl) textEl.textContent = "Offline (Saved locally)";
+  }
+}
+
+async function exportFullWorkspace() {
+  if (!currentUser) {
+    showToast("Please sign in or continue to export your workspace.");
+    return;
+  }
+
+  showToast("Packaging full workspace backup...");
+  let exportData = null;
+
+  try {
+    const res = await fetch("/api/user/export-full", {
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      exportData = await res.json();
+    }
+  } catch (e) {
+    console.warn("Backend export failed, falling back to client cache:", e);
+  }
+
+  // Resilient fallback: If offline or backend is unreachable, construct from local storage!
+  if (!exportData || !exportData.conversations) {
+    const cachedConvs = getCachedConversations();
+    const allMsgs = {};
+    for (const c of cachedConvs) {
+      if (c.id) allMsgs[c.id] = getCachedMessages(c.id);
+    }
+    exportData = {
+      version: "cortex-v3-backup",
+      exported_at: new Date().toISOString(),
+      user: {
+        id: currentUser.id,
+        username: currentUser.username || "Explorer",
+        email: currentUser.email || "",
+      },
+      conversations: cachedConvs,
+      messages_by_conversation: allMsgs,
+      memories: getCachedMemories(),
+      projects: userProjects || [],
+      artifacts: getCachedArtifacts(),
+      usage: getCachedUsage() || { tokens_used: 0 },
+    };
+  }
+
+  try {
+    const jsonStr = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const userName = (currentUser.username || "cortex").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const filename = `cortex-workspace-${userName}-${dateStr}.json`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast("Workspace backup exported successfully! 📦");
+  } catch (err) {
+    console.error("Export error:", err);
+    showToast("Failed to generate export file.");
+  }
+}
+
+async function importFullWorkspace(file) {
+  if (!file) return;
+  if (!currentUser) {
+    showToast("Please sign in to restore a workspace backup.");
+    return;
+  }
+
+  try {
+    showToast("Reading backup file...");
+    const text = await file.text();
+    let importData;
+    try {
+      importData = JSON.parse(text);
+    } catch {
+      showToast("Invalid JSON file format.");
+      return;
+    }
+
+    if (!importData || typeof importData !== "object") {
+      showToast("Backup file is empty or corrupt.");
+      return;
+    }
+
+    showToast("Restoring workspace data to cloud & local storage...");
+
+    // 1. Post to backend
+    try {
+      await fetch("/api/user/import-full", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ data: importData }),
+      });
+    } catch (apiErr) {
+      console.warn("Backend import call deferred:", apiErr);
+    }
+
+    // 2. Also populate local storage cache
+    const importedConvs = Array.isArray(importData.conversations) ? importData.conversations : [];
+    if (importedConvs.length > 0) {
+      const existingConvs = getCachedConversations();
+      const seen = new Set(existingConvs.map((c) => c.id));
+      for (const c of importedConvs) {
+        if (!seen.has(c.id)) {
+          existingConvs.push(c);
+          seen.add(c.id);
+        }
+      }
+      conversations = existingConvs;
+      saveCachedConversations();
+    }
+
+    // Messages
+    const msgsByConv = importData.messages_by_conversation;
+    if (msgsByConv && typeof msgsByConv === "object") {
+      for (const [cid, mlist] of Object.entries(msgsByConv)) {
+        if (Array.isArray(mlist) && mlist.length > 0) {
+          saveCachedMessages(cid, mlist);
+        }
+      }
+    } else if (Array.isArray(importData.messages)) {
+      const grouped = {};
+      for (const m of importData.messages) {
+        if (m && m.conversation_id) {
+          if (!grouped[m.conversation_id]) grouped[m.conversation_id] = [];
+          grouped[m.conversation_id].push(m);
+        }
+      }
+      for (const [cid, mlist] of Object.entries(grouped)) {
+        saveCachedMessages(cid, mlist);
+      }
+    }
+
+    // Memories
+    if (Array.isArray(importData.memories) && importData.memories.length > 0) {
+      const existingMems = getCachedMemories();
+      const seenCont = new Set(existingMems.map((m) => (m.content || "").toLowerCase().trim()));
+      for (const m of importData.memories) {
+        const ct = (m.content || "").toLowerCase().trim();
+        if (ct && !seenCont.has(ct)) {
+          existingMems.push(m);
+          seenCont.add(ct);
+        }
+      }
+      saveCachedMemories(existingMems);
+    }
+
+    // Artifacts
+    if (Array.isArray(importData.artifacts) && importData.artifacts.length > 0) {
+      const existingArts = getCachedArtifacts();
+      const seenArtKeys = new Set(existingArts.map((a) => a.id || a.filename));
+      for (const a of importData.artifacts) {
+        const k = a.id || a.filename;
+        if (k && !seenArtKeys.has(k)) {
+          existingArts.push(a);
+          seenArtKeys.add(k);
+        }
+      }
+      saveCachedArtifactsList(existingArts);
+    }
+
+    // Projects
+    if (Array.isArray(importData.projects) && importData.projects.length > 0) {
+      userProjects = importData.projects;
+      try {
+        localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+      } catch {}
+    }
+
+    // Monotonic Token Usage
+    if (importData.usage && typeof importData.usage.tokens_used === "number") {
+      saveCachedUsage(importData.usage.tokens_used, importData.usage.tokens_limit || 300000);
+    }
+
+    // Refresh UI
+    await loadProjects();
+    await loadConversations(false);
+    loadUserMemories();
+    loadArtifactsCount();
+    loadUserUsage();
+
+    if (conversations && conversations.length > 0) {
+      await switchConversation(conversations[0].id);
+    }
+
+    showToast("Workspace successfully restored! All chats and memories recovered. 🎉");
+  } catch (err) {
+    console.error("Import error:", err);
+    showToast("Failed to restore workspace: " + (err.message || "Unknown error"));
+  }
+}
+
+// Bind Workspace Preservation & Backup Listeners
+forceSyncWorkspaceBtn?.addEventListener("click", () => syncFullWorkspaceState(true));
+exportWorkspaceBtn?.addEventListener("click", exportFullWorkspace);
+importWorkspaceBtn?.addEventListener("click", () => importWorkspaceFileInput?.click());
+importWorkspaceFileInput?.addEventListener("change", (e) => {
+  const f = e.target.files?.[0];
+  if (f) importFullWorkspace(f);
+  e.target.value = "";
+});
+
+// Periodic background self-healing sync (every 60 seconds)
+setInterval(() => {
+  if (currentUser) {
+    syncFullWorkspaceState(false);
+  }
+}, 60000);
 
 // ---------------- Danger Zone: Permanent Account Deletion ----------------
 const deleteAccountBtn = document.getElementById("deleteAccountBtn");
@@ -6209,6 +6543,9 @@ async function handleAuthSubmit(e) {
     loadUserMemories();
     loadArtifactsCount();
     loadUserUsage();
+    if (typeof syncFullWorkspaceState === "function") {
+      syncFullWorkspaceState(false);
+    }
 
     // Auto-restore active or recent conversation so chats never appear missing
     const activeStored = localStorage.getItem("cortex_active_conv");
@@ -6319,6 +6656,9 @@ async function checkAuth() {
       loadUserMemories();
       loadArtifactsCount();
       loadUserUsage();
+      if (typeof syncFullWorkspaceState === "function") {
+        syncFullWorkspaceState(false);
+      }
 
       if (targetConvId) {
         await switchConversation(targetConvId);

@@ -1061,6 +1061,63 @@ class DistributedRateLimiter:
           </div>
         </div>
 
+        <!-- Data Preservation & Cloud Sync -->
+        <div class="settings-section settings-backup-section">
+          <div class="settings-section-header-flex">
+            <div>
+              <label class="settings-section-title">Workspace Data & Preservation</label>
+              <p class="settings-section-desc">Zero-data-loss continuous sync and 100% offline portability across deployments</p>
+            </div>
+            <div id="syncStatusBadge" class="sync-status-badge" title="Continuous sync status">
+              <span class="sync-status-dot"></span>
+              <span class="sync-status-text" id="syncStatusText">Synced</span>
+            </div>
+          </div>
+          <div class="backup-actions-grid">
+            <div class="backup-action-card">
+              <div class="backup-action-info">
+                <span class="backup-action-title">Cloud Self-Healing Sync</span>
+                <span class="backup-action-desc">Force sync local workspace cache, artifacts, memories, and tokens with cloud database now.</span>
+              </div>
+              <button type="button" id="forceSyncWorkspaceBtn" class="btn-backup-action btn-sync-now">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+                <span>Sync Now</span>
+              </button>
+            </div>
+            <div class="backup-action-card">
+              <div class="backup-action-info">
+                <span class="backup-action-title">Export Workspace Backup</span>
+                <span class="backup-action-desc">Download a complete .json archive of all your chats, messages, memories, projects, and token records.</span>
+              </div>
+              <button type="button" id="exportWorkspaceBtn" class="btn-backup-action btn-export">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Export Backup</span>
+              </button>
+            </div>
+            <div class="backup-action-card">
+              <div class="backup-action-info">
+                <span class="backup-action-title">Import & Restore Workspace</span>
+                <span class="backup-action-desc">Restore an entire workspace from a backup file. Existing data is merged non-destructively.</span>
+              </div>
+              <input type="file" id="importWorkspaceFileInput" accept=".json,application/json" style="display: none;" />
+              <button type="button" id="importWorkspaceBtn" class="btn-backup-action btn-import">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>Import Backup</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Danger Zone: Account Deletion -->
         <div class="settings-section settings-danger-section">
           <label class="settings-section-title danger-title">Danger Zone</label>

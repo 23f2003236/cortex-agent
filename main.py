@@ -2910,6 +2910,49 @@ def delete_user_artifact_endpoint(artifact_key: str, current_user: dict = Depend
     return {"ok": success, "artifact_key": artifact_key}
 
 
+# ---------------- Local-First Full Workspace State Synchronization & Portability ----------------
+
+class SyncStatePayload(BaseModel):
+    conversations: Optional[list[dict[str, Any]]] = None
+    messages: Optional[list[dict[str, Any]]] = None
+    memories: Optional[list[dict[str, Any]]] = None
+    projects: Optional[list[dict[str, Any]]] = None
+    tokens_used: Optional[int] = None
+
+
+@app.post("/api/sync/state")
+def sync_user_state_endpoint(payload: SyncStatePayload, current_user: dict = Depends(get_current_user)):
+    """Local-First state synchronization endpoint: merges client-side history into
+    the current database container, ensuring indestructible persistence across deployments.
+    """
+    res = database.sync_full_user_state(
+        user_id=current_user["id"],
+        conversations_data=payload.conversations,
+        messages_data=payload.messages,
+        memories_data=payload.memories,
+        projects_data=payload.projects,
+        daily_usage_tokens=payload.tokens_used,
+    )
+    return res
+
+
+@app.get("/api/user/export-full")
+def export_full_workspace_endpoint(current_user: dict = Depends(get_current_user)):
+    """Export complete workspace JSON backup for 100% data portability."""
+    return database.export_full_user_state(current_user["id"])
+
+
+class ImportWorkspacePayload(BaseModel):
+    data: dict[str, Any]
+
+
+@app.post("/api/user/import-full")
+def import_full_workspace_endpoint(payload: ImportWorkspacePayload, current_user: dict = Depends(get_current_user)):
+    """Restore entire workspace from a user backup JSON payload."""
+    res = database.import_full_user_state(current_user["id"], payload.data)
+    return res
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     """Server-Sent Events stream. Emits:

@@ -849,6 +849,139 @@ class TestProductionReadiness(unittest.TestCase):
         me_res = self.client.get("/api/auth/me")
         self.assertEqual(me_res.status_code, 401)
 
+    # ---------------- 30. Local-First Workspace Sync & Data Portability ----------------
+
+    def test_sync_state_reconstitutes_workspace(self):
+        """Verify POST /api/sync/state reconstitutes all conversations, messages, memories,
+        projects, and monotonic token usage on freshly deployed containers."""
+        login_res = self.client.post(
+            "/api/auth/login",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        cid = str(uuid.uuid4())
+        mid1 = str(uuid.uuid4())
+        mid2 = str(uuid.uuid4())
+        pid = str(uuid.uuid4())
+        mem_id = str(uuid.uuid4())
+
+        payload = {
+            "conversations": [
+                {
+                    "id": cid,
+                    "title": "Synced AI Engineering",
+                    "project_id": pid,
+                    "is_pinned": 1,
+                    "is_archived": 0,
+                }
+            ],
+            "messages": [
+                {
+                    "id": mid1,
+                    "conversation_id": cid,
+                    "role": "user",
+                    "content": "What is local-first architecture?",
+                },
+                {
+                    "id": mid2,
+                    "conversation_id": cid,
+                    "role": "assistant",
+                    "content": "Local-first architecture ensures client data sovereignty and instantaneous response.",
+                },
+            ],
+            "memories": [
+                {
+                    "id": mem_id,
+                    "content": "User prefers FastAPI and SQLite",
+                    "category": "tech_stack",
+                }
+            ],
+            "projects": [
+                {
+                    "id": pid,
+                    "name": "Cortex Core Engine",
+                    "description": "Multi-agent autonomous intelligence",
+                }
+            ],
+            "tokens_used": 14250,
+        }
+
+        sync_res = self.client.post("/api/sync/state", json=payload)
+        self.assertEqual(sync_res.status_code, 200)
+        data = sync_res.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["conversations"], 1)
+        self.assertEqual(data["messages"], 2)
+        self.assertEqual(data["memories"], 1)
+        self.assertEqual(data["projects"], 1)
+        self.assertGreaterEqual(data["tokens_used"], 14250)
+
+        # Verify DB queries reflect reconstituted state
+        convs = database.get_conversations(self.user["id"])
+        self.assertEqual(len(convs), 1)
+        self.assertEqual(convs[0]["id"], cid)
+        self.assertEqual(convs[0]["title"], "Synced AI Engineering")
+
+        msgs = database.get_messages(cid, user_id=self.user["id"])
+        self.assertEqual(len(msgs), 2)
+
+        mems = database.get_memories(self.user["id"])
+        self.assertEqual(len(mems), 1)
+        self.assertEqual(mems[0]["content"], "User prefers FastAPI and SQLite")
+
+        projs = database.get_projects(self.user["id"])
+        self.assertEqual(len(projs), 1)
+        self.assertEqual(projs[0]["name"], "Cortex Core Engine")
+
+    def test_export_and_import_full_workspace(self):
+        """Verify full round-trip JSON export and import of workspace state."""
+        login_res = self.client.post(
+            "/api/auth/login",
+            json={"username": self.test_username, "password": "SecurePassword123!"},
+        )
+        self.assertEqual(login_res.status_code, 200)
+
+        # Seed data
+        conv = database.create_conversation(user_id=self.user["id"], title="Export Test Chat")
+        database.add_message(conv["id"], "user", "Export my data")
+        database.add_message(conv["id"], "assistant", "Exporting complete workspace JSON")
+        database.add_memory(user_id=self.user["id"], content="User loves dark mode", category="ui")
+
+        # 1. Export
+        export_res = self.client.get("/api/user/export-full")
+        self.assertEqual(export_res.status_code, 200)
+        export_json = export_res.json()
+
+        self.assertEqual(export_json["version"], "cortex-v3-backup")
+        self.assertIn("exported_at", export_json)
+        self.assertEqual(export_json["user"]["id"], self.user["id"])
+        self.assertGreaterEqual(len(export_json["conversations"]), 1)
+        self.assertIn(conv["id"], export_json["messages_by_conversation"])
+        self.assertGreaterEqual(len(export_json["memories"]), 1)
+
+        # 2. Modify backup title and test import
+        new_conv_id = str(uuid.uuid4())
+        export_json["conversations"].append({
+            "id": new_conv_id,
+            "title": "Imported Chat After Deployment",
+            "created_at": "2026-09-18T00:00:00Z",
+            "updated_at": "2026-09-18T00:00:00Z",
+        })
+        export_json["messages_by_conversation"][new_conv_id] = [
+            {"id": str(uuid.uuid4()), "role": "user", "content": "Hello from restored backup"}
+        ]
+
+        import_res = self.client.post("/api/user/import-full", json={"data": export_json})
+        self.assertEqual(import_res.status_code, 200)
+        import_data = import_res.json()
+        self.assertTrue(import_data["ok"])
+
+        # Verify newly imported chat is now in user's conversations
+        conv_ids = [c["id"] for c in database.get_conversations(self.user["id"])]
+        self.assertIn(new_conv_id, conv_ids)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

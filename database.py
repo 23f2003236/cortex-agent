@@ -1663,6 +1663,235 @@ def get_deleted_artifact_keys(user_id: str) -> set[str]:
         return {r["artifact_key"] for r in rows}
 
 
+# ---------------- Local-First Full Workspace State Synchronization & Persistence ----------------
+
+def sync_full_user_state(
+    user_id: str,
+    conversations_data: Optional[list[dict[str, Any]]] = None,
+    messages_data: Optional[list[dict[str, Any]]] = None,
+    memories_data: Optional[list[dict[str, Any]]] = None,
+    projects_data: Optional[list[dict[str, Any]]] = None,
+    daily_usage_tokens: Optional[int] = None,
+) -> dict[str, Any]:
+    """Atomically synchronize and restore full user state (conversations, messages,
+    memories, projects, token usage) into the current database instance.
+    Guarantees that newly deployed serverless containers or instances immediately
+    reconstitute the user's complete history without data loss.
+    """
+    if not user_id:
+        return {"ok": False, "detail": "User ID required"}
+
+    now = _utc_now_iso()
+    synced_convs = 0
+    synced_msgs = 0
+    synced_mems = 0
+    synced_projs = 0
+
+    with get_connection() as conn:
+        _begin_immediate(conn)
+
+        # 1. Reconstitute projects first (foreign key dependency for conversations)
+        if projects_data and isinstance(projects_data, list):
+            for p in projects_data:
+                if not isinstance(p, dict) or not p.get("id") or not p.get("name"):
+                    continue
+                pid = str(p["id"]).strip()
+                pname = str(p["name"]).strip()
+                pdesc = str(p.get("description") or "").strip()
+                pprompt = str(p.get("system_prompt") or "").strip()
+                pcreated = str(p.get("created_at") or now).strip()
+                pupdated = str(p.get("updated_at") or now).strip()
+                conn.execute(
+                    """
+                    INSERT INTO projects (id, name, description, system_prompt, user_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        description = excluded.description,
+                        system_prompt = excluded.system_prompt,
+                        updated_at = MAX(projects.updated_at, excluded.updated_at)
+                    """,
+                    (pid, pname, pdesc, pprompt, user_id, pcreated, pupdated),
+                )
+                synced_projs += 1
+
+        # 2. Reconstitute conversations
+        if conversations_data and isinstance(conversations_data, list):
+            for c in conversations_data:
+                if not isinstance(c, dict) or not c.get("id"):
+                    continue
+                cid = str(c["id"]).strip()
+                ctitle = str(c.get("title") or "New Chat").strip()
+                ccreated = str(c.get("created_at") or now).strip()
+                cupdated = str(c.get("updated_at") or now).strip()
+                cpinned = 1 if c.get("is_pinned") else 0
+                carchived = 1 if c.get("is_archived") else 0
+                cproj = str(c.get("project_id")).strip() if c.get("project_id") else None
+
+                conn.execute(
+                    """
+                    INSERT INTO conversations (id, title, created_at, updated_at, user_id, project_id, is_pinned, is_archived)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        title = excluded.title,
+                        updated_at = MAX(conversations.updated_at, excluded.updated_at),
+                        is_pinned = MAX(conversations.is_pinned, excluded.is_pinned),
+                        is_archived = excluded.is_archived,
+                        project_id = COALESCE(excluded.project_id, conversations.project_id),
+                        user_id = COALESCE(conversations.user_id, excluded.user_id)
+                    """,
+                    (cid, ctitle, ccreated, cupdated, user_id, cproj, cpinned, carchived),
+                )
+                synced_convs += 1
+
+        # 3. Reconstitute messages
+        if messages_data and isinstance(messages_data, list):
+            for m in messages_data:
+                if not isinstance(m, dict) or not m.get("conversation_id") or not m.get("content"):
+                    continue
+                mid = str(m.get("id") or uuid.uuid4()).strip()
+                conv_id = str(m["conversation_id"]).strip()
+                role = str(m.get("role") or "user").strip()
+                content = str(m.get("content") or "").strip()
+                tools = m.get("tools_used")
+                tools_json = json.dumps(tools) if isinstance(tools, list) else None
+                feedback = int(m.get("feedback") or 0)
+                mcreated = str(m.get("created_at") or now).strip()
+
+                # Ensure parent conversation exists
+                conv_exists = conn.execute("SELECT id FROM conversations WHERE id = ?", (conv_id,)).fetchone()
+                if not conv_exists:
+                    conn.execute(
+                        "INSERT INTO conversations (id, title, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?)",
+                        (conv_id, "New Chat", mcreated, mcreated, user_id),
+                    )
+
+                conn.execute(
+                    """
+                    INSERT INTO messages (id, conversation_id, role, content, tools_used, feedback, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        content = excluded.content,
+                        tools_used = COALESCE(excluded.tools_used, messages.tools_used),
+                        feedback = excluded.feedback
+                    """,
+                    (mid, conv_id, role, content, tools_json, feedback, mcreated),
+                )
+                synced_msgs += 1
+
+        # 4. Reconstitute memories
+        if memories_data and isinstance(memories_data, list):
+            for mem in memories_data:
+                if not isinstance(mem, dict) or not mem.get("content"):
+                    continue
+                mem_id = str(mem.get("id") or uuid.uuid4()).strip()
+                content = str(mem["content"]).strip()
+                cat = str(mem.get("category") or "preference").strip()
+                mcreated = str(mem.get("created_at") or now).strip()
+                mupdated = str(mem.get("updated_at") or now).strip()
+
+                conn.execute(
+                    """
+                    INSERT INTO memories (id, user_id, content, category, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        content = excluded.content,
+                        category = excluded.category,
+                        updated_at = MAX(memories.updated_at, excluded.updated_at)
+                    """,
+                    (mem_id, user_id, content, cat, mcreated, mupdated),
+                )
+                synced_mems += 1
+
+        conn.commit()
+
+    # 5. Monotonic daily token usage synchronization
+    usage = get_daily_usage(user_id)
+    if daily_usage_tokens is not None and daily_usage_tokens > 0:
+        usage = sync_daily_tokens_used(user_id, daily_usage_tokens)
+
+    return {
+        "ok": True,
+        "synced": True,
+        "conversations": synced_convs,
+        "messages": synced_msgs,
+        "memories": synced_mems,
+        "projects": synced_projs,
+        "tokens_used": usage.get("tokens_used", 0),
+    }
+
+
+def export_full_user_state(user_id: str) -> dict[str, Any]:
+    """Export 100% of a user's workspace (conversations, messages, artifacts,
+    memories, projects, token metrics) for offline portability or backup."""
+    if not user_id:
+        return {}
+
+    user = get_user_by_id(user_id) or {}
+    convs = get_conversations(user_id=user_id, is_archived=False)
+    archived_convs = get_conversations(user_id=user_id, is_archived=True)
+    all_convs = convs + archived_convs
+
+    messages_by_conv: dict[str, list[dict[str, Any]]] = {}
+    for c in all_convs:
+        cid = c["id"]
+        messages_by_conv[cid] = get_messages(cid, user_id=user_id)
+
+    memories = get_memories(user_id)
+    projects = get_projects(user_id)
+    artifacts = get_user_artifacts(user_id)
+    usage = get_daily_usage(user_id)
+
+    return {
+        "version": "cortex-v3-backup",
+        "exported_at": _utc_now_iso(),
+        "user": {
+            "id": user_id,
+            "username": user.get("username", "Explorer"),
+            "email": user.get("email", ""),
+        },
+        "conversations": all_convs,
+        "messages_by_conversation": messages_by_conv,
+        "memories": memories,
+        "projects": projects,
+        "artifacts": artifacts,
+        "usage": usage,
+    }
+
+
+def import_full_user_state(user_id: str, import_data: dict[str, Any]) -> dict[str, Any]:
+    """Atomically import an entire workspace backup into the user account."""
+    if not user_id or not isinstance(import_data, dict):
+        return {"ok": False, "detail": "Invalid backup data"}
+
+    convs = import_data.get("conversations") or []
+    msgs_flat: list[dict[str, Any]] = []
+
+    # Support both flat messages list or messages_by_conversation map
+    msgs_by_conv = import_data.get("messages_by_conversation")
+    if isinstance(msgs_by_conv, dict):
+        for cid, mlist in msgs_by_conv.items():
+            if isinstance(mlist, list):
+                for m in mlist:
+                    if isinstance(m, dict):
+                        m["conversation_id"] = cid
+                        msgs_flat.append(m)
+    elif isinstance(import_data.get("messages"), list):
+        msgs_flat = import_data["messages"]
+
+    mems = import_data.get("memories") or []
+    projs = import_data.get("projects") or []
+    tokens = import_data.get("usage", {}).get("tokens_used", 0) if isinstance(import_data.get("usage"), dict) else None
+
+    return sync_full_user_state(
+        user_id=user_id,
+        conversations_data=convs,
+        messages_data=msgs_flat,
+        memories_data=mems,
+        projects_data=projs,
+        daily_usage_tokens=tokens,
+    )
+
 
 # Automatically initialize schema on import
 init_db()
