@@ -94,15 +94,21 @@ const tabSignIn = document.getElementById("tabSignIn");
 const tabRegister = document.getElementById("tabRegister");
 const authErrorAlert = document.getElementById("authErrorAlert");
 const authForm = document.getElementById("authForm");
+const authIdentifier = document.getElementById("authIdentifier");
+const authIdentifierLabel = document.getElementById("authIdentifierLabel");
+const identifierGroup = document.getElementById("identifierGroup");
+const registerUsernameGroup = document.getElementById("registerUsernameGroup");
 const authUsername = document.getElementById("authUsername");
-const emailGroup = document.getElementById("emailGroup");
-const authEmail = document.getElementById("authEmail");
 const authPassword = document.getElementById("authPassword");
+const authRememberMe = document.getElementById("authRememberMe");
+const authRememberRow = document.getElementById("authRememberRow");
+const passwordRequirementsList = document.getElementById("passwordRequirementsList");
+const reqMinLength = document.getElementById("reqMinLength");
+const reqLetter = document.getElementById("reqLetter");
+const reqNumber = document.getElementById("reqNumber");
+const reqSymbol = document.getElementById("reqSymbol");
 const authSubmitBtn = document.getElementById("authSubmitBtn");
 const authTogglePasswordBtn = document.getElementById("authTogglePasswordBtn");
-const passwordStrengthWrap = document.getElementById("passwordStrengthWrap");
-const passwordStrengthBar = document.getElementById("passwordStrengthBar");
-const passwordStrengthText = document.getElementById("passwordStrengthText");
 const authForgotToggleBtn = document.getElementById("authForgotToggleBtn");
 const authDemoBtn = document.getElementById("authDemoBtn");
 const googleAuthBtn = document.getElementById("googleAuthBtn");
@@ -6451,6 +6457,32 @@ function showChatApp() {
   }
 }
 
+function updatePasswordRequirements(password = "") {
+  const p = password || "";
+  const hasMinLength = p.length >= 8;
+  const hasLetter = /[a-zA-Z]/.test(p);
+  const hasNumber = /[0-9]/.test(p);
+  const hasSymbol = /[^a-zA-Z0-9]/.test(p);
+
+  const updateItem = (el, valid, text) => {
+    if (!el) return;
+    if (valid) {
+      el.classList.add("valid");
+      el.innerHTML = `<span class="req-dot">✓</span> ${text}`;
+    } else {
+      el.classList.remove("valid");
+      el.innerHTML = `<span class="req-dot">○</span> ${text}`;
+    }
+  };
+
+  updateItem(reqMinLength, hasMinLength, "Minimum 8 characters");
+  updateItem(reqLetter, hasLetter, "Letters (a-z, A-Z)");
+  updateItem(reqNumber, hasNumber, "Numbers (0-9)");
+  updateItem(reqSymbol, hasSymbol, "Special symbols (!@#$%^&*)");
+
+  return hasMinLength && hasLetter && hasNumber && hasSymbol;
+}
+
 function openAuthModal(mode = "login") {
   authMode = mode;
   if (!authModal) return;
@@ -6459,13 +6491,20 @@ function openAuthModal(mode = "login") {
     authErrorAlert.style.display = "none";
     authErrorAlert.innerHTML = "";
   }
+
   if (mode === "login") {
     tabSignIn?.classList.add("active");
     tabRegister?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Welcome back";
     if (authModalSubtitle) authModalSubtitle.textContent = "Sign in to resume your private workspace & past chats";
-    if (emailGroup) emailGroup.style.display = "none";
-    if (passwordStrengthWrap) passwordStrengthWrap.style.display = "none";
+    if (authIdentifierLabel) authIdentifierLabel.textContent = "Email or Username";
+    if (authIdentifier) {
+      authIdentifier.placeholder = "you@example.com or username";
+      authIdentifier.type = "text";
+    }
+    if (registerUsernameGroup) registerUsernameGroup.style.display = "none";
+    if (passwordRequirementsList) passwordRequirementsList.style.display = "none";
+    if (authRememberRow) authRememberRow.style.display = "flex";
     if (authSubmitBtn) authSubmitBtn.textContent = "Sign In";
     if (authForgotToggleBtn) {
       authForgotToggleBtn.style.display = "inline-block";
@@ -6476,11 +6515,17 @@ function openAuthModal(mode = "login") {
     tabSignIn?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Create Free Account";
     if (authModalSubtitle) authModalSubtitle.textContent = "Start with 300,000 free tokens & your private workspace";
-    if (emailGroup) emailGroup.style.display = "flex";
-    if (passwordStrengthWrap) {
-      passwordStrengthWrap.style.display = "flex";
-      updatePasswordStrength(authPassword?.value || "");
+    if (authIdentifierLabel) authIdentifierLabel.textContent = "Email Address";
+    if (authIdentifier) {
+      authIdentifier.placeholder = "you@example.com";
+      authIdentifier.type = "email";
     }
+    if (registerUsernameGroup) registerUsernameGroup.style.display = "flex";
+    if (passwordRequirementsList) {
+      passwordRequirementsList.style.display = "flex";
+      updatePasswordRequirements(authPassword?.value || "");
+    }
+    if (authRememberRow) authRememberRow.style.display = "flex";
     if (authSubmitBtn) authSubmitBtn.textContent = "Create Account";
     if (authForgotToggleBtn) {
       authForgotToggleBtn.style.display = "none";
@@ -6489,19 +6534,26 @@ function openAuthModal(mode = "login") {
     tabSignIn?.classList.remove("active");
     tabRegister?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Reset Password & Sign In";
-    if (authModalSubtitle) authModalSubtitle.textContent = "Enter your username and new password to immediately restore access";
-    if (emailGroup) emailGroup.style.display = "none";
-    if (passwordStrengthWrap) {
-      passwordStrengthWrap.style.display = "flex";
-      updatePasswordStrength(authPassword?.value || "");
+    if (authModalSubtitle) authModalSubtitle.textContent = "Enter your email or username and a new strong password";
+    if (authIdentifierLabel) authIdentifierLabel.textContent = "Email or Username";
+    if (authIdentifier) {
+      authIdentifier.placeholder = "you@example.com or username";
+      authIdentifier.type = "text";
     }
+    if (registerUsernameGroup) registerUsernameGroup.style.display = "none";
+    if (passwordRequirementsList) {
+      passwordRequirementsList.style.display = "flex";
+      updatePasswordRequirements(authPassword?.value || "");
+    }
+    if (authRememberRow) authRememberRow.style.display = "flex";
     if (authSubmitBtn) authSubmitBtn.textContent = "Reset Password & Sign In";
     if (authForgotToggleBtn) {
       authForgotToggleBtn.style.display = "inline-block";
       authForgotToggleBtn.textContent = "Back to Sign In";
     }
   }
-  setTimeout(() => authUsername?.focus(), 60);
+
+  setTimeout(() => authIdentifier?.focus(), 60);
 }
 
 function closeAuthModal() {
@@ -6512,15 +6564,16 @@ function closeAuthModal() {
     authErrorAlert.style.display = "none";
     authErrorAlert.innerHTML = "";
   }
-  if (passwordStrengthWrap) passwordStrengthWrap.style.display = "none";
+  if (passwordRequirementsList) passwordRequirementsList.style.display = "none";
   if (authPassword) authPassword.type = "password";
 }
 
-async function executeResetAndLogin(username, password) {
-  if (!username || !password) return;
-  if (password.length < 6) {
+async function executeResetAndLogin(identifier, password, rememberMe = true) {
+  if (!identifier || !password) return;
+  const isComplex = updatePasswordRequirements(password);
+  if (!isComplex) {
     if (authErrorAlert) {
-      authErrorAlert.innerHTML = `<div class="auth-error-text">Password must be at least 6 characters long.</div>`;
+      authErrorAlert.innerHTML = `<div class="auth-error-text">Password must be at least 8 characters and contain letters, numbers, and special symbols (!@#$%^&*).</div>`;
       authErrorAlert.style.display = "block";
     }
     authPassword?.focus();
@@ -6536,7 +6589,7 @@ async function executeResetAndLogin(username, password) {
     const res = await fetch("/api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Client": "true" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email_or_username: identifier, password, remember_me: rememberMe }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -6581,22 +6634,43 @@ async function executeResetAndLogin(username, password) {
   } finally {
     if (authSubmitBtn) {
       authSubmitBtn.disabled = false;
-      authSubmitBtn.textContent = authMode === "register" ? "Get Started" : (authMode === "reset" ? "Reset Password & Sign In" : "Sign In");
+      authSubmitBtn.textContent = authMode === "register" ? "Create Account" : (authMode === "reset" ? "Reset Password & Sign In" : "Sign In");
     }
   }
 }
 
 async function handleAuthSubmit(e) {
   e.preventDefault();
-  const username = authUsername ? authUsername.value.trim() : "";
+  const identifier = authIdentifier ? authIdentifier.value.trim() : "";
   const password = authPassword ? authPassword.value : "";
-  const email = authEmail?.value?.trim() || "";
+  const rememberMe = authRememberMe ? authRememberMe.checked : true;
+  const username = authUsername ? authUsername.value.trim() : "";
 
-  if (!username || !password) return;
+  if (!identifier || !password) return;
 
   if (authMode === "reset") {
-    await executeResetAndLogin(username, password);
+    await executeResetAndLogin(identifier, password, rememberMe);
     return;
+  }
+
+  if (authMode === "register") {
+    if (!identifier.includes("@") || identifier.length < 5) {
+      if (authErrorAlert) {
+        authErrorAlert.innerHTML = `<div class="auth-error-text">Please enter a valid email address (e.g. you@example.com).</div>`;
+        authErrorAlert.style.display = "block";
+      }
+      authIdentifier?.focus();
+      return;
+    }
+    const isComplex = updatePasswordRequirements(password);
+    if (!isComplex) {
+      if (authErrorAlert) {
+        authErrorAlert.innerHTML = `<div class="auth-error-text">Password must be at least 8 characters and include letters, numbers, and special symbols (!@#$%^&*).</div>`;
+        authErrorAlert.style.display = "block";
+      }
+      authPassword?.focus();
+      return;
+    }
   }
 
   try {
@@ -6611,8 +6685,8 @@ async function handleAuthSubmit(e) {
 
     const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
     const bodyPayload = authMode === "register"
-      ? { username, password, email }
-      : { username, password };
+      ? { email: identifier, username: username || undefined, password, remember_me: rememberMe }
+      : { email_or_username: identifier, password, remember_me: rememberMe };
 
     const res = await fetch(endpoint, {
       method: "POST",
@@ -6664,13 +6738,34 @@ async function handleAuthSubmit(e) {
     if (authErrorAlert) {
       const isAuthFail = authMode === "login" && (
         err.message.includes("Invalid username or password") ||
+        err.message.includes("Invalid email") ||
         err.message.includes("401") ||
         err.message.includes("Authentication failed")
       );
 
-      if (isAuthFail) {
+      const isEmailConflict = authMode === "register" && (
+        err.message.includes("already exists") ||
+        err.message.includes("409")
+      );
+
+      if (isEmailConflict) {
         authErrorAlert.innerHTML = `
-          <div class="auth-error-text">Invalid username or password.</div>
+          <div class="auth-error-text">${escapeHtml(err.message)}</div>
+          <div class="auth-reset-callout">
+            <span>Already have an account?</span>
+            <button type="button" id="authSwitchToLoginBtn" class="btn-auth-inline-reset">
+              Sign In Instead &rarr;
+            </button>
+          </div>
+        `;
+        authErrorAlert.style.display = "block";
+        document.getElementById("authSwitchToLoginBtn")?.addEventListener("click", () => {
+          openAuthModal("login");
+          if (authIdentifier) authIdentifier.value = identifier;
+        });
+      } else if (isAuthFail) {
+        authErrorAlert.innerHTML = `
+          <div class="auth-error-text">Invalid email/username or password.</div>
           <div class="auth-reset-callout">
             <span>Forgot or need to update your password?</span>
             <button type="button" id="authInlineResetBtn" class="btn-auth-inline-reset">
@@ -6684,14 +6779,14 @@ async function handleAuthSubmit(e) {
         if (inlineBtn) {
           inlineBtn.addEventListener("click", () => {
             const currentPass = authPassword?.value || "";
-            if (currentPass.length >= 6) {
-              executeResetAndLogin(username, currentPass);
+            if (currentPass.length >= 8 && updatePasswordRequirements(currentPass)) {
+              executeResetAndLogin(identifier, currentPass, rememberMe);
             } else {
               openAuthModal("reset");
-              if (authUsername) authUsername.value = username;
+              if (authIdentifier) authIdentifier.value = identifier;
               if (authPassword) {
                 authPassword.focus();
-                authPassword.placeholder = "Enter new password (min 6 chars)";
+                authPassword.placeholder = "Enter new password (min 8 chars, letters, numbers, symbols)";
               }
             }
           });
@@ -6704,7 +6799,7 @@ async function handleAuthSubmit(e) {
   } finally {
     if (authSubmitBtn) {
       authSubmitBtn.disabled = false;
-      authSubmitBtn.textContent = authMode === "register" ? "Get Started" : (authMode === "reset" ? "Reset Password & Sign In" : "Sign In");
+      authSubmitBtn.textContent = authMode === "register" ? "Create Account" : (authMode === "reset" ? "Reset Password & Sign In" : "Sign In");
     }
   }
 }
@@ -6991,7 +7086,8 @@ function updatePasswordStrength(password) {
 }
 
 authPassword?.addEventListener("input", (e) => {
-  if (authMode === "register") {
+  if (authMode === "register" || authMode === "reset") {
+    updatePasswordRequirements(e.target.value);
     updatePasswordStrength(e.target.value);
   }
 });

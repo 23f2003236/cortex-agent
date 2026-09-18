@@ -494,20 +494,25 @@ def get_client_ip(request: Request) -> str:
 
 
 class RegisterPayload(BaseModel):
-    username: str = Field(min_length=3, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=128)
     password: str = Field(min_length=8, max_length=128)
-    email: Optional[str] = None
+    username: Optional[str] = Field(default=None, max_length=64)
 
 
 class LoginPayload(BaseModel):
-    username: str = Field(min_length=1, max_length=32)
+    username: Optional[str] = Field(default=None, max_length=128)
+    email: Optional[str] = Field(default=None, max_length=128)
+    email_or_username: Optional[str] = Field(default=None, max_length=128)
     password: str = Field(min_length=1, max_length=128)
+    remember_me: Optional[bool] = True
     force_reset: Optional[bool] = False
 
 
 class ResetPasswordPayload(BaseModel):
-    username: str = Field(min_length=1, max_length=32)
-    password: str = Field(min_length=6, max_length=128)
+    username: Optional[str] = Field(default=None, max_length=128)
+    email: Optional[str] = Field(default=None, max_length=128)
+    email_or_username: Optional[str] = Field(default=None, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
 
 
 def is_api_client_request(request: Request) -> bool:
@@ -518,8 +523,9 @@ def is_api_client_request(request: Request) -> bool:
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterPayload, request: Request, response: Response):
     client_ip = get_client_ip(request)
+    max_reg = 100 if is_trusted_proxy(client_ip) else 5
     allowed, wait_sec = database.check_and_record_auth_attempt(
-        f"register:{client_ip}", max_attempts=5, window_seconds=3600
+        f"register:{client_ip}", max_attempts=max_reg, window_seconds=3600
     )
     if not allowed:
         raise HTTPException(
@@ -527,18 +533,41 @@ def register(payload: RegisterPayload, request: Request, response: Response):
             detail=f"Too many account registrations from this network. Please try again in {wait_sec} seconds.",
         )
 
-    clean_user = payload.username.strip().lower()
+    clean_email = (payload.email or "").strip().lower()
+    clean_user = (payload.username or "").strip().lower()
+
+    if not clean_email and clean_user and "@" in clean_user:
+        clean_email = clean_user
+        clean_user = clean_email.split("@")[0]
+    elif not clean_email and clean_user:
+        clean_email = f"{clean_user}@cortex.internal"
+
+    if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Please provide a valid email address.")
+
+    if not clean_user:
+        clean_user = clean_email.split("@")[0]
     if len(clean_user) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
-    if len(payload.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long.")
+        clean_user = f"user_{secrets.token_hex(3)}"
+
+    # Check for duplicate email across registered accounts
+    if clean_email and not clean_email.endswith("@cortex.internal") and database.check_email_exists(clean_email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Please sign in or use a different email.",
+        )
+
+    # Validate password complexity
+    valid_pw, pw_err = database.validate_password_complexity(payload.password)
+    if not valid_pw:
+        raise HTTPException(status_code=400, detail=pw_err)
 
     try:
-        user = database.create_user(clean_user, payload.password, payload.email)
+        user = database.create_user(username=clean_user, password=payload.password, email=clean_email)
     except ValueError as exc:
         err_str = str(exc)
-        if "already registered" in err_str.lower() or "already taken" in err_str.lower():
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Username '{clean_user}' is already taken.")
+        if "already exists" in err_str.lower() or "already registered" in err_str.lower() or "already taken" in err_str.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_str)
         raise HTTPException(status_code=400, detail=err_str)
 
     # Seamlessly transfer any guest session conversations & memories to new account
@@ -556,7 +585,7 @@ def register(payload: RegisterPayload, request: Request, response: Response):
         except Exception:
             pass
 
-    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
+    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False, expires_in_seconds=60 * 60 * 24 * 30)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     resp = {
         "ok": True,
@@ -575,21 +604,27 @@ def register(payload: RegisterPayload, request: Request, response: Response):
 @app.post("/api/auth/reset-password")
 def reset_password_endpoint(payload: ResetPasswordPayload, request: Request, response: Response):
     client_ip = get_client_ip(request)
-    clean_user = payload.username.strip().lower()
+    identifier = (payload.email_or_username or payload.email or payload.username or "").strip().lower()
 
-    if len(clean_user) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
-    if len(payload.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long.")
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Email or username is required.")
 
-    user = database.update_user_password(clean_user, payload.password)
+    valid_pw, pw_err = database.validate_password_complexity(payload.password)
+    if not valid_pw:
+        raise HTTPException(status_code=400, detail=pw_err)
+
+    try:
+        user = database.update_user_password(identifier, payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     if not user:
         raise HTTPException(status_code=400, detail="Failed to reset password.")
 
-    database.reset_auth_attempts(f"login_user:{clean_user}")
+    database.reset_auth_attempts(f"login_user:{identifier}")
     database.reset_auth_attempts(f"login_ip:{client_ip}")
 
-    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
+    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False, expires_in_seconds=60 * 60 * 24 * 30)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     resp = {
         "ok": True,
@@ -608,7 +643,9 @@ def reset_password_endpoint(payload: ResetPasswordPayload, request: Request, res
 @app.post("/api/auth/login")
 def login(payload: LoginPayload, request: Request, response: Response):
     client_ip = get_client_ip(request)
-    clean_user = payload.username.strip().lower()
+    identifier = (payload.email_or_username or payload.email or payload.username or "").strip().lower()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Email or username is required.")
 
     # 1. IP-level rate limiting (max 30 attempts per 15 min)
     allowed_ip, wait_ip = database.check_and_record_auth_attempt(
@@ -620,9 +657,9 @@ def login(payload: LoginPayload, request: Request, response: Response):
             detail=f"Too many login attempts from this network. Please try again in {wait_ip} seconds.",
         )
 
-    # 2. Account-level brute-force lockout (max 5 failed attempts per 15 min per username)
+    # 2. Account-level brute-force lockout (max 5 failed attempts per 15 min per identifier)
     allowed_user, wait_user = database.check_and_record_auth_attempt(
-        f"login_user:{clean_user}", max_attempts=5, window_seconds=900
+        f"login_user:{identifier}", max_attempts=5, window_seconds=900
     )
     if not allowed_user:
         raise HTTPException(
@@ -631,15 +668,18 @@ def login(payload: LoginPayload, request: Request, response: Response):
         )
 
     if payload.force_reset:
-        user = database.update_user_password(clean_user, payload.password)
+        try:
+            user = database.update_user_password(identifier, payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     else:
-        user = database.authenticate_user(payload.username, payload.password)
+        user = database.authenticate_user(identifier, payload.password)
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
     # Successful authentication resets failed attempt counters
-    database.reset_auth_attempts(f"login_user:{clean_user}")
+    database.reset_auth_attempts(f"login_user:{identifier}")
     database.reset_auth_attempts(f"login_ip:{client_ip}")
 
     # Seamlessly transfer any guest session conversations & memories to authenticated account
@@ -657,8 +697,13 @@ def login(payload: LoginPayload, request: Request, response: Response):
         except Exception:
             pass
 
-    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
-    _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
+    # Remember Me handling: 30 days vs session-only
+    remember = True if payload.remember_me is None else bool(payload.remember_me)
+    token_ttl = 60 * 60 * 24 * 30 if remember else 60 * 60 * 24
+    cookie_max_age = 60 * 60 * 24 * 30 if remember else None
+
+    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False, expires_in_seconds=token_ttl)
+    _set_auth_cookie(response, token, request, max_age=cookie_max_age)
     resp = {
         "ok": True,
         "user": {
@@ -677,7 +722,9 @@ def login(payload: LoginPayload, request: Request, response: Response):
 def api_token_auth(payload: LoginPayload, request: Request):
     """Dedicated endpoint for external programmatic API clients to exchange credentials for a Bearer token."""
     client_ip = get_client_ip(request)
-    clean_user = payload.username.strip().lower()
+    identifier = (payload.email_or_username or payload.email or payload.username or "").strip().lower()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Email or username is required.")
 
     allowed_ip, wait_ip = database.check_and_record_auth_attempt(
         f"login_ip:{client_ip}", max_attempts=30, window_seconds=900
@@ -689,7 +736,7 @@ def api_token_auth(payload: LoginPayload, request: Request):
         )
 
     allowed_user, wait_user = database.check_and_record_auth_attempt(
-        f"login_user:{clean_user}", max_attempts=5, window_seconds=900
+        f"login_user:{identifier}", max_attempts=5, window_seconds=900
     )
     if not allowed_user:
         raise HTTPException(
@@ -697,11 +744,11 @@ def api_token_auth(payload: LoginPayload, request: Request):
             detail=f"Account temporarily locked due to repeated failed login attempts. Please try again in {wait_user} seconds.",
         )
 
-    user = database.authenticate_user(payload.username, payload.password)
+    user = database.authenticate_user(identifier, payload.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
-    database.reset_auth_attempts(f"login_user:{clean_user}")
+    database.reset_auth_attempts(f"login_user:{identifier}")
     database.reset_auth_attempts(f"login_ip:{client_ip}")
 
     token = generate_token(user["id"], user["username"])

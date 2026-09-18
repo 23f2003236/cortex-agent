@@ -7,11 +7,14 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("cortex.database")
 
 _DEFAULT_DB = Path(__file__).resolve().parent / "cortex.db"
 if (
@@ -311,6 +314,21 @@ def init_db() -> None:
                 "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (6, ?, 'Add user avatar presets and conversation archive support')",
                 (now_iso,),
             )
+        if current_v < 7:
+            # Clean start: purge broken/test users and establish unique index on email
+            try:
+                conn.execute("DELETE FROM users WHERE username IN ('john123', 'aman123', 'testuser', 'explorer', 'demo') OR email LIKE '%@local.cortex%' OR email = '' OR email IS NULL")
+                conn.execute("DELETE FROM conversations WHERE user_id NOT IN (SELECT id FROM users)")
+                conn.execute("DELETE FROM messages WHERE conversation_id NOT IN (SELECT id FROM conversations)")
+                conn.execute("DELETE FROM memories WHERE user_id NOT IN (SELECT id FROM users)")
+                conn.execute("DELETE FROM projects WHERE user_id NOT IN (SELECT id FROM users)")
+            except Exception:
+                pass
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE is_guest = 0 AND email IS NOT NULL AND email != ''")
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (7, ?, 'Email-first accounts with unique email index and clean slate')",
+                (now_iso,),
+            )
 
         conn.commit()
 
@@ -363,11 +381,43 @@ def verify_password(password: str, password_hash: str, salt: str) -> bool:
     return secrets.compare_digest(computed_hash, password_hash)
 
 
-def generate_user_id(username: str) -> str:
-    """Generate a deterministic, immutable RFC-4122 UUIDv5 for a registered username.
+def validate_password_complexity(password: str) -> tuple[bool, str]:
+    """Enforce production password complexity:
+    - Minimum 8 characters
+    - At least one letter (a-z or A-Z)
+    - At least one numeric digit (0-9)
+    - At least one special symbol (!@#$%^&* etc.)
+    - Cannot be purely numeric or purely alphabetic
+    """
+    if not password or len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r"[a-zA-Z]", password):
+        return False, "Password must include at least one letter (a-z or A-Z)."
+    if not re.search(r"[0-9]", password):
+        return False, "Password must include at least one number (0-9)."
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?~`]", password):
+        return False, "Password must include at least one special character (e.g. !@#$%)."
+    return True, ""
+
+
+def check_email_exists(email: str) -> bool:
+    """Check if a registered non-guest user already uses this email address."""
+    clean_email = (email or "").strip().lower()
+    if not clean_email:
+        return False
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE LOWER(email) = ? AND is_guest = 0",
+            (clean_email,),
+        ).fetchone()
+        return row is not None
+
+
+def generate_user_id(identifier: str) -> str:
+    """Generate a deterministic, immutable RFC-4122 UUIDv5 for a registered email or username.
     Guarantees that across all Vercel/serverless containers, cold starts, and re-logins,
     the user's ID never changes."""
-    clean = (username or "explorer").strip().lower()
+    clean = (identifier or "explorer").strip().lower()
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"cortex.user:{clean}"))
 
 
@@ -388,15 +438,38 @@ def transfer_guest_data_to_user(guest_id: Optional[str], target_user_id: str) ->
         conn.commit()
 
 
-def create_user(username: str, password: str, email: Optional[str] = None, user_id: Optional[str] = None) -> dict[str, Any]:
-    username_clean = username.strip().lower()
-    if not username_clean:
-        raise ValueError("Username cannot be empty.")
-    if len(password) < 6:
-        raise ValueError("Password must be at least 6 characters long.")
+def create_user(
+    username: Optional[str] = None,
+    password: str = "",
+    email: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> dict[str, Any]:
+    clean_email = (email or "").strip().lower()
+    clean_username = (username or "").strip().lower()
+
+    if not clean_email and not clean_username:
+        raise ValueError("Email address is required.")
+
+    if clean_email:
+        if "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+            raise ValueError("Please provide a valid email address.")
+        if not clean_username:
+            clean_username = clean_email.split("@")[0]
+
+    if not clean_username:
+        clean_username = f"user_{secrets.token_hex(4)}"
+
+    # Validate password complexity
+    valid, msg = validate_password_complexity(password)
+    if not valid:
+        raise ValueError(msg)
+
+    # Check for duplicate email across registered accounts
+    if clean_email and check_email_exists(clean_email):
+        raise ValueError("An account with this email already exists. Please sign in or use a different email.")
 
     pw_hash, salt = hash_password(password)
-    target_user_id = user_id or generate_user_id(username_clean)
+    target_user_id = user_id or generate_user_id(clean_email or clean_username)
     now = _utc_now_iso()
 
     with get_connection() as conn:
@@ -408,51 +481,60 @@ def create_user(username: str, password: str, email: Optional[str] = None, user_
                 VALUES (?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT(id) DO UPDATE SET
                     username = excluded.username,
+                    email = excluded.email,
                     password_hash = excluded.password_hash,
                     salt = excluded.salt,
                     is_guest = 0
                 ON CONFLICT(username) DO UPDATE SET
+                    email = excluded.email,
                     password_hash = excluded.password_hash,
                     salt = excluded.salt,
                     is_guest = 0
                 """,
-                (target_user_id, username_clean, (email or "").strip(), pw_hash, salt, now),
+                (target_user_id, clean_username, clean_email, pw_hash, salt, now),
             )
-            # If this is the first registered user, auto-assign any orphan conversations
             count_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE is_guest = 0").fetchone()["c"]
             if count_users == 1:
                 conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (target_user_id,))
             conn.commit()
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE" in str(e).upper() and "EMAIL" in str(e).upper():
+                raise ValueError("An account with this email already exists. Please sign in or use a different email.")
             conn.execute(
-                "UPDATE users SET password_hash = ?, salt = ?, is_guest = 0 WHERE username = ? OR id = ?",
-                (pw_hash, salt, username_clean, target_user_id),
+                "UPDATE users SET password_hash = ?, salt = ?, email = ?, is_guest = 0 WHERE username = ? OR id = ? OR (email != '' AND email = ?)",
+                (pw_hash, salt, clean_email, clean_username, target_user_id, clean_email),
             )
             conn.commit()
 
     return {
         "id": target_user_id,
-        "username": username_clean,
-        "email": (email or "").strip(),
+        "username": clean_username,
+        "email": clean_email,
         "is_guest": False,
         "created_at": now,
         "avatar": "avatar-1",
     }
 
 
-def update_user_password(username: str, new_password: str) -> Optional[dict[str, Any]]:
+def update_user_password(identifier: str, new_password: str) -> Optional[dict[str, Any]]:
     """Update or reset a user's password with PBKDF2 hashing and return the updated user record."""
-    username_clean = username.strip().lower()
-    if not username_clean or len(new_password) < 6:
+    clean_id = (identifier or "").strip().lower()
+    if not clean_id:
         return None
 
+    valid, msg = validate_password_complexity(new_password)
+    if not valid:
+        raise ValueError(msg)
+
     pw_hash, salt = hash_password(new_password)
-    target_id = generate_user_id(username_clean)
     now = _utc_now_iso()
 
     with get_connection() as conn:
         _begin_immediate(conn)
-        row = conn.execute("SELECT id FROM users WHERE username = ?", (username_clean,)).fetchone()
+        row = conn.execute(
+            "SELECT id, username, email FROM users WHERE (LOWER(email) = ? OR LOWER(username) = ?)",
+            (clean_id, clean_id),
+        ).fetchone()
         if row:
             target_id = row["id"]
             conn.execute(
@@ -460,35 +542,45 @@ def update_user_password(username: str, new_password: str) -> Optional[dict[str,
                 (pw_hash, salt, target_id),
             )
         else:
+            email_arg = clean_id if "@" in clean_id else f"{clean_id}@local.cortex"
+            uname_arg = clean_id.split("@")[0] if "@" in clean_id else clean_id
+            target_id = generate_user_id(clean_id)
             conn.execute(
-                "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, '', ?, ?, ?, 0)",
-                (target_id, username_clean, pw_hash, salt, now),
+                "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (target_id, uname_arg, email_arg, pw_hash, salt, now),
             )
         conn.commit()
 
-    return authenticate_user(username_clean, new_password, allow_auto_provision=False)
+    return authenticate_user(clean_id, new_password, allow_auto_provision=False)
 
 
-def authenticate_user(username: str, password: str, allow_auto_provision: bool = True) -> Optional[dict[str, Any]]:
-    username_clean = username.strip().lower()
-    if not username_clean:
+def authenticate_user(identifier: str, password: str, allow_auto_provision: bool = True) -> Optional[dict[str, Any]]:
+    clean_id = (identifier or "").strip().lower()
+    if not clean_id:
         return None
 
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username, email, password_hash, salt, created_at, is_guest, COALESCE(avatar, 'avatar-1') as avatar FROM users WHERE username = ?",
-            (username_clean,),
+            """
+            SELECT id, username, email, password_hash, salt, created_at, is_guest, COALESCE(avatar, 'avatar-1') as avatar
+            FROM users
+            WHERE (LOWER(email) = ? OR LOWER(username) = ?)
+            LIMIT 1
+            """,
+            (clean_id, clean_id),
         ).fetchone()
 
         if not row:
-            # Self-healing local-first user provisioning:
-            # If the user registered on another container/node or after a cold start / deployment,
-            # seamlessly provision the account with their deterministic RFC-4122 UUIDv5!
-            if allow_auto_provision and len(password) >= 6:
-                try:
-                    return create_user(username_clean, password, user_id=generate_user_id(username_clean))
-                except Exception as e:
-                    logger.warning("Auto-provisioning user '%s' failed: %s", username_clean, e)
+            # Self-healing local-first user provisioning on serverless container cold starts
+            if allow_auto_provision and len(password) >= 8:
+                valid, _ = validate_password_complexity(password)
+                if valid:
+                    try:
+                        email_arg = clean_id if "@" in clean_id else f"{clean_id}@local.cortex"
+                        uname_arg = clean_id.split("@")[0] if "@" in clean_id else clean_id
+                        return create_user(username=uname_arg, password=password, email=email_arg, user_id=generate_user_id(clean_id))
+                    except Exception as e:
+                        logger.warning("Auto-provisioning user '%s' failed: %s", clean_id, e)
             return None
 
         # Guest accounts cannot authenticate via password credentials
@@ -504,12 +596,11 @@ def authenticate_user(username: str, password: str, allow_auto_provision: bool =
                     (new_hash, new_salt, row["id"]),
                 )
                 conn.commit()
-
             return {
                 "id": row["id"],
                 "username": row["username"],
                 "email": row["email"],
-                "is_guest": bool(row["is_guest"]),
+                "is_guest": False,
                 "created_at": row["created_at"],
                 "avatar": row["avatar"] or "avatar-1",
             }

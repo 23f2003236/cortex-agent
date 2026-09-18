@@ -1047,6 +1047,89 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertTrue(force_data["ok"])
         self.assertEqual(force_data["user"]["username"], target_user.lower())
 
+    # ---------------- 31. Email-First & Anti-Hacker Hardened Auth ----------------
+
+    def test_email_first_registration_and_duplicate_rejection(self):
+        """Verify registration requires valid email and rejects duplicates with 409 Conflict."""
+        test_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
+        valid_password = "SecurePassword2026!"
+
+        # 1. Successful email-first registration
+        reg_res = self.client.post("/api/auth/register", json={
+            "email": test_email,
+            "password": valid_password,
+            "username": "tester1",
+        })
+        self.assertEqual(reg_res.status_code, 201)
+        data = reg_res.json()
+        self.assertEqual(data["user"]["email"], test_email.lower())
+
+        # 2. Duplicate email registration returns 409 Conflict with clear message
+        dup_res = self.client.post("/api/auth/register", json={
+            "email": test_email,
+            "password": "AnotherPassword2026!",
+            "username": "tester2",
+        })
+        self.assertEqual(dup_res.status_code, 409)
+        self.assertIn("already exists", dup_res.json()["detail"])
+
+    def test_anti_hacker_password_complexity(self):
+        """Verify weak, numeric-only, or simple passwords are blocked."""
+        test_email = f"complex_{uuid.uuid4().hex[:8]}@example.com"
+
+        # Purely numeric password like 123456789
+        num_res = self.client.post("/api/auth/register", json={
+            "email": test_email,
+            "password": "123456789",
+        })
+        self.assertEqual(num_res.status_code, 400)
+        self.assertIn("letter", num_res.json()["detail"].lower())
+
+        # Letters only without numbers or symbols
+        letter_res = self.client.post("/api/auth/register", json={
+            "email": test_email,
+            "password": "alllettersonly",
+        })
+        self.assertEqual(letter_res.status_code, 400)
+
+        # Under 8 characters
+        short_res = self.client.post("/api/auth/register", json={
+            "email": test_email,
+            "password": "Sh1!",
+        })
+        self.assertEqual(short_res.status_code, 422)  # pydantic min_length=8
+
+    def test_login_by_email_and_username_with_remember_me(self):
+        """Verify login works with either email or username, and honors remember_me."""
+        test_email = f"login_{uuid.uuid4().hex[:8]}@example.com"
+        test_user = f"uname_{uuid.uuid4().hex[:8]}"
+        test_pwd = "StrongCortex2026!"
+
+        reg_res = self.client.post("/api/auth/register", json={
+            "email": test_email,
+            "username": test_user,
+            "password": test_pwd,
+        })
+        self.assertEqual(reg_res.status_code, 201)
+
+        # 1. Login with email
+        email_login = self.client.post("/api/auth/login", json={
+            "email_or_username": test_email,
+            "password": test_pwd,
+            "remember_me": True,
+        })
+        self.assertEqual(email_login.status_code, 200)
+        self.assertEqual(email_login.json()["user"]["username"], test_user.lower())
+
+        # 2. Login with username
+        user_login = self.client.post("/api/auth/login", json={
+            "email_or_username": test_user,
+            "password": test_pwd,
+            "remember_me": False,
+        })
+        self.assertEqual(user_login.status_code, 200)
+        self.assertEqual(user_login.json()["user"]["email"], test_email.lower())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
