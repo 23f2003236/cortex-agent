@@ -8205,6 +8205,25 @@ body.light-theme .project-textarea {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text);
 }
+.artifact-btn-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #f87171;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.artifact-btn-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #ef4444;
+  transform: scale(1.04);
+}
 .artifacts-empty-state {
   text-align: center;
   padding: 60px 20px;

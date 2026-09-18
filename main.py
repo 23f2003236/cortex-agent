@@ -1267,11 +1267,21 @@ def get_model_max_tokens(model_id: str) -> int:
 
 def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> int:
     """Dynamically determine maximum token budget based on model limits, query intent, and mode.
-    Strips heavy file/image attachment wrappers to evaluate user's core intent without token explosion."""
-    model_max = get_model_max_tokens(model_id)
+    Super Agent & Ultra Agent have unrestricted 32k+ output headroom across all modes.
+    Cortex 4 models have 16k+ output headroom."""
+    m_id = (model_id or "").strip()
+    model_max = get_model_max_tokens(m_id)
+
+    # Super Agent & Ultra Agent: Full 32k+ response headroom across all modes (auto, fast, thinking)
+    if m_id in ("nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b"):
+        return 32768
+
+    # Cortex 4 models: Full 16k+ output headroom
+    if m_id in ("openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"):
+        return 16384
 
     if (mode or "").lower() == "fast":
-        return min(model_max, 2048)
+        return min(model_max, 4096)
 
     # Strip attachment blocks (documents, images, tables, webpages) to evaluate user query intent:
     clean_query = re.sub(
@@ -1291,7 +1301,7 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
         "write complete", "detailed analysis", "complete roadmap"
     ]
     if any(k in lower for k in exhaustive_keywords) or ((mode or "").lower() == "thinking" and len(lower) > 300):
-        return min(model_max, 8192)
+        return min(model_max, 16384)
 
     # Casual greetings or trivial queries:
     casual_keywords = [
@@ -1301,8 +1311,8 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
     if len(lower.split()) <= 6 and any(k in lower for k in casual_keywords):
         return min(model_max, 1024)
 
-    # Standard general-purpose response budget (e.g. "solve this question", coding, reasoning):
-    return min(model_max, 3072)
+    # Standard general-purpose response budget:
+    return min(model_max, 8192)
 
 
 # ---------------------------------------------------------------------------
@@ -1424,7 +1434,7 @@ def run_tool_rounds_streaming(
     effective_tools = tools_subset if tools_subset is not None else TOOLS
     tools_by_name = {t.name: t for t in effective_tools}
     effective_rounds = max_rounds or MAX_TOOL_ROUNDS
-    budget_limit = turn_budget if turn_budget is not None else 150000
+    budget_limit = turn_budget if turn_budget is not None else 300000
     tools_used: list[str] = []
     accumulated_tool_tokens = 0
     # Keep enough capacity for the user-facing synthesis after tool selection.
@@ -1759,6 +1769,7 @@ class ChatRequest(BaseModel):
     mode: Optional[str] = "auto"
     messages: list[ChatMessage] = Field(default_factory=list, min_length=1, max_length=100)
     client_memories: Optional[list[dict[str, Any]]] = None
+    client_tokens_used: Optional[int] = None
 
     @field_validator("messages")
     @classmethod
@@ -2842,6 +2853,13 @@ def get_user_artifacts_endpoint(current_user: dict = Depends(get_current_user)):
     return {"artifacts": artifacts, "total": len(artifacts)}
 
 
+@app.delete("/api/artifacts/{artifact_key:path}")
+def delete_user_artifact_endpoint(artifact_key: str, current_user: dict = Depends(get_current_user)):
+    """Mark an artifact as deleted by the user."""
+    success = database.mark_artifact_deleted(current_user["id"], artifact_key)
+    return {"ok": success, "artifact_key": artifact_key}
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     """Server-Sent Events stream. Emits:
@@ -2936,6 +2954,13 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             except Exception as sync_err:
                 logger.warning(f"Error syncing client memories: {sync_err}")
 
+        # Multi-container token usage synchronization:
+        if request.client_tokens_used and isinstance(request.client_tokens_used, int) and request.client_tokens_used > 0:
+            try:
+                database.sync_daily_tokens_used(current_user["id"], request.client_tokens_used)
+            except Exception as sync_err:
+                logger.warning(f"Error syncing client tokens: {sync_err}")
+
         messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id)
 
         # Save user message to persistent DB
@@ -2967,7 +2992,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             usage_info = database.get_daily_usage(current_user["id"])
             current_used = usage_info.get("tokens_used", 0)
             current_reserved = usage_info.get("reserved_tokens", 0)
-            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 150000))
+            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 300000))
             remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
 
             # Determine whether tools should be executed early to account for tool rounds in quota reservation
@@ -3012,20 +3037,12 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 })
                 return
 
-            # 4) Tool allowance: if remaining quota is tight, scale down or disable tools so user can still receive a response
-            tool_allowance = 2000 if run_tools else 0
-            if run_tools and (estimated_input_tokens + image_token_cost + tool_allowance + 100 > remaining_allowance):
-                remaining_for_tools = remaining_allowance - (estimated_input_tokens + image_token_cost)
-                if remaining_for_tools < 600:
-                    run_tools = False
-                    tool_allowance = 0
-                else:
-                    tool_allowance = min(1000, remaining_for_tools - 200)
-
             raw_requested_budget = estimate_response_tokens(effective_model, raw_content, mode=mode)
-            available_output = max(100, remaining_allowance - (estimated_input_tokens + image_token_cost + tool_allowance))
+            available_output = max(100, remaining_allowance - (estimated_input_tokens + image_token_cost))
             budget_tokens = max(100, min(raw_requested_budget, available_output))
-            estimated_tokens = min(remaining_allowance, estimated_input_tokens + image_token_cost + tool_allowance + budget_tokens)
+            # Bound the in-flight reservation (max 4000 tokens) so large 32k output headroom never prematurely starves reservation
+            reservation_estimate = min(budget_tokens, 4000)
+            estimated_tokens = min(remaining_allowance, estimated_input_tokens + image_token_cost + reservation_estimate)
 
             yield event({
                 "type": "init",
@@ -3142,7 +3159,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             # Calculate synthesis budget: ensure synthesis has sufficient allowance to deliver
             # a full, high-quality response bounded by the user's actual remaining daily quota
-            available_for_synthesis = max(200, remaining_allowance - (estimated_input_tokens + image_token_cost + turn_tool_tokens))
+            available_for_synthesis = max(200, remaining_allowance - (estimated_input_tokens + image_token_cost))
             synthesis_budget = max(200, min(budget_tokens, available_for_synthesis))
             llm = make_llm(model_override=effective_model, streaming=True, max_tokens=synthesis_budget)
             max_attempts = 3
@@ -3195,8 +3212,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             if clean_chunk:
                                 full_text += clean_chunk
                                 yield event({"type": "token", "text": clean_chunk})
-                                # In-stream token guard: if total turn tokens reach reserved budget, halt gracefully
-                                if ((len(full_text) // 4) + turn_tool_tokens) >= budget_tokens:
+                                # In-stream token guard: if generated tokens reach reserved budget, halt gracefully
+                                if (len(full_text) // 4) >= budget_tokens:
                                     is_truncated = True
                                     trunc_note = "\n\n[Generation completed: Reached daily token allowance limit.]"
                                     full_text += trunc_note
@@ -3419,8 +3436,9 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 context_tok = min(total_input_chars // 4, 3000)
                 synthesis_tokens = max(1, context_tok + len(full_text) // 4)
 
-            consumed_tokens = turn_tool_tokens + synthesis_tokens + image_token_cost
-            # Per-turn safety ceiling: guarantees a single file/photo query never drains 30,000 tokens
+            # Web search (duckduckgo, fetch_webpage) and tool execution tokens are free compute - do not charge user quota for tool tokens
+            consumed_tokens = synthesis_tokens + image_token_cost
+            # Per-turn safety ceiling: guarantees a single file/photo query never drains excessive tokens
             turn_ceiling = max(1500, min(budget_tokens + 2500, 8192))
             consumed_tokens = min(consumed_tokens, turn_ceiling)
 

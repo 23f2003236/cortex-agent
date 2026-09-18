@@ -1242,7 +1242,7 @@ def set_conversation_project(conv_id: str, project_id: Optional[str], user_id: s
 
 # ---------------- Daily Usage & Token Quotas ----------------
 
-DAILY_TOKEN_LIMIT = 150_000
+DAILY_TOKEN_LIMIT = 300_000
 DAILY_UPLOAD_LIMIT = 10
 GUEST_DAILY_TOKEN_LIMIT = 25_000
 GUEST_DAILY_UPLOAD_LIMIT = 3
@@ -1370,6 +1370,29 @@ def set_daily_tokens(user_id: str, tokens: int, date_str: Optional[str] = None) 
     return get_daily_usage(user_id, d)
 
 
+def sync_daily_tokens_used(user_id: str, client_tokens: int) -> dict:
+    """Sync client-reported tokens into daily_usage using monotonic MAX to bridge multi-container serverless."""
+    if client_tokens <= 0:
+        return get_daily_usage(user_id)
+    d = _today_str()
+    with get_connection() as conn:
+        u_exists = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not u_exists:
+            return get_daily_usage(user_id, d)
+        conn.execute(
+            """
+            INSERT INTO daily_usage (user_id, usage_date, tokens_used, uploads_count)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(user_id, usage_date) DO UPDATE SET
+            tokens_used = MAX(tokens_used, excluded.tokens_used)
+            """,
+            (user_id, d, int(client_tokens)),
+        )
+        conn.commit()
+    return get_daily_usage(user_id, d)
+
+
+
 def increment_daily_uploads(user_id: str, count: int = 1) -> dict:
     if count <= 0:
         return get_daily_usage(user_id)
@@ -1487,6 +1510,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
         # Process newest first
         stitched_messages.reverse()
 
+        deleted_keys = get_deleted_artifact_keys(user_id)
         seen_titles = set()
         for item in stitched_messages:
             text = (item["content"] or "").strip()
@@ -1522,6 +1546,15 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             if not safe_slug.endswith(".md"):
                 safe_slug += ".md"
 
+            # Check if this artifact was deleted by the user
+            if (
+                item["id"] in deleted_keys
+                or safe_slug in deleted_keys
+                or title in deleted_keys
+                or f"{item['conversation_id']}:{safe_slug}" in deleted_keys
+            ):
+                continue
+
             size_bytes = len(text.encode("utf-8"))
 
             artifacts.append({
@@ -1536,6 +1569,49 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             })
 
     return artifacts
+
+
+def mark_artifact_deleted(user_id: str, artifact_key: str) -> bool:
+    """Mark an artifact as deleted by user (persists across serverless restarts)."""
+    if not user_id or not artifact_key:
+        return False
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_artifacts (
+                user_id TEXT NOT NULL,
+                artifact_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, artifact_key)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO deleted_artifacts (user_id, artifact_key, created_at) VALUES (?, ?, ?)",
+            (user_id, str(artifact_key).strip(), _utc_now_iso()),
+        )
+        conn.commit()
+    return True
+
+
+def get_deleted_artifact_keys(user_id: str) -> set[str]:
+    """Retrieve all deleted artifact keys for a user."""
+    if not user_id:
+        return set()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_artifacts (
+                user_id TEXT NOT NULL,
+                artifact_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, artifact_key)
+            )
+            """
+        )
+        rows = conn.execute("SELECT artifact_key FROM deleted_artifacts WHERE user_id = ?", (user_id,)).fetchall()
+        return {r["artifact_key"] for r in rows}
+
 
 
 # Automatically initialize schema on import

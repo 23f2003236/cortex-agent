@@ -262,6 +262,44 @@ function saveCachedArtifactsList(list) {
   }
 }
 
+function getDeletedArtifactKeys() {
+  try {
+    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_deleted_artifacts"))) || [];
+  } catch {
+    return [];
+  }
+}
+
+function addDeletedArtifactKey(key) {
+  if (!key) return;
+  try {
+    const list = getDeletedArtifactKeys();
+    const strKey = String(key).trim();
+    if (!list.includes(strKey)) {
+      list.push(strKey);
+      localStorage.setItem(getUserScopedKey("cortex_deleted_artifacts"), JSON.stringify(list));
+    }
+  } catch (e) {
+    console.warn("Failed to store deleted artifact key:", e);
+  }
+}
+
+function deleteCachedArtifact(artKey) {
+  if (!artKey) return;
+  try {
+    const strKey = String(artKey).trim();
+    let list = getCachedArtifacts();
+    list = list.filter((a) => {
+      const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      return a.id !== strKey && a.filename !== strKey && a.title !== strKey && slug !== strKey;
+    });
+    saveCachedArtifactsList(list);
+    addDeletedArtifactKey(strKey);
+  } catch (e) {
+    console.warn("Failed to delete cached artifact:", e);
+  }
+}
+
 function updateArtifactsBadge(count) {
   const c = Math.max(0, Number(count) || 0);
   const countEl = document.getElementById("sidebarArtifactsCount") || sidebarArtifactsCount;
@@ -288,12 +326,17 @@ function getCachedUsage() {
   }
 }
 
-function saveCachedUsage(tokensUsed, limit = 150000) {
+function saveCachedUsage(tokensUsed, limit = 300000) {
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const existing = getCachedUsage();
+    const prevUsed = existing ? (Number(existing.tokens_used) || 0) : 0;
+    const newUsed = Number(tokensUsed) || 0;
+    // Strict monotonic guarantee: Daily token usage can NEVER decrease across turns or serverless restarts!
+    const effectiveUsed = Math.max(prevUsed, newUsed);
     localStorage.setItem(getUserScopedKey("cortex_usage"), JSON.stringify({
-      tokens_used: Number(tokensUsed) || 0,
-      tokens_limit: Number(limit) || 150000,
+      tokens_used: effectiveUsed,
+      tokens_limit: Number(limit) || 300000,
       date: today
     }));
   } catch (e) {
@@ -4743,6 +4786,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
         mode: currentMode,
         messages: historyForRequest,
         client_memories: typeof getCachedMemories === "function" ? getCachedMemories() : undefined,
+        client_tokens_used: (getCachedUsage()?.tokens_used || 0),
       }),
       signal: abortController.signal,
     });
@@ -4927,10 +4971,12 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
             if (lastAsstMsg) lastAsstMsg.id = payload.assistant_message_id;
           }
           if (payload.usage) {
-            const used = payload.usage.tokens_used ?? payload.usage.daily_tokens ?? 0;
-            const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 150000;
-            saveCachedUsage(used, limit);
-            updateUsageDisplay(used, limit);
+            const serverUsed = payload.usage.tokens_used ?? payload.usage.daily_tokens ?? 0;
+            const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 300000;
+            const currentCached = getCachedUsage();
+            const effectiveUsed = Math.max(currentCached?.tokens_used || 0, serverUsed);
+            saveCachedUsage(effectiveUsed, limit);
+            updateUsageDisplay(effectiveUsed, limit);
           }
           loadArtifactsCount();
           finishSuccess();
@@ -5903,7 +5949,7 @@ function openAuthModal(mode = "login") {
     tabRegister?.classList.add("active");
     tabSignIn?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Create Free Account";
-    if (authModalSubtitle) authModalSubtitle.textContent = "Start with 150,000 free tokens & your private workspace";
+    if (authModalSubtitle) authModalSubtitle.textContent = "Start with 300,000 free tokens & your private workspace";
     if (emailGroup) emailGroup.style.display = "flex";
     if (passwordStrengthWrap) {
       passwordStrengthWrap.style.display = "flex";
@@ -6701,9 +6747,9 @@ document.addEventListener("keydown", (e) => {
 // ==================== CORTEX 3.1 UX & ARCHITECTURAL SUITE ====================
 
 // 1. Daily Quota Usage & Notification Toast
-function updateUsageDisplay(tokensUsed, limit = 150000) {
+function updateUsageDisplay(tokensUsed, limit = 300000) {
   const used = Math.max(0, Number(tokensUsed) || 0);
-  const maxLimit = Math.max(1, Number(limit) || 150000);
+  const maxLimit = Math.max(1, Number(limit) || 300000);
   saveCachedUsage(used, maxLimit);
   const remaining = Math.max(0, maxLimit - used);
   const pct = Math.min(100, Math.max(0, (used / maxLimit) * 100));
@@ -6751,7 +6797,7 @@ async function loadUserUsage() {
   if (!currentUser) return;
   const cached = getCachedUsage();
   const cachedUsed = cached ? (Number(cached.tokens_used) || 0) : 0;
-  const cachedLimit = cached ? (Number(cached.tokens_limit) || 150000) : 150000;
+  const cachedLimit = cached ? (Number(cached.tokens_limit) || 300000) : 300000;
   if (cachedUsed > 0) {
     updateUsageDisplay(cachedUsed, cachedLimit);
   }
@@ -6760,9 +6806,9 @@ async function loadUserUsage() {
     if (res.ok) {
       const data = await res.json();
       const serverUsed = Number(data.tokens_used) || 0;
-      const serverLimit = Number(data.tokens_limit) || 150000;
+      const serverLimit = Number(data.tokens_limit) || 300000;
       const finalUsed = Math.max(serverUsed, cachedUsed);
-      const finalLimit = serverLimit || cachedLimit || 150000;
+      const finalLimit = serverLimit || cachedLimit || 300000;
       updateUsageDisplay(finalUsed, finalLimit);
     }
   } catch (err) {
@@ -6787,7 +6833,13 @@ let allUserArtifacts = [];
 
 async function loadArtifactsCount() {
   if (!currentUser) return;
-  const cached = getCachedArtifacts();
+  const deletedKeys = new Set(getDeletedArtifactKeys());
+  const cached = getCachedArtifacts().filter((a) => {
+    if (!a) return false;
+    const key = a.id || a.filename;
+    const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    return !deletedKeys.has(key) && !deletedKeys.has(a.id) && !deletedKeys.has(a.filename) && !deletedKeys.has(a.title) && !deletedKeys.has(slug);
+  });
   updateArtifactsBadge(cached.length);
   try {
     const res = await fetch("/api/artifacts", { headers: authHeaders() });
@@ -6795,9 +6847,22 @@ async function loadArtifactsCount() {
       const data = await res.json();
       const serverList = data.artifacts || [];
       const map = new Map();
-      serverList.forEach((a) => { if (a && (a.id || a.filename)) map.set(a.id || a.filename, a); });
-      cached.forEach((a) => {
+      serverList.forEach((a) => {
+        if (!a) return;
         const key = a.id || a.filename;
+        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+          return;
+        }
+        map.set(key, a);
+      });
+      cached.forEach((a) => {
+        if (!a) return;
+        const key = a.id || a.filename;
+        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+          return;
+        }
         if (key && !map.has(key)) map.set(key, a);
       });
       allUserArtifacts = Array.from(map.values());
@@ -6840,7 +6905,13 @@ function hideArtifactsView() {
 
 async function loadArtifacts() {
   if (!currentUser) return;
-  const cached = getCachedArtifacts();
+  const deletedKeys = new Set(getDeletedArtifactKeys());
+  const cached = getCachedArtifacts().filter((a) => {
+    if (!a) return false;
+    const key = a.id || a.filename;
+    const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    return !deletedKeys.has(key) && !deletedKeys.has(a.id) && !deletedKeys.has(a.filename) && !deletedKeys.has(a.title) && !deletedKeys.has(slug);
+  });
   if (cached.length > 0) {
     allUserArtifacts = cached;
     renderArtifactsList(allUserArtifacts);
@@ -6852,9 +6923,22 @@ async function loadArtifacts() {
       const data = await res.json();
       const serverList = data.artifacts || [];
       const map = new Map();
-      serverList.forEach((a) => { if (a && (a.id || a.filename)) map.set(a.id || a.filename, a); });
-      cached.forEach((a) => {
+      serverList.forEach((a) => {
+        if (!a) return;
         const key = a.id || a.filename;
+        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+          return;
+        }
+        map.set(key, a);
+      });
+      cached.forEach((a) => {
+        if (!a) return;
+        const key = a.id || a.filename;
+        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+          return;
+        }
         if (key && !map.has(key)) map.set(key, a);
       });
       allUserArtifacts = Array.from(map.values());
@@ -6911,6 +6995,9 @@ function renderArtifactsList(items) {
           <button class="artifact-btn-download" type="button" title="Download ${escapeHtml(art.filename)}">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           </button>
+          <button class="artifact-btn-delete" type="button" title="Delete this artifact">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+          </button>
         </div>
       </div>
     `;
@@ -6930,6 +7017,34 @@ function renderArtifactsList(items) {
     dlBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       downloadTextFile(art.filename, art.content, "text/markdown;charset=utf-8");
+    });
+
+    // Delete document with prompt confirmation
+    const delBtn = card.querySelector(".artifact-btn-delete");
+    delBtn?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("Are you sure you want to delete this artifact?")) {
+        return;
+      }
+      const artKey = art.id || art.filename;
+      const slug = (art.filename || art.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      deleteCachedArtifact(artKey);
+      if (slug) addDeletedArtifactKey(slug);
+      allUserArtifacts = allUserArtifacts.filter((a) => {
+        const aKey = a.id || a.filename;
+        const aSlug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        return aKey !== artKey && aSlug !== slug && aKey !== slug;
+      });
+      renderArtifactsList(allUserArtifacts);
+      updateArtifactsBadge(allUserArtifacts.length);
+      try {
+        await fetch("/api/artifacts/" + encodeURIComponent(artKey), {
+          method: "DELETE",
+          headers: authHeaders()
+        });
+      } catch (err) {
+        console.warn("Failed to delete artifact on server:", err);
+      }
     });
 
     grid.appendChild(card);
