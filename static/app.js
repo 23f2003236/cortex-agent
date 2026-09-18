@@ -6448,13 +6448,8 @@ function showChatApp() {
   loadArtifactsCount();
   promptEl.focus();
 
-  // Onboarding Tour trigger for new users or fresh browser sessions
-  const tourCompleted = localStorage.getItem("cortex_tour_completed");
-  if (!tourCompleted) {
-    setTimeout(() => {
-      startOnboardingTour();
-    }, 700);
-  }
+  // Onboarding Tour is available on demand from Settings ⚙️ and User Profile ("Product Tour & Tips")
+  localStorage.setItem("cortex_tour_completed", "true");
 }
 
 function updatePasswordRequirements(password = "") {
@@ -6609,6 +6604,7 @@ async function executeResetAndLogin(identifier, password, rememberMe = true) {
     closeAuthModal();
     showToast("Password updated successfully! Welcome back.");
     showChatApp();
+    launchConfettiCelebration();
     await loadProjects();
     await loadConversations(false);
     loadUserMemories();
@@ -6708,14 +6704,12 @@ async function handleAuthSubmit(e) {
     }
     // Migrate any guest session conversations, artifacts, and memories into user scope
     migrateSessionDataToUser(currentUser);
-    if (authMode === "register") {
-      // Fresh new signup: enable full interactive tour and confetti celebration
-      localStorage.removeItem("cortex_tour_completed");
-    }
+    localStorage.setItem("cortex_tour_completed", "true");
     updateDynamicGreeting();
 
     closeAuthModal();
     showChatApp();
+    launchConfettiCelebration();
     await loadProjects();
     await loadConversations(false);
     loadUserMemories();
@@ -7123,11 +7117,12 @@ async function handleGuestTestDrive() {
       localStorage.setItem("cortex_username", currentUser.username);
     }
     // Guest test drive: enable full interactive tour and confetti celebration
-    localStorage.removeItem("cortex_tour_completed");
+    localStorage.setItem("cortex_tour_completed", "true");
     updateDynamicGreeting();
 
     closeAuthModal();
     showChatApp();
+    launchConfettiCelebration();
     startNewChat();
     await loadProjects();
     await loadConversations(false);
@@ -8113,7 +8108,9 @@ function launchConfettiCelebration() {
 
   if (toast) {
     toast.style.display = "flex";
-    setTimeout(() => {
+    toast.style.animation = "toastPop 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards";
+    clearTimeout(toast._hideTimeout);
+    toast._hideTimeout = setTimeout(() => {
       toast.style.animation = "toastPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) reverse forwards";
       setTimeout(() => { toast.style.display = "none"; }, 300);
     }, 4500);

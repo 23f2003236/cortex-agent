@@ -5826,10 +5826,16 @@ body.light-theme .chart-header {
   }
 
   /* 10. Modals & Drawers on Mobile */
+  .auth-modal-overlay {
+    padding: 12px 8px !important;
+    align-items: center !important;
+  }
+
   .auth-modal-suite {
     grid-template-columns: 1fr !important;
-    max-width: min(420px, 94vw) !important;
-    border-radius: 16px !important;
+    max-width: min(420px, 95vw) !important;
+    max-height: calc(100vh - 24px) !important;
+    border-radius: 18px !important;
   }
 
   .auth-sidebar-showcase {
@@ -5837,7 +5843,10 @@ body.light-theme .chart-header {
   }
 
   .auth-form-column {
-    padding: 24px 18px 20px !important;
+    padding: 22px 18px 16px !important;
+    max-height: calc(100vh - 24px) !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
   }
 
   .settings-modal-card {
@@ -5866,16 +5875,19 @@ body.light-theme .chart-header {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 16px;
   animation: fadeIn 0.2s ease;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .auth-modal-suite {
   background: #0f1318;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 22px;
+  border-radius: 20px;
   width: 100%;
-  max-width: 860px;
+  max-width: 840px;
+  max-height: min(92vh, 790px);
   display: grid;
   grid-template-columns: 1fr 1fr;
   position: relative;
@@ -5890,7 +5902,7 @@ body.light-theme .chart-header {
   border-radius: 18px;
   width: 100%;
   max-width: 420px;
-  padding: 36px 32px 32px;
+  padding: 32px 28px 28px;
   position: relative;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(34, 197, 94, 0.08);
   animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -5908,35 +5920,39 @@ body.light-theme .chart-header {
 
 .auth-close-btn {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  top: 14px;
+  right: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
-  padding: 5px 9px;
-  border-radius: 8px;
-  z-index: 10;
+  padding: 4px 8px;
+  border-radius: 7px;
+  z-index: 20;
   transition: all 0.15s ease;
 }
 
 .auth-close-btn:hover {
   color: var(--text);
   background: var(--panel-2);
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 /* Auth Left Column: Showcase & Platform Guarantees */
 .auth-sidebar-showcase {
   background: linear-gradient(165deg, #0f1c16 0%, #090d12 100%);
   border-right: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 38px 34px;
+  padding: 26px 24px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   text-align: left;
   position: relative;
+  max-height: min(92vh, 790px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
 
 .auth-brand-row {
@@ -6063,28 +6079,54 @@ body.light-theme .chart-header {
 
 /* Auth Right Column: Forms & Controls */
 .auth-form-column {
-  padding: 38px 34px;
+  padding: 24px 28px 18px;
   display: flex;
   flex-direction: column;
   text-align: left;
   background: #0f1318;
   position: relative;
+  max-height: min(92vh, 790px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.auth-form-column::-webkit-scrollbar,
+.auth-sidebar-showcase::-webkit-scrollbar {
+  width: 5px;
+}
+
+.auth-form-column::-webkit-scrollbar-track,
+.auth-sidebar-showcase::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.auth-form-column::-webkit-scrollbar-thumb,
+.auth-sidebar-showcase::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+}
+
+.auth-form-column::-webkit-scrollbar-thumb:hover,
+.auth-sidebar-showcase::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 197, 94, 0.5);
 }
 
 .auth-column-header {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .auth-column-header h2 {
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
-  margin: 0 0 4px;
+  margin: 0 0 3px;
   color: #ffffff;
 }
 
 .auth-column-header p {
-  font-size: 13px;
+  font-size: 12.5px;
   color: #8a909a;
   margin: 0;
 }
@@ -6093,19 +6135,19 @@ body.light-theme .chart-header {
   display: flex;
   background: #090c10;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 3px;
-  margin-bottom: 20px;
+  border-radius: 9px;
+  padding: 2px;
+  margin-bottom: 12px;
 }
 
 .auth-tab {
   flex: 1;
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 7px;
   border: none;
   background: transparent;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -6121,28 +6163,28 @@ body.light-theme .chart-header {
   background: rgba(224, 104, 92, 0.12);
   border: 1px solid rgba(224, 104, 92, 0.35);
   color: #ff8579;
-  font-size: 12.5px;
-  padding: 10px 14px;
+  font-size: 12px;
+  padding: 8px 12px;
   border-radius: 8px;
-  margin-bottom: 18px;
-  line-height: 1.45;
+  margin-bottom: 12px;
+  line-height: 1.4;
 }
 
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 9px;
 }
 
 .auth-form .form-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   text-align: left;
 }
 
 .auth-form label {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
 }
@@ -6155,7 +6197,7 @@ body.light-theme .chart-header {
 
 .input-icon {
   position: absolute;
-  left: 13px;
+  left: 12px;
   color: #64748b;
   pointer-events: none;
 }
@@ -6164,10 +6206,10 @@ body.light-theme .chart-header {
   width: 100%;
   background: #090c10;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 9px;
-  padding: 10px 38px 10px 38px;
+  border-radius: 8px;
+  padding: 8px 36px;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 13px;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -6199,12 +6241,12 @@ body.light-theme .chart-header {
 .password-strength-wrap {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-top: 4px;
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .password-strength-track {
-  height: 4px;
+  height: 3px;
   width: 100%;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 100px;
@@ -6220,7 +6262,7 @@ body.light-theme .chart-header {
 
 .password-strength-text {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: #64748b;
 }
 
@@ -6229,11 +6271,11 @@ body.light-theme .chart-header {
   border: none;
   color: #0d0f12;
   font-weight: 700;
-  font-size: 14.5px;
-  padding: 12px;
-  border-radius: 9px;
+  font-size: 13.5px;
+  padding: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  margin-top: 6px;
+  margin-top: 3px;
   box-shadow: 0 4px 16px rgba(34, 197, 94, 0.3);
   transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
@@ -6254,10 +6296,10 @@ body.light-theme .chart-header {
   display: flex;
   align-items: center;
   text-align: center;
-  margin: 18px 0 12px;
+  margin: 10px 0 8px;
   color: #475569;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   letter-spacing: 0.08em;
 }
 
@@ -6269,13 +6311,13 @@ body.light-theme .chart-header {
 }
 
 .auth-divider span {
-  padding: 0 10px;
+  padding: 0 8px;
 }
 
 .auth-alt-buttons {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 7px;
 }
 
 .google-auth-btn {
@@ -6283,14 +6325,14 @@ body.light-theme .chart-header {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--text, #f1f5f9);
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 500;
-  padding: 10px 14px;
-  border-radius: 9px;
+  padding: 8px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -6324,10 +6366,10 @@ body.light-theme .chart-header {
   background: rgba(34, 197, 94, 0.08);
   border: 1px solid rgba(34, 197, 94, 0.3);
   color: #4ade80;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 11px;
-  border-radius: 9px;
+  padding: 9px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -6342,9 +6384,9 @@ body.light-theme .chart-header {
 
 .auth-disclaimer {
   text-align: center;
-  font-size: 11.5px;
+  font-size: 10.5px;
   color: #64748b;
-  margin: 10px 0 0;
+  margin: 6px 0 0;
 }
 
 @media (max-width: 768px) {
@@ -10916,16 +10958,16 @@ body.light-theme .quota-toast {
 .password-req-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-top: 8px;
-  padding: 10px 12px;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 6px 10px;
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.7);
+  background: rgba(15, 23, 42, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .password-req-list .req-title {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: #94a3b8;
   margin-bottom: 2px;
@@ -10934,14 +10976,14 @@ body.light-theme .quota-toast {
 .password-req-list .req-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
+  gap: 5px;
+  font-size: 11px;
   color: #64748b;
   transition: all 0.15s ease;
 }
 
 .password-req-list .req-item .req-dot {
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
 }
 
