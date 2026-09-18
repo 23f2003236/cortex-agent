@@ -760,29 +760,43 @@ def toggle_pin_conversation(conv_id: str, is_pinned: Optional[bool] = None, user
         query_sel = "SELECT COALESCE(is_pinned, 0) as is_pinned FROM conversations WHERE id = ?"
         params_sel = [conv_id]
         if user_id:
-            query_sel += " AND user_id = ?"
+            query_sel += " AND (user_id = ? OR user_id IS NULL OR user_id = '')"
             params_sel.append(user_id)
 
         cur = conn.execute(query_sel, tuple(params_sel))
         row = cur.fetchone()
+        now = _utc_now_iso()
+
+        valid_user_id = None
+        if user_id:
+            u_chk = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+            if u_chk:
+                valid_user_id = user_id
+
         if not row:
-            return None
+            # Multi-container serverless fallback: insert skeleton conversation so pin persists
+            target_pin = 1 if (is_pinned is None or is_pinned) else 0
+            conn.execute(
+                "INSERT OR REPLACE INTO conversations (id, title, created_at, updated_at, user_id, is_pinned, is_archived) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (conv_id, "Chat", now, now, valid_user_id, target_pin),
+            )
+            conn.commit()
+            return bool(target_pin)
 
         if is_pinned is None:
             new_val = 0 if row["is_pinned"] else 1
         else:
             new_val = 1 if is_pinned else 0
 
-        now = _utc_now_iso()
         query_upd = "UPDATE conversations SET is_pinned = ?, updated_at = ? WHERE id = ?"
         params_upd = [new_val, now, conv_id]
         if user_id:
-            query_upd += " AND user_id = ?"
+            query_upd += " AND (user_id = ? OR user_id IS NULL OR user_id = '')"
             params_upd.append(user_id)
 
         cursor = conn.execute(query_upd, tuple(params_upd))
         conn.commit()
-        return bool(new_val) if cursor.rowcount > 0 else None
+        return bool(new_val)
 
 
 def archive_conversation(conv_id: str, is_archived: bool, user_id: str) -> bool:
@@ -791,11 +805,22 @@ def archive_conversation(conv_id: str, is_archived: bool, user_id: str) -> bool:
         now = _utc_now_iso()
         val = 1 if is_archived else 0
         cursor = conn.execute(
-            "UPDATE conversations SET is_archived = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            "UPDATE conversations SET is_archived = ?, updated_at = ? WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '')",
             (val, now, conv_id, user_id),
         )
+        if cursor.rowcount == 0:
+            valid_user_id = None
+            if user_id:
+                u_chk = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+                if u_chk:
+                    valid_user_id = user_id
+            # Multi-container serverless fallback: insert skeleton conversation with archive status
+            conn.execute(
+                "INSERT OR REPLACE INTO conversations (id, title, created_at, updated_at, user_id, is_pinned, is_archived) VALUES (?, ?, ?, ?, ?, 0, ?)",
+                (conv_id, "Chat", now, now, valid_user_id, val),
+            )
         conn.commit()
-        return cursor.rowcount > 0
+        return True
 
 
 def update_conversation_title(conv_id: str, title: str, user_id: Optional[str] = None) -> bool:

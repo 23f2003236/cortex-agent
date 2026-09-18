@@ -151,6 +151,14 @@ SYSTEM_PROMPT = os.getenv(
     "- You have a vibrant, highly intelligent, and engaging persona like Claude and ChatGPT. Use clear markdown headers, comparison tables, bullet points, and tasteful emojis (🚀, 💡, ⚡, 📊, 🎯, 🧠, 🛠️, ✨) to make explanations modern, authoritative, and delightful to read.",
 )
 
+FAST_SYSTEM_PROMPT = os.getenv(
+    "FAST_SYSTEM_PROMPT",
+    "You are Cortex, an ultra-fast, highly intelligent, and helpful AI assistant. "
+    "Respond immediately and directly to the user in clean, concise, and beautifully structured Markdown. "
+    "Do NOT call tools, do NOT emit function calls, XML tags, or search queries. "
+    "Provide authoritative, prompt, and direct answers with zero latency."
+)
+
 app = FastAPI(title="Cortex Agent", version="3.1.0")
 
 
@@ -1272,16 +1280,20 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
     m_id = (model_id or "").strip()
     model_max = get_model_max_tokens(m_id)
 
-    # Super Agent & Ultra Agent: Full 32k+ response headroom across all modes (auto, fast, thinking)
+    mode_str = (mode or "").lower()
+    if mode_str == "fast":
+        clean_q = (prompt or "").strip()
+        if len(clean_q.split()) <= 6:
+            return 1024
+        return min(model_max, 8192)
+
+    # Super Agent & Ultra Agent: Full 32k+ response headroom across auto & thinking modes
     if m_id in ("nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b"):
         return 32768
 
     # Cortex 4 models: Full 16k+ output headroom
     if m_id in ("openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"):
         return 16384
-
-    if (mode or "").lower() == "fast":
-        return min(model_max, 4096)
 
     # Strip attachment blocks (documents, images, tables, webpages) to evaluate user query intent:
     clean_query = re.sub(
@@ -2361,10 +2373,15 @@ def _format_user_message(content: str) -> HumanMessage:
     return HumanMessage(content=content)
 
 
-def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id: Optional[str] = None) -> tuple[list, ChatMessage]:
-    """Build LangChain messages with smart sliding window context budgeting (max ~60,000 chars,
-    last 30 turns) to preserve deep conversational memory, multimodal vision support,
-    and persistent cross-session memories + custom personalization directives."""
+def _build_messages(
+    request: ChatRequest,
+    user_id: Optional[str] = None,
+    conv_id: Optional[str] = None,
+    mode: str = "auto",
+) -> tuple[list, ChatMessage]:
+    """Build LangChain messages with smart sliding window context budgeting.
+    In Fast mode, uses lightweight prompt and compact history for instant TTFT.
+    In Auto/Thinking modes, preserves deep 30-turn context and full directives."""
     if not request.messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
 
@@ -2372,16 +2389,17 @@ def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id
     if last.role != "user":
         raise HTTPException(status_code=400, detail="The last message must be from the user.")
 
-    # Smart sliding window: retain up to 30 historical messages and max 60,000 chars
-    max_history_chars = 60000
-    max_history_turns = 30
+    is_fast_mode = (mode or "").lower() == "fast"
+
+    # Fast mode uses tighter history bounds for lightning-fast tokenization
+    max_history_chars = 18000 if is_fast_mode else 60000
+    max_history_turns = 12 if is_fast_mode else 30
 
     trimmed_history = history[-max_history_turns:] if len(history) > max_history_turns else history
 
     included_history = []
     char_count = 0
     for msg in reversed(trimmed_history):
-        # Calculate text length excluding massive base64 image data for budgeting
         raw_msg_content = msg.content or ""
         text_only_len = len(re.sub(r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)", "", raw_msg_content))
         if char_count + text_only_len > max_history_chars and included_history:
@@ -2389,7 +2407,8 @@ def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id
         included_history.insert(0, msg)
         char_count += text_only_len
 
-    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    active_sys_prompt = FAST_SYSTEM_PROMPT if is_fast_mode else SYSTEM_PROMPT
+    messages = [SystemMessage(content=active_sys_prompt)]
 
     # Inject Persistent Memories and Custom Personalization Instructions
     if user_id:
@@ -2399,7 +2418,7 @@ def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id
             memory_blocks.append(
                 f"[USER CUSTOM INSTRUCTIONS & SYSTEM DIRECTIVES]\n{user_instructions.strip()}"
             )
-        if conv_id:
+        if conv_id and not is_fast_mode:
             conv_instructions = database.get_conversation_custom_instructions(conv_id)
             if conv_instructions and conv_instructions.strip():
                 memory_blocks.append(
@@ -2415,7 +2434,8 @@ def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id
                     if proj.get("system_prompt"):
                         proj_parts.append(f"Project Directives & Guidelines:\n{proj['system_prompt'].strip()}")
                     memory_blocks.append("\n".join(proj_parts))
-        memories = database.get_memories(user_id, limit=20)
+        mem_limit = 5 if is_fast_mode else 20
+        memories = database.get_memories(user_id, limit=mem_limit)
         if memories:
             formatted_mems = "\n".join(
                 f"- [{m.get('category', 'preference').upper()}] {m['content']}"
@@ -2424,7 +2444,7 @@ def _build_messages(request: ChatRequest, user_id: Optional[str] = None, conv_id
             memory_blocks.append(
                 f"[STORED USER MEMORIES & PAST CONTEXT]\n{formatted_mems}"
             )
-        else:
+        elif not is_fast_mode:
             memory_blocks.append(
                 "[STORED USER MEMORIES & PAST CONTEXT]\n"
                 "No saved user memories found yet. If the user asks what you remember or asks about their project/preferences, "
@@ -2961,7 +2981,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             except Exception as sync_err:
                 logger.warning(f"Error syncing client tokens: {sync_err}")
 
-        messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id)
+        messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id, mode=mode)
 
         # Save user message to persistent DB
         user_msg = database.add_message(conv_id, role="user", content=last_user.content, user_id=current_user["id"])
@@ -3001,10 +3021,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if has_image and mode != "thinking":
                 run_tools = False
             elif mode == "fast":
-                run_tools = should_run_fast_tools(raw_content)
-                if run_tools:
-                    tools_subset = [remember, calculator]
-                    max_rounds = 2
+                run_tools = False  # Zero tool overhead in Fast mode: instant direct streaming
             elif mode == "thinking":
                 run_tools = True
             else:
@@ -3174,7 +3191,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             for attempt in range(max_attempts):
                 try:
                     stream_buffer = ""
-                    is_tool_call_stream = None  # None = undecided, True = tool intercepted, False = normal text
+                    is_tool_call_stream = False if mode == "fast" else None  # Fast mode streams immediately with zero tool buffering delay
                     intercepted_tool_info = None
 
                     for chunk in llm.stream(synthesis_messages):

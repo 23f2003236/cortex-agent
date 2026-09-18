@@ -210,6 +210,22 @@ function saveCachedConversations() {
   }
 }
 
+function getCachedArchivedIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(getUserScopedKey("cortex_archived_ids"))) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCachedArchivedIds(idSet) {
+  try {
+    localStorage.setItem(getUserScopedKey("cortex_archived_ids"), JSON.stringify(Array.from(idSet || [])));
+  } catch (e) {
+    console.warn("Failed to cache archived IDs:", e);
+  }
+}
+
 function getCachedMessages(convId) {
   if (!convId) return [];
   try {
@@ -2669,9 +2685,13 @@ async function deleteProjectFromModal() {
 async function loadConversations(autoSelectLatest = false) {
   if (!currentUser) return;
   const cached = getCachedConversations();
+  const archivedSet = getCachedArchivedIds();
+
   if (cached && cached.length > 0) {
+    const activeCached = cached.filter((c) => !archivedSet.has(c.id));
     if (!conversations || conversations.length === 0) {
-      conversations = cached;
+      conversations = activeCached;
+      sortConversationsList();
       renderConversationsList();
     }
   }
@@ -2692,16 +2712,17 @@ async function loadConversations(autoSelectLatest = false) {
     }
     if (res.ok) {
       const serverConvs = await res.json();
-      const merged = Array.isArray(serverConvs) ? [...serverConvs] : [];
+      let merged = Array.isArray(serverConvs) ? [...serverConvs] : [];
       const seen = new Set(merged.map((c) => c.id));
       for (const c of cached) {
-        if (!seen.has(c.id)) {
+        if (!seen.has(c.id) && !archivedSet.has(c.id)) {
           merged.push(c);
           seen.add(c.id);
         }
       }
-      merged.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+      merged = merged.filter((c) => !archivedSet.has(c.id));
       conversations = merged;
+      sortConversationsList();
       saveCachedConversations();
       renderConversationsList();
     }
@@ -2845,8 +2866,8 @@ function createConversationItem(c) {
 
 function sortConversationsList() {
   conversations.sort((a, b) => {
-    const aPin = (a.is_pinned === 1 || a.is_pinned === true) ? 1 : 0;
-    const bPin = (b.is_pinned === 1 || b.is_pinned === true) ? 1 : 0;
+    const aPin = (a.is_pinned === 1 || a.is_pinned === true || a.is_pinned === "1") ? 1 : 0;
+    const bPin = (b.is_pinned === 1 || b.is_pinned === true || b.is_pinned === "1") ? 1 : 0;
     if (bPin !== aPin) return bPin - aPin;
     const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
     const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
@@ -2857,13 +2878,14 @@ function sortConversationsList() {
 async function togglePinConversation(id) {
   const conv = conversations.find((c) => c.id === id);
   if (!conv) return;
-  const currentStatus = conv.is_pinned === 1 || conv.is_pinned === true;
+  const currentStatus = conv.is_pinned === 1 || conv.is_pinned === true || conv.is_pinned === "1";
   const newStatus = !currentStatus;
 
-  // Optimistic update
+  // Immediate optimistic update and cache persistence
   conv.is_pinned = newStatus ? 1 : 0;
   sortConversationsList();
   renderConversationsList();
+  saveCachedConversations();
 
   try {
     const res = await fetch(`/api/conversations/${id}/pin`, {
@@ -2875,16 +2897,17 @@ async function togglePinConversation(id) {
       signOut();
       return;
     }
-    if (!res.ok) {
-      conv.is_pinned = currentStatus ? 1 : 0;
-      sortConversationsList();
-      renderConversationsList();
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && typeof data.is_pinned === "boolean") {
+        conv.is_pinned = data.is_pinned ? 1 : 0;
+        sortConversationsList();
+        renderConversationsList();
+        saveCachedConversations();
+      }
     }
   } catch (err) {
-    console.error("Failed to toggle pin:", err);
-    conv.is_pinned = currentStatus ? 1 : 0;
-    sortConversationsList();
-    renderConversationsList();
+    console.warn("Pin toggle preserved in local cache:", err);
   }
 }
 
@@ -3077,6 +3100,26 @@ async function deleteConversation(id) {
 }
 
 async function archiveConversation(id, isArchived = true) {
+  const archivedSet = getCachedArchivedIds();
+  if (isArchived) {
+    archivedSet.add(id);
+    conversations = conversations.filter((c) => c.id !== id);
+  } else {
+    archivedSet.delete(id);
+  }
+  saveCachedArchivedIds(archivedSet);
+  saveCachedConversations();
+
+  if (isArchived) {
+    if (currentConversationId === id) {
+      localStorage.removeItem("cortex_active_conv");
+      startNewChat();
+    } else {
+      renderConversationsList();
+    }
+    showToast("Chat archived.");
+  }
+
   try {
     const res = await fetch(`/api/conversations/${id}/archive`, {
       method: "PATCH",
@@ -3087,24 +3130,12 @@ async function archiveConversation(id, isArchived = true) {
       signOut();
       return;
     }
-    if (res.ok) {
-      if (isArchived) {
-        conversations = conversations.filter((c) => c.id !== id);
-        saveCachedConversations();
-        if (currentConversationId === id) {
-          localStorage.removeItem("cortex_active_conv");
-          startNewChat();
-        } else {
-          renderConversationsList();
-        }
-        showToast("Chat archived.");
-      } else {
-        await loadConversations();
-        showToast("Chat restored to sidebar.");
-      }
+    if (!isArchived) {
+      await loadConversations();
+      showToast("Chat restored to sidebar.");
     }
   } catch (err) {
-    console.error("Failed to update archive status:", err);
+    console.warn("Archive status updated locally in cache:", err);
   }
 }
 
@@ -5910,10 +5941,11 @@ function showChatApp() {
     applyUserAvatar(currentUser.avatar || "avatar-1");
   }
   updateDynamicGreeting();
-  const savedSidebarCollapsed = localStorage.getItem("cortex_sidebar_collapsed") === "true";
-  if (savedSidebarCollapsed && window.innerWidth > 768) {
+  const savedSidebarCollapsed = localStorage.getItem("cortex_sidebar_collapsed");
+  if (savedSidebarCollapsed !== "false") {
     setSidebarCollapsed(true);
   }
+  closeMobileSidebar();
   updateExportButtonVisibility();
   loadUserMemories();
   loadUserUsage();
@@ -6069,6 +6101,24 @@ function signOut() {
 }
 
 async function checkAuth() {
+  const splashEl = document.getElementById("appSplashLoader");
+  const splashStartTime = Date.now();
+  const MIN_SPLASH_TIME = 2200; // 2.2s smooth Antigravity launch animation
+
+  const dismissSplash = (callback) => {
+    const elapsed = Date.now() - splashStartTime;
+    const remaining = Math.max(0, MIN_SPLASH_TIME - elapsed);
+    setTimeout(() => {
+      if (typeof callback === "function") callback();
+      if (splashEl) {
+        splashEl.classList.add("fade-out");
+        setTimeout(() => {
+          splashEl.remove();
+        }, 500);
+      }
+    }, remaining);
+  };
+
   try {
     const res = await fetch("/api/auth/me", {
       headers: authHeaders(),
@@ -6099,17 +6149,23 @@ async function checkAuth() {
       } else {
         startNewChat();
       }
+
+      dismissSplash();
     } else {
       localStorage.removeItem("cortex_auth_token");
       localStorage.removeItem("cortex_username");
       localStorage.setItem("cortex_active_conv", "new");
       currentUser = null;
-      showLandingPage();
       loadHealth();
+      dismissSplash(() => {
+        showLandingPage();
+      });
     }
   } catch {
-    showLandingPage();
     loadHealth();
+    dismissSplash(() => {
+      showLandingPage();
+    });
   }
 }
 
@@ -7370,5 +7426,10 @@ window.addEventListener("resize", () => {
 });
 
 // Initial Boot
+const initialCollapsedSetting = localStorage.getItem("cortex_sidebar_collapsed");
+if (initialCollapsedSetting !== "false") {
+  setSidebarCollapsed(true);
+}
+closeMobileSidebar();
 showEmptyState();
 checkAuth();
