@@ -1130,6 +1130,31 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertEqual(user_login.status_code, 200)
         self.assertEqual(user_login.json()["user"]["email"], test_email.lower())
 
+    def test_serverless_token_placeholder_reconciliation_on_login(self):
+        """Verify that a user reconstituted from a token with placeholder hash can authenticate with their valid password."""
+        uid = f"recon_{uuid.uuid4().hex[:8]}"
+        email = f"recon_{uuid.uuid4().hex[:8]}@example.com"
+        username = f"recon_user_{uuid.uuid4().hex[:6]}"
+        valid_pwd = "StrongPassword#2026"
+
+        # Reconstitute placeholder in SQLite
+        reconstituted = database.reconstitute_user(user_id=uid, username=username, email=email)
+        self.assertEqual(reconstituted["id"], uid)
+
+        # Authenticate with credentials should bind password hash and succeed
+        auth_res = database.authenticate_user(email, valid_pwd)
+        self.assertIsNotNone(auth_res)
+        self.assertEqual(auth_res["id"], uid)
+
+        # Verify password hash in DB is now real PBKDF2 hash, not placeholder
+        with database.get_connection() as conn:
+            row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (uid,)).fetchone()
+            self.assertNotEqual(row["password_hash"], "SERVERLESS_VERIFIED_TOKEN")
+
+    def test_schema_version_is_at_least_8(self):
+        """Verify database schema migration version is at least 8."""
+        self.assertGreaterEqual(database.get_schema_version(), 8)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

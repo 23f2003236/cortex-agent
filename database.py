@@ -88,7 +88,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 8
 
 
 def backup_db(target_path: Optional[Path] = None) -> Path:
@@ -329,6 +329,26 @@ def init_db() -> None:
                 "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (7, ?, 'Email-first accounts with unique email index and clean slate')",
                 (now_iso,),
             )
+        if current_v < 8:
+            # Clean slate: purge legacy test users with placeholder or obsolete hashes
+            try:
+                conn.execute(
+                    "DELETE FROM users WHERE password_hash = 'SERVERLESS_VERIFIED_TOKEN' "
+                    "OR username IN ('john123', 'john', 'aman123', 'aman', 'testuser', 'explorer', 'demo') "
+                    "OR email IN ('john123@gmail.com', 'aman123@gmail.com', 'testuser@gmail.com') "
+                    "OR email LIKE '%@local.cortex%' OR email = '' OR email IS NULL"
+                )
+                conn.execute("DELETE FROM conversations WHERE user_id NOT IN (SELECT id FROM users)")
+                conn.execute("DELETE FROM messages WHERE conversation_id NOT IN (SELECT id FROM conversations)")
+                conn.execute("DELETE FROM memories WHERE user_id NOT IN (SELECT id FROM users)")
+                conn.execute("DELETE FROM projects WHERE user_id NOT IN (SELECT id FROM users)")
+                conn.execute("DELETE FROM daily_usage WHERE user_id NOT IN (SELECT id FROM users)")
+            except Exception:
+                pass
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (8, ?, 'Purge placeholder serverless hashes and obsolete test accounts for clean slate launch')",
+                (now_iso,),
+            )
 
         conn.commit()
 
@@ -546,7 +566,21 @@ def update_user_password(identifier: str, new_password: str) -> Optional[dict[st
             uname_arg = clean_id.split("@")[0] if "@" in clean_id else clean_id
             target_id = generate_user_id(clean_id)
             conn.execute(
-                "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                """
+                INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(id) DO UPDATE SET
+                    username = excluded.username,
+                    email = excluded.email,
+                    password_hash = excluded.password_hash,
+                    salt = excluded.salt,
+                    is_guest = 0
+                ON CONFLICT(username) DO UPDATE SET
+                    email = excluded.email,
+                    password_hash = excluded.password_hash,
+                    salt = excluded.salt,
+                    is_guest = 0
+                """,
                 (target_id, uname_arg, email_arg, pw_hash, salt, now),
             )
         conn.commit()
@@ -575,17 +609,41 @@ def authenticate_user(identifier: str, password: str, allow_auto_provision: bool
             if allow_auto_provision and len(password) >= 8:
                 valid, _ = validate_password_complexity(password)
                 if valid:
+                    email_arg = clean_id if "@" in clean_id else f"{clean_id}@local.cortex"
+                    uname_arg = clean_id.split("@")[0] if "@" in clean_id else clean_id
                     try:
-                        email_arg = clean_id if "@" in clean_id else f"{clean_id}@local.cortex"
-                        uname_arg = clean_id.split("@")[0] if "@" in clean_id else clean_id
                         return create_user(username=uname_arg, password=password, email=email_arg, user_id=generate_user_id(clean_id))
-                    except Exception as e:
-                        logger.warning("Auto-provisioning user '%s' failed: %s", clean_id, e)
+                    except Exception:
+                        try:
+                            uname_unique = f"{uname_arg}_{secrets.token_hex(2)}"
+                            return create_user(username=uname_unique, password=password, email=email_arg, user_id=generate_user_id(clean_id))
+                        except Exception as e:
+                            logger.warning("Auto-provisioning user '%s' failed: %s", clean_id, e)
             return None
 
         # Guest accounts cannot authenticate via password credentials
         if bool(row["is_guest"]) or row["password_hash"] == "GUEST_ANONYMOUS":
             return None
+
+        # Serverless placeholder handling: if user was reconstituted from token, bind password hash
+        if row["password_hash"] == "SERVERLESS_VERIFIED_TOKEN":
+            if len(password) >= 8:
+                valid, _ = validate_password_complexity(password)
+                if valid:
+                    pw_hash, salt = hash_password(password)
+                    conn.execute(
+                        "UPDATE users SET password_hash = ?, salt = ?, is_guest = 0 WHERE id = ?",
+                        (pw_hash, salt, row["id"]),
+                    )
+                    conn.commit()
+                    return {
+                        "id": row["id"],
+                        "username": row["username"],
+                        "email": row["email"],
+                        "is_guest": False,
+                        "created_at": row["created_at"],
+                        "avatar": row["avatar"] or "avatar-1",
+                    }
 
         if verify_password(password, row["password_hash"], row["salt"]):
             # Transparently upgrade legacy 100k hashes to 600k rounds on login
