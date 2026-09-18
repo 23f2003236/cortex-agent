@@ -355,7 +355,32 @@ def verify_password(password: str, password_hash: str, salt: str) -> bool:
     return secrets.compare_digest(computed_hash, password_hash)
 
 
-def create_user(username: str, password: str, email: Optional[str] = None) -> dict[str, Any]:
+def generate_user_id(username: str) -> str:
+    """Generate a deterministic, immutable RFC-4122 UUIDv5 for a registered username.
+    Guarantees that across all Vercel/serverless containers, cold starts, and re-logins,
+    the user's ID never changes."""
+    clean = (username or "explorer").strip().lower()
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"cortex.user:{clean}"))
+
+
+def transfer_guest_data_to_user(guest_id: Optional[str], target_user_id: str) -> None:
+    """Migrate conversations, messages, memories, and projects from an ephemeral guest session
+    or unassigned state to an authenticated registered user."""
+    if not target_user_id:
+        return
+    with get_connection() as conn:
+        _begin_immediate(conn)
+        if guest_id and guest_id != target_user_id:
+            conn.execute("UPDATE conversations SET user_id = ? WHERE user_id = ?", (target_user_id, guest_id))
+            conn.execute("UPDATE memories SET user_id = ? WHERE user_id = ?", (target_user_id, guest_id))
+            conn.execute("UPDATE user_projects SET user_id = ? WHERE user_id = ?", (target_user_id, guest_id))
+        # Adopt any orphaned conversations or memories without explicit owner
+        conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (target_user_id,))
+        conn.execute("UPDATE memories SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (target_user_id,))
+        conn.commit()
+
+
+def create_user(username: str, password: str, email: Optional[str] = None, user_id: Optional[str] = None) -> dict[str, Any]:
     username_clean = username.strip().lower()
     if not username_clean:
         raise ValueError("Username cannot be empty.")
@@ -363,25 +388,25 @@ def create_user(username: str, password: str, email: Optional[str] = None) -> di
         raise ValueError("Password must be at least 8 characters long.")
 
     pw_hash, salt = hash_password(password)
-    user_id = str(uuid.uuid4())
+    target_user_id = user_id or generate_user_id(username_clean)
     now = _utc_now_iso()
 
     with get_connection() as conn:
         try:
             conn.execute(
                 "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 0)",
-                (user_id, username_clean, (email or "").strip(), pw_hash, salt, now),
+                (target_user_id, username_clean, (email or "").strip(), pw_hash, salt, now),
             )
             # If this is the first registered user, auto-assign any orphan conversations
             count_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE is_guest = 0").fetchone()["c"]
             if count_users == 1:
-                conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL", (user_id,))
+                conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (target_user_id,))
             conn.commit()
         except sqlite3.IntegrityError:
             raise ValueError(f"Username '{username_clean}' is already registered.")
 
     return {
-        "id": user_id,
+        "id": target_user_id,
         "username": username_clean,
         "email": (email or "").strip(),
         "is_guest": False,
@@ -403,7 +428,7 @@ def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
             # seamlessly create the account on this container with their credentials!
             if (os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")) and len(password) >= 8:
                 try:
-                    return create_user(username_clean, password)
+                    return create_user(username_clean, password, user_id=generate_user_id(username_clean))
                 except Exception:
                     pass
             return None

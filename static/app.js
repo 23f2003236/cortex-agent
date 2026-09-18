@@ -189,14 +189,136 @@ function authHeaders(extra = {}) {
 }
 
 // ---------------- Client-Side Hybrid Storage & Caching ----------------
+function getUserIdentifier() {
+  if (currentUser && currentUser.username && !currentUser.is_guest) {
+    return currentUser.username.toLowerCase().trim();
+  }
+  const storedUser = localStorage.getItem("cortex_username");
+  if (storedUser && storedUser !== "guest") {
+    return storedUser.toLowerCase().trim();
+  }
+  if (currentUser && currentUser.id) {
+    return currentUser.id;
+  }
+  return "guest";
+}
+
 function getUserScopedKey(prefix) {
-  const uid = (currentUser && currentUser.id) ? currentUser.id : "guest";
+  const uid = getUserIdentifier();
   return `${prefix}_${uid}`;
+}
+
+function migrateSessionDataToUser(user) {
+  if (!user) return;
+  const userKey = (user.username && !user.is_guest) ? user.username.toLowerCase().trim() : (user.id || "guest");
+  if (userKey === "guest") return;
+
+  // 1. Conversations migration
+  try {
+    let targetConvs = JSON.parse(localStorage.getItem(`cortex_convs_${userKey}`)) || [];
+    if (!targetConvs.length && user.id) {
+      targetConvs = JSON.parse(localStorage.getItem(`cortex_convs_${user.id}`)) || [];
+    }
+    const seenIds = new Set(targetConvs.map((c) => c.id));
+    const guestConvs = JSON.parse(localStorage.getItem("cortex_convs_guest")) || [];
+    for (const gc of guestConvs) {
+      if (gc && gc.id && !seenIds.has(gc.id)) {
+        targetConvs.push(gc);
+        seenIds.add(gc.id);
+      }
+    }
+    localStorage.setItem(`cortex_convs_${userKey}`, JSON.stringify(targetConvs));
+    if (user.id) localStorage.setItem(`cortex_convs_${user.id}`, JSON.stringify(targetConvs));
+  } catch (e) {
+    console.warn("Migration convs error:", e);
+  }
+
+  // 2. Artifacts migration
+  try {
+    let targetArts = JSON.parse(localStorage.getItem(`cortex_arts_${userKey}`)) || [];
+    if (!targetArts.length && user.id) {
+      targetArts = JSON.parse(localStorage.getItem(`cortex_arts_${user.id}`)) || [];
+    }
+    const seenArtKeys = new Set(targetArts.map((a) => a.id || a.filename));
+    const guestArts = JSON.parse(localStorage.getItem("cortex_arts_guest")) || [];
+    for (const ga of guestArts) {
+      const k = ga.id || ga.filename;
+      if (k && !seenArtKeys.has(k)) {
+        targetArts.push(ga);
+        seenArtKeys.add(k);
+      }
+    }
+    localStorage.setItem(`cortex_arts_${userKey}`, JSON.stringify(targetArts));
+    if (user.id) localStorage.setItem(`cortex_arts_${user.id}`, JSON.stringify(targetArts));
+  } catch (e) {
+    console.warn("Migration arts error:", e);
+  }
+
+  // 3. Memories migration
+  try {
+    let targetMems = JSON.parse(localStorage.getItem(`cortex_memories_${userKey}`)) || [];
+    if (!targetMems.length && user.id) {
+      targetMems = JSON.parse(localStorage.getItem(`cortex_memories_${user.id}`)) || [];
+    }
+    const seenContents = new Set(targetMems.map((m) => (m.content || "").toLowerCase().trim()));
+    const guestMems = JSON.parse(localStorage.getItem("cortex_memories_guest")) || [];
+    for (const gm of guestMems) {
+      const ct = (gm.content || "").toLowerCase().trim();
+      if (ct && !seenContents.has(ct)) {
+        targetMems.push(gm);
+        seenContents.add(ct);
+      }
+    }
+    localStorage.setItem(`cortex_memories_${userKey}`, JSON.stringify(targetMems));
+    if (user.id) localStorage.setItem(`cortex_memories_${user.id}`, JSON.stringify(targetMems));
+  } catch (e) {
+    console.warn("Migration mems error:", e);
+  }
+}
+
+function showSplashTransition(statusText, durationMs = 1800, onComplete) {
+  const splashEl = document.getElementById("appSplashLoader");
+  if (!splashEl) {
+    if (typeof onComplete === "function") onComplete();
+    return;
+  }
+  const label = splashEl.querySelector(".splash-status-label");
+  if (label && statusText) {
+    label.textContent = statusText;
+  }
+  splashEl.style.display = "flex";
+  splashEl.classList.remove("fade-out");
+  splashEl.style.opacity = "1";
+  splashEl.style.visibility = "visible";
+  splashEl.style.pointerEvents = "all";
+
+  setTimeout(() => {
+    if (typeof onComplete === "function") {
+      try {
+        onComplete();
+      } catch (err) {
+        console.error("Splash completion callback error:", err);
+      }
+    }
+    splashEl.classList.add("fade-out");
+    setTimeout(() => {
+      splashEl.style.display = "none";
+      if (label) label.textContent = "Initializing neural runtime...";
+    }, 450);
+  }, Math.max(700, durationMs));
 }
 
 function getCachedConversations() {
   try {
-    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_convs"))) || [];
+    const key = getUserScopedKey("cortex_convs");
+    let list = JSON.parse(localStorage.getItem(key));
+    if ((!list || !list.length) && currentUser && currentUser.id) {
+      list = JSON.parse(localStorage.getItem(`cortex_convs_${currentUser.id}`));
+    }
+    if ((!list || !list.length) && currentUser && !currentUser.is_guest) {
+      list = JSON.parse(localStorage.getItem("cortex_convs_guest"));
+    }
+    return Array.isArray(list) ? list : [];
   } catch {
     return [];
   }
@@ -204,7 +326,11 @@ function getCachedConversations() {
 
 function saveCachedConversations() {
   try {
-    localStorage.setItem(getUserScopedKey("cortex_convs"), JSON.stringify(conversations || []));
+    const payload = JSON.stringify(conversations || []);
+    localStorage.setItem(getUserScopedKey("cortex_convs"), payload);
+    if (currentUser && currentUser.id) {
+      localStorage.setItem(`cortex_convs_${currentUser.id}`, payload);
+    }
   } catch (e) {
     console.warn("Failed to cache conversations:", e);
   }
@@ -220,7 +346,11 @@ function getCachedArchivedIds() {
 
 function saveCachedArchivedIds(idSet) {
   try {
-    localStorage.setItem(getUserScopedKey("cortex_archived_ids"), JSON.stringify(Array.from(idSet || [])));
+    const payload = JSON.stringify(Array.from(idSet || []));
+    localStorage.setItem(getUserScopedKey("cortex_archived_ids"), payload);
+    if (currentUser && currentUser.id) {
+      localStorage.setItem(`cortex_archived_ids_${currentUser.id}`, payload);
+    }
   } catch (e) {
     console.warn("Failed to cache archived IDs:", e);
   }
@@ -246,7 +376,15 @@ function saveCachedMessages(convId, msgs) {
 
 function getCachedArtifacts() {
   try {
-    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_arts"))) || [];
+    const key = getUserScopedKey("cortex_arts");
+    let list = JSON.parse(localStorage.getItem(key));
+    if ((!list || !list.length) && currentUser && currentUser.id) {
+      list = JSON.parse(localStorage.getItem(`cortex_arts_${currentUser.id}`));
+    }
+    if ((!list || !list.length) && currentUser && !currentUser.is_guest) {
+      list = JSON.parse(localStorage.getItem("cortex_arts_guest"));
+    }
+    return Array.isArray(list) ? list : [];
   } catch {
     return [];
   }
@@ -262,8 +400,7 @@ function saveCachedArtifact(art) {
     } else {
       list.unshift(art);
     }
-    localStorage.setItem(getUserScopedKey("cortex_arts"), JSON.stringify(list));
-    updateArtifactsBadge(list.length);
+    saveCachedArtifactsList(list);
   } catch (e) {
     console.warn("Failed to cache artifact:", e);
   }
@@ -271,7 +408,11 @@ function saveCachedArtifact(art) {
 
 function saveCachedArtifactsList(list) {
   try {
-    localStorage.setItem(getUserScopedKey("cortex_arts"), JSON.stringify(list || []));
+    const payload = JSON.stringify(list || []);
+    localStorage.setItem(getUserScopedKey("cortex_arts"), payload);
+    if (currentUser && currentUser.id) {
+      localStorage.setItem(`cortex_arts_${currentUser.id}`, payload);
+    }
     updateArtifactsBadge((list || []).length);
   } catch (e) {
     console.warn("Failed to save artifacts list:", e);
@@ -362,7 +503,15 @@ function saveCachedUsage(tokensUsed, limit = 300000) {
 
 function getCachedMemories() {
   try {
-    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_memories"))) || [];
+    const key = getUserScopedKey("cortex_memories");
+    let list = JSON.parse(localStorage.getItem(key));
+    if ((!list || !list.length) && currentUser && currentUser.id) {
+      list = JSON.parse(localStorage.getItem(`cortex_memories_${currentUser.id}`));
+    }
+    if ((!list || !list.length) && currentUser && !currentUser.is_guest) {
+      list = JSON.parse(localStorage.getItem("cortex_memories_guest"));
+    }
+    return Array.isArray(list) ? list : [];
   } catch {
     return [];
   }
@@ -370,7 +519,11 @@ function getCachedMemories() {
 
 function saveCachedMemories(list) {
   try {
-    localStorage.setItem(getUserScopedKey("cortex_memories"), JSON.stringify(list || []));
+    const payload = JSON.stringify(list || []);
+    localStorage.setItem(getUserScopedKey("cortex_memories"), payload);
+    if (currentUser && currentUser.id) {
+      localStorage.setItem(`cortex_memories_${currentUser.id}`, payload);
+    }
   } catch (e) {
     console.warn("Failed to cache memories:", e);
   }
@@ -5386,15 +5539,17 @@ confirmDeleteAccountBtn?.addEventListener("click", async () => {
     if (res.ok) {
       if (deleteAccountModal) deleteAccountModal.style.display = "none";
       closeSettingsModal();
-      localStorage.clear();
-      sessionStorage.clear();
-      currentUser = null;
-      conversations = [];
-      messages = [];
-      userMemories = [];
-      userProjects = [];
-      showLandingPage();
-      showToast("Your account and all workspace data have been permanently deleted.");
+      showSplashTransition("Permanently deleting account & data...", 2000, () => {
+        localStorage.clear();
+        sessionStorage.clear();
+        currentUser = null;
+        conversations = [];
+        messages = [];
+        userMemories = [];
+        userProjects = [];
+        showLandingPage();
+        showToast("Your account and all workspace data have been permanently deleted.");
+      });
     } else {
       const err = await res.json().catch(() => ({}));
       showToast(err.detail || "Failed to delete account. Please try again.");
@@ -6036,10 +6191,11 @@ async function handleAuthSubmit(e) {
     if (data.token) {
       localStorage.setItem("cortex_auth_token", data.token);
     }
-    localStorage.setItem("cortex_active_conv", "new");
     if (currentUser && currentUser.username) {
       localStorage.setItem("cortex_username", currentUser.username);
     }
+    // Migrate any guest session conversations, artifacts, and memories into user scope
+    migrateSessionDataToUser(currentUser);
     if (authMode === "register") {
       // Fresh new signup: enable full interactive tour and confetti celebration
       localStorage.removeItem("cortex_tour_completed");
@@ -6048,9 +6204,21 @@ async function handleAuthSubmit(e) {
 
     closeAuthModal();
     showChatApp();
-    startNewChat();
     await loadProjects();
     await loadConversations(false);
+    loadUserMemories();
+    loadArtifactsCount();
+    loadUserUsage();
+
+    // Auto-restore active or recent conversation so chats never appear missing
+    const activeStored = localStorage.getItem("cortex_active_conv");
+    if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
+      await switchConversation(activeStored);
+    } else if (conversations && conversations.length > 0) {
+      await switchConversation(conversations[0].id);
+    } else {
+      startNewChat();
+    }
   } catch (err) {
     if (authErrorAlert) {
       authErrorAlert.textContent = err.message;
@@ -6065,39 +6233,42 @@ async function handleAuthSubmit(e) {
 }
 
 function signOut() {
-  try {
-    fetch("/api/auth/logout", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      credentials: "same-origin",
-    }).catch(() => {});
-  } catch {}
-  localStorage.removeItem("cortex_auth_token");
-  localStorage.setItem("cortex_active_conv", "new");
-  localStorage.removeItem("cortex_username");
-  const overlay = document.getElementById("tourOverlay") || tourOverlay;
-  const card = document.getElementById("tourCard") || tourCard;
-  if (overlay) overlay.style.display = "none";
-  if (card) card.style.display = "none";
-  const celToast = document.getElementById("celebrationToast") || celebrationToast;
-  if (celToast) celToast.style.display = "none";
-  const confetti = document.getElementById("confettiCanvas") || confettiCanvas;
-  if (confetti) confetti.style.display = "none";
-  currentUser = null;
-  conversations = [];
-  messages = [];
-  userMemories = [];
-  updateMemoryBadges();
-  userProjects = [];
-  currentProjectId = "";
-  if (projectsListContainer) {
-    projectsListContainer.innerHTML = '<button class="project-pill active" data-project-id="" type="button">All Chats</button>';
-  }
-  currentConversationId = null;
-  startNewChat();
-  if (chatEl) chatEl.innerHTML = "";
-  if (conversationsListEl) conversationsListEl.innerHTML = "";
-  showLandingPage();
+  showSplashTransition("Signing out securely...", 1800, () => {
+    try {
+      fetch("/api/auth/logout", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        credentials: "same-origin",
+      }).catch(() => {});
+    } catch {}
+    localStorage.removeItem("cortex_auth_token");
+    localStorage.setItem("cortex_active_conv", "new");
+    localStorage.removeItem("cortex_username");
+    const overlay = document.getElementById("tourOverlay") || tourOverlay;
+    const card = document.getElementById("tourCard") || tourCard;
+    if (overlay) overlay.style.display = "none";
+    if (card) card.style.display = "none";
+    const celToast = document.getElementById("celebrationToast") || celebrationToast;
+    if (celToast) celToast.style.display = "none";
+    const confetti = document.getElementById("confettiCanvas") || confettiCanvas;
+    if (confetti) confetti.style.display = "none";
+    currentUser = null;
+    conversations = [];
+    messages = [];
+    userMemories = [];
+    updateMemoryBadges();
+    userProjects = [];
+    currentProjectId = "";
+    if (projectsListContainer) {
+      projectsListContainer.innerHTML = '<button class="project-pill active" data-project-id="" type="button">All Chats</button>';
+    }
+    currentConversationId = null;
+    startNewChat();
+    if (chatEl) chatEl.innerHTML = "";
+    if (conversationsListEl) conversationsListEl.innerHTML = "";
+    showLandingPage();
+    showToast("Signed out successfully.");
+  });
 }
 
 async function checkAuth() {
@@ -6113,7 +6284,7 @@ async function checkAuth() {
       if (splashEl) {
         splashEl.classList.add("fade-out");
         setTimeout(() => {
-          splashEl.remove();
+          splashEl.style.display = "none";
         }, 500);
       }
     }, remaining);
@@ -6129,11 +6300,13 @@ async function checkAuth() {
       if (currentUser && currentUser.username) {
         localStorage.setItem("cortex_username", currentUser.username);
       }
+      // Migrate any guest session data into user scope
+      migrateSessionDataToUser(currentUser);
       showChatApp();
       updateDynamicGreeting();
       loadHealth();
 
-      // Strict Clean Re-entry: Only open a previous chat if explicitly given in URL (?c=...)
+      // Check if explicit conversation was requested in URL (?c=...)
       let targetConvId = null;
       try {
         const urlParams = new URLSearchParams(window.location.search);
@@ -6143,11 +6316,21 @@ async function checkAuth() {
 
       await loadProjects();
       await loadConversations(false);
+      loadUserMemories();
+      loadArtifactsCount();
+      loadUserUsage();
 
       if (targetConvId) {
         await switchConversation(targetConvId);
       } else {
-        startNewChat();
+        const activeStored = localStorage.getItem("cortex_active_conv");
+        if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
+          await switchConversation(activeStored);
+        } else if (conversations && conversations.length > 0) {
+          await switchConversation(conversations[0].id);
+        } else {
+          startNewChat();
+        }
       }
 
       dismissSplash();
@@ -6755,12 +6938,10 @@ menuTourBtn?.addEventListener("click", (e) => {
 menuSignOutBtn?.addEventListener("click", () => {
   closeUserProfileMenu();
   signOut();
-  showToast("Signed out successfully.");
 });
 
 signOutBtn?.addEventListener("click", () => {
   signOut();
-  showToast("Signed out successfully.");
 });
 
 // Global Keyboard Shortcuts (Ctrl+B for sidebar, Ctrl+K or / for search)

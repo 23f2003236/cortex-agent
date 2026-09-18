@@ -535,6 +535,21 @@ def register(payload: RegisterPayload, request: Request, response: Response):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Username '{clean_user}' is already taken.")
         raise HTTPException(status_code=400, detail=err_str)
 
+    # Seamlessly transfer any guest session conversations & memories to new account
+    guest_token = request.cookies.get("cortex_session")
+    if guest_token:
+        try:
+            token_data = verify_token(guest_token)
+            if token_data:
+                database.transfer_guest_data_to_user(token_data.get("uid"), user["id"])
+        except Exception:
+            pass
+    else:
+        try:
+            database.transfer_guest_data_to_user(None, user["id"])
+        except Exception:
+            pass
+
     token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
     resp = {
@@ -583,6 +598,21 @@ def login(payload: LoginPayload, request: Request, response: Response):
     # Successful authentication resets failed attempt counters
     database.reset_auth_attempts(f"login_user:{clean_user}")
     database.reset_auth_attempts(f"login_ip:{client_ip}")
+
+    # Seamlessly transfer any guest session conversations & memories to authenticated account
+    guest_token = request.cookies.get("cortex_session")
+    if guest_token:
+        try:
+            token_data = verify_token(guest_token)
+            if token_data:
+                database.transfer_guest_data_to_user(token_data.get("uid"), user["id"])
+        except Exception:
+            pass
+    else:
+        try:
+            database.transfer_guest_data_to_user(None, user["id"])
+        except Exception:
+            pass
 
     token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
