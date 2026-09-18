@@ -929,10 +929,13 @@ class DistributedRateLimiter:
           </div>
 
           <div class="form-group">
-            <label for="authPassword">Password</label>
+            <div class="auth-label-row">
+              <label for="authPassword" id="authPasswordLabel">Password</label>
+              <button type="button" id="authForgotToggleBtn" class="auth-forgot-link">Forgot password?</button>
+            </div>
             <div class="input-with-icon">
               <svg class="input-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              <input type="password" id="authPassword" placeholder="••••••••" required minlength="8" autocomplete="current-password" />
+              <input type="password" id="authPassword" placeholder="••••••••" required minlength="6" autocomplete="current-password" />
               <button type="button" id="authTogglePasswordBtn" class="password-toggle-btn" title="Toggle password visibility">
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
@@ -942,7 +945,7 @@ class DistributedRateLimiter:
               <div class="password-strength-track">
                 <div id="passwordStrengthBar" class="password-strength-fill"></div>
               </div>
-              <span id="passwordStrengthText" class="password-strength-text">Enter at least 8 characters</span>
+              <span id="passwordStrengthText" class="password-strength-text">Enter at least 6 characters</span>
             </div>
           </div>
 
@@ -2523,6 +2526,30 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
               <li><strong>SQLite Memory Store:</strong> Cortex remembers your background, preferences, and personal directives across all sessions.</li>
               <li><strong>Artifacts Archive:</strong> Every <code>.md</code> document or code artifact created is automatically indexed in your Artifacts tab for instant retrieval and split-panel reading.</li>
             </ul>
+          </div>
+
+          <div class="guide-card guide-sync-card">
+            <div class="guide-sync-header">
+              <span class="guide-sync-badge">🛡️ Indestructible Storage</span>
+              <h3>🔄 Zero-Data-Loss Synchronization & Data Recovery</h3>
+            </div>
+            <p>Your chats, artifacts, memories, and token usage are preserved permanently using our local-first self-healing engine:</p>
+            <ul class="guide-bullet-list">
+              <li><strong>Continuous Bi-Directional Cloud Sync:</strong> Every turn, generated artifact, memory, and message is cached locally in your browser and automatically synchronized with the cloud database.</li>
+              <li><strong>Missing past chats or data after a deployment or server restart?</strong> If the cloud server had an ephemeral restart or new code was deployed, simply click <strong>Sync Cloud Database Now</strong> below or in <strong>Settings ⚙️ &rarr; Workspace Data & Preservation</strong>. Your browser's local cache will immediately self-heal and re-populate the cloud database with zero data loss.</li>
+              <li><strong>Full Offline Portability:</strong> You can also export and download an offline <code>.json</code> backup archive from Settings anytime to move between devices or keep permanent local copies.</li>
+            </ul>
+            <div class="guide-sync-action-row">
+              <button type="button" id="guideSyncNowBtn" class="btn-guide-sync">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+                <span>Sync Cloud Database Now</span>
+              </button>
+              <button type="button" id="guideOpenSettingsBtn" class="btn-guide-outline">
+                <span>Open Settings Data Panel ⚙️</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

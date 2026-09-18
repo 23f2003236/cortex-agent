@@ -981,6 +981,72 @@ class TestProductionReadiness(unittest.TestCase):
         conv_ids = [c["id"] for c in database.get_conversations(self.user["id"])]
         self.assertIn(new_conv_id, conv_ids)
 
+    def test_self_healing_auth_provisioning(self):
+        """Verify that authenticating an unprovisioned user automatically provisions deterministically."""
+        fresh_username = f"auto_{uuid.uuid4().hex[:8]}"
+        fresh_pass = "AutoProvision123!"
+
+        # Authenticate without registering first
+        user = database.authenticate_user(fresh_username, fresh_pass, allow_auto_provision=True)
+        self.assertIsNotNone(user)
+        self.assertEqual(user["username"], fresh_username.lower())
+        expected_uid = database.generate_user_id(fresh_username)
+        self.assertEqual(user["id"], expected_uid)
+
+        # Subsequent authenticate with matching credentials succeeds
+        user_repeat = database.authenticate_user(fresh_username, fresh_pass, allow_auto_provision=False)
+        self.assertIsNotNone(user_repeat)
+        self.assertEqual(user_repeat["id"], expected_uid)
+
+    def test_reset_password_endpoint_and_force_reset(self):
+        """Verify password reset endpoint and force_reset login flag."""
+        target_user = f"reset_{uuid.uuid4().hex[:8]}"
+        initial_pass = "InitialPass123!"
+        new_pass = "NewResetPass456!"
+
+        # Register user
+        reg_res = self.client.post("/api/auth/register", json={
+            "username": target_user,
+            "password": initial_pass,
+        })
+        self.assertEqual(reg_res.status_code, 201)
+
+        # 1. Test /api/auth/reset-password
+        reset_res = self.client.post("/api/auth/reset-password", json={
+            "username": target_user,
+            "password": new_pass,
+        })
+        self.assertEqual(reset_res.status_code, 200)
+        reset_data = reset_res.json()
+        self.assertTrue(reset_data["ok"])
+        self.assertEqual(reset_data["user"]["username"], target_user.lower())
+
+        # Verify old password fails
+        old_login = self.client.post("/api/auth/login", json={
+            "username": target_user,
+            "password": initial_pass,
+        })
+        self.assertEqual(old_login.status_code, 401)
+
+        # Verify new password succeeds
+        new_login = self.client.post("/api/auth/login", json={
+            "username": target_user,
+            "password": new_pass,
+        })
+        self.assertEqual(new_login.status_code, 200)
+
+        # 2. Test login with force_reset=True
+        third_pass = "ThirdPass789!"
+        force_login = self.client.post("/api/auth/login", json={
+            "username": target_user,
+            "password": third_pass,
+            "force_reset": True,
+        })
+        self.assertEqual(force_login.status_code, 200)
+        force_data = force_login.json()
+        self.assertTrue(force_data["ok"])
+        self.assertEqual(force_data["user"]["username"], target_user.lower())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

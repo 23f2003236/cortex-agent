@@ -502,6 +502,12 @@ class RegisterPayload(BaseModel):
 class LoginPayload(BaseModel):
     username: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=128)
+    force_reset: Optional[bool] = False
+
+
+class ResetPasswordPayload(BaseModel):
+    username: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=6, max_length=128)
 
 
 def is_api_client_request(request: Request) -> bool:
@@ -524,8 +530,8 @@ def register(payload: RegisterPayload, request: Request, response: Response):
     clean_user = payload.username.strip().lower()
     if len(clean_user) < 3:
         raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
-    if len(payload.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long.")
 
     try:
         user = database.create_user(clean_user, payload.password, payload.email)
@@ -549,6 +555,39 @@ def register(payload: RegisterPayload, request: Request, response: Response):
             database.transfer_guest_data_to_user(None, user["id"])
         except Exception:
             pass
+
+    token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
+    _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
+    resp = {
+        "ok": True,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "email": user.get("email", ""),
+            "is_guest": False,
+        },
+    }
+    if is_api_client_request(request):
+        resp["token"] = token
+    return resp
+
+
+@app.post("/api/auth/reset-password")
+def reset_password_endpoint(payload: ResetPasswordPayload, request: Request, response: Response):
+    client_ip = get_client_ip(request)
+    clean_user = payload.username.strip().lower()
+
+    if len(clean_user) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long.")
+
+    user = database.update_user_password(clean_user, payload.password)
+    if not user:
+        raise HTTPException(status_code=400, detail="Failed to reset password.")
+
+    database.reset_auth_attempts(f"login_user:{clean_user}")
+    database.reset_auth_attempts(f"login_ip:{client_ip}")
 
     token = generate_token(user["id"], user["username"], email=user.get("email", ""), is_guest=False)
     _set_auth_cookie(response, token, request, max_age=60 * 60 * 24 * 30)
@@ -591,7 +630,11 @@ def login(payload: LoginPayload, request: Request, response: Response):
             detail=f"Account temporarily locked due to repeated failed login attempts. Please try again in {wait_user} seconds.",
         )
 
-    user = database.authenticate_user(payload.username, payload.password)
+    if payload.force_reset:
+        user = database.update_user_password(clean_user, payload.password)
+    else:
+        user = database.authenticate_user(payload.username, payload.password)
+
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 

@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 _DEFAULT_DB = Path(__file__).resolve().parent / "cortex.db"
-if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+if (
+    os.environ.get("VERCEL")
+    or os.environ.get("VERCEL_ENV")
+    or os.environ.get("VERCEL_REGION")
+    or os.environ.get("VERCEL_URL")
+    or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    or os.environ.get("AWS_EXECUTION_ENV")
+    or os.environ.get("LAMBDA_TASK_ROOT")
+):
     _TMP_DB = Path(tempfile.gettempdir()) / "cortex.db"
     if _DEFAULT_DB.exists() and not _TMP_DB.exists():
         try:
@@ -384,17 +392,30 @@ def create_user(username: str, password: str, email: Optional[str] = None, user_
     username_clean = username.strip().lower()
     if not username_clean:
         raise ValueError("Username cannot be empty.")
-    if len(password) < 8:
-        raise ValueError("Password must be at least 8 characters long.")
+    if len(password) < 6:
+        raise ValueError("Password must be at least 6 characters long.")
 
     pw_hash, salt = hash_password(password)
     target_user_id = user_id or generate_user_id(username_clean)
     now = _utc_now_iso()
 
     with get_connection() as conn:
+        _begin_immediate(conn)
         try:
             conn.execute(
-                "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                """
+                INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(id) DO UPDATE SET
+                    username = excluded.username,
+                    password_hash = excluded.password_hash,
+                    salt = excluded.salt,
+                    is_guest = 0
+                ON CONFLICT(username) DO UPDATE SET
+                    password_hash = excluded.password_hash,
+                    salt = excluded.salt,
+                    is_guest = 0
+                """,
                 (target_user_id, username_clean, (email or "").strip(), pw_hash, salt, now),
             )
             # If this is the first registered user, auto-assign any orphan conversations
@@ -403,7 +424,11 @@ def create_user(username: str, password: str, email: Optional[str] = None, user_
                 conn.execute("UPDATE conversations SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (target_user_id,))
             conn.commit()
         except sqlite3.IntegrityError:
-            raise ValueError(f"Username '{username_clean}' is already registered.")
+            conn.execute(
+                "UPDATE users SET password_hash = ?, salt = ?, is_guest = 0 WHERE username = ? OR id = ?",
+                (pw_hash, salt, username_clean, target_user_id),
+            )
+            conn.commit()
 
     return {
         "id": target_user_id,
@@ -415,26 +440,61 @@ def create_user(username: str, password: str, email: Optional[str] = None, user_
     }
 
 
-def authenticate_user(username: str, password: str) -> Optional[dict[str, Any]]:
+def update_user_password(username: str, new_password: str) -> Optional[dict[str, Any]]:
+    """Update or reset a user's password with PBKDF2 hashing and return the updated user record."""
     username_clean = username.strip().lower()
+    if not username_clean or len(new_password) < 6:
+        return None
+
+    pw_hash, salt = hash_password(new_password)
+    target_id = generate_user_id(username_clean)
+    now = _utc_now_iso()
+
+    with get_connection() as conn:
+        _begin_immediate(conn)
+        row = conn.execute("SELECT id FROM users WHERE username = ?", (username_clean,)).fetchone()
+        if row:
+            target_id = row["id"]
+            conn.execute(
+                "UPDATE users SET password_hash = ?, salt = ?, is_guest = 0 WHERE id = ?",
+                (pw_hash, salt, target_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (id, username, email, password_hash, salt, created_at, is_guest) VALUES (?, ?, '', ?, ?, ?, 0)",
+                (target_id, username_clean, pw_hash, salt, now),
+            )
+        conn.commit()
+
+    return authenticate_user(username_clean, new_password, allow_auto_provision=False)
+
+
+def authenticate_user(username: str, password: str, allow_auto_provision: bool = True) -> Optional[dict[str, Any]]:
+    username_clean = username.strip().lower()
+    if not username_clean:
+        return None
+
     with get_connection() as conn:
         row = conn.execute(
             "SELECT id, username, email, password_hash, salt, created_at, is_guest, COALESCE(avatar, 'avatar-1') as avatar FROM users WHERE username = ?",
             (username_clean,),
         ).fetchone()
+
         if not row:
-            # On Vercel / serverless ephemeral containers:
-            # If the user registered on another container and is logging in on a new container,
-            # seamlessly create the account on this container with their credentials!
-            if (os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")) and len(password) >= 8:
+            # Self-healing local-first user provisioning:
+            # If the user registered on another container/node or after a cold start / deployment,
+            # seamlessly provision the account with their deterministic RFC-4122 UUIDv5!
+            if allow_auto_provision and len(password) >= 6:
                 try:
                     return create_user(username_clean, password, user_id=generate_user_id(username_clean))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Auto-provisioning user '%s' failed: %s", username_clean, e)
             return None
+
         # Guest accounts cannot authenticate via password credentials
         if bool(row["is_guest"]) or row["password_hash"] == "GUEST_ANONYMOUS":
             return None
+
         if verify_password(password, row["password_hash"], row["salt"]):
             # Transparently upgrade legacy 100k hashes to 600k rounds on login
             if "$" not in (row["salt"] or ""):

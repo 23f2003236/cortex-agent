@@ -103,6 +103,7 @@ const authTogglePasswordBtn = document.getElementById("authTogglePasswordBtn");
 const passwordStrengthWrap = document.getElementById("passwordStrengthWrap");
 const passwordStrengthBar = document.getElementById("passwordStrengthBar");
 const passwordStrengthText = document.getElementById("passwordStrengthText");
+const authForgotToggleBtn = document.getElementById("authForgotToggleBtn");
 const authDemoBtn = document.getElementById("authDemoBtn");
 const googleAuthBtn = document.getElementById("googleAuthBtn");
 const showcaseDemoBtn = document.getElementById("showcaseDemoBtn");
@@ -6456,7 +6457,7 @@ function openAuthModal(mode = "login") {
   authModal.style.display = "flex";
   if (authErrorAlert) {
     authErrorAlert.style.display = "none";
-    authErrorAlert.textContent = "";
+    authErrorAlert.innerHTML = "";
   }
   if (mode === "login") {
     tabSignIn?.classList.add("active");
@@ -6466,7 +6467,11 @@ function openAuthModal(mode = "login") {
     if (emailGroup) emailGroup.style.display = "none";
     if (passwordStrengthWrap) passwordStrengthWrap.style.display = "none";
     if (authSubmitBtn) authSubmitBtn.textContent = "Sign In";
-  } else {
+    if (authForgotToggleBtn) {
+      authForgotToggleBtn.style.display = "inline-block";
+      authForgotToggleBtn.textContent = "Forgot password?";
+    }
+  } else if (mode === "register") {
     tabRegister?.classList.add("active");
     tabSignIn?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Create Free Account";
@@ -6477,6 +6482,24 @@ function openAuthModal(mode = "login") {
       updatePasswordStrength(authPassword?.value || "");
     }
     if (authSubmitBtn) authSubmitBtn.textContent = "Create Account";
+    if (authForgotToggleBtn) {
+      authForgotToggleBtn.style.display = "none";
+    }
+  } else if (mode === "reset") {
+    tabSignIn?.classList.remove("active");
+    tabRegister?.classList.remove("active");
+    if (authModalTitle) authModalTitle.textContent = "Reset Password & Sign In";
+    if (authModalSubtitle) authModalSubtitle.textContent = "Enter your username and new password to immediately restore access";
+    if (emailGroup) emailGroup.style.display = "none";
+    if (passwordStrengthWrap) {
+      passwordStrengthWrap.style.display = "flex";
+      updatePasswordStrength(authPassword?.value || "");
+    }
+    if (authSubmitBtn) authSubmitBtn.textContent = "Reset Password & Sign In";
+    if (authForgotToggleBtn) {
+      authForgotToggleBtn.style.display = "inline-block";
+      authForgotToggleBtn.textContent = "Back to Sign In";
+    }
   }
   setTimeout(() => authUsername?.focus(), 60);
 }
@@ -6485,9 +6508,82 @@ function closeAuthModal() {
   if (!authModal) return;
   authModal.style.display = "none";
   authForm?.reset();
-  if (authErrorAlert) authErrorAlert.style.display = "none";
+  if (authErrorAlert) {
+    authErrorAlert.style.display = "none";
+    authErrorAlert.innerHTML = "";
+  }
   if (passwordStrengthWrap) passwordStrengthWrap.style.display = "none";
   if (authPassword) authPassword.type = "password";
+}
+
+async function executeResetAndLogin(username, password) {
+  if (!username || !password) return;
+  if (password.length < 6) {
+    if (authErrorAlert) {
+      authErrorAlert.innerHTML = `<div class="auth-error-text">Password must be at least 6 characters long.</div>`;
+      authErrorAlert.style.display = "block";
+    }
+    authPassword?.focus();
+    return;
+  }
+  try {
+    if (authSubmitBtn) {
+      authSubmitBtn.disabled = true;
+      authSubmitBtn.textContent = "Updating password…";
+    }
+    if (authErrorAlert) authErrorAlert.style.display = "none";
+
+    const res = await fetch("/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Client": "true" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "Password reset failed.");
+    }
+
+    currentUser = data.user;
+    if (data.token) {
+      localStorage.setItem("cortex_auth_token", data.token);
+    }
+    if (currentUser && currentUser.username) {
+      localStorage.setItem("cortex_username", currentUser.username);
+    }
+    migrateSessionDataToUser(currentUser);
+    updateDynamicGreeting();
+
+    closeAuthModal();
+    showToast("Password updated successfully! Welcome back.");
+    showChatApp();
+    await loadProjects();
+    await loadConversations(false);
+    loadUserMemories();
+    loadArtifactsCount();
+    loadUserUsage();
+    if (typeof syncFullWorkspaceState === "function") {
+      syncFullWorkspaceState(false);
+    }
+
+    const activeStored = localStorage.getItem("cortex_active_conv");
+    if (activeStored && activeStored !== "new" && conversations.some((c) => c.id === activeStored)) {
+      await switchConversation(activeStored);
+    } else if (conversations && conversations.length > 0) {
+      await switchConversation(conversations[0].id);
+    } else {
+      startNewChat();
+    }
+  } catch (err) {
+    if (authErrorAlert) {
+      authErrorAlert.innerHTML = `<div class="auth-error-text">${escapeHtml(err.message)}</div>`;
+      authErrorAlert.style.display = "block";
+    }
+  } finally {
+    if (authSubmitBtn) {
+      authSubmitBtn.disabled = false;
+      authSubmitBtn.textContent = authMode === "register" ? "Get Started" : (authMode === "reset" ? "Reset Password & Sign In" : "Sign In");
+    }
+  }
 }
 
 async function handleAuthSubmit(e) {
@@ -6498,12 +6594,20 @@ async function handleAuthSubmit(e) {
 
   if (!username || !password) return;
 
+  if (authMode === "reset") {
+    await executeResetAndLogin(username, password);
+    return;
+  }
+
   try {
     if (authSubmitBtn) {
       authSubmitBtn.disabled = true;
       authSubmitBtn.textContent = "Connecting…";
     }
-    if (authErrorAlert) authErrorAlert.style.display = "none";
+    if (authErrorAlert) {
+      authErrorAlert.style.display = "none";
+      authErrorAlert.innerHTML = "";
+    }
 
     const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
     const bodyPayload = authMode === "register"
@@ -6558,13 +6662,49 @@ async function handleAuthSubmit(e) {
     }
   } catch (err) {
     if (authErrorAlert) {
-      authErrorAlert.textContent = err.message;
-      authErrorAlert.style.display = "block";
+      const isAuthFail = authMode === "login" && (
+        err.message.includes("Invalid username or password") ||
+        err.message.includes("401") ||
+        err.message.includes("Authentication failed")
+      );
+
+      if (isAuthFail) {
+        authErrorAlert.innerHTML = `
+          <div class="auth-error-text">Invalid username or password.</div>
+          <div class="auth-reset-callout">
+            <span>Forgot or need to update your password?</span>
+            <button type="button" id="authInlineResetBtn" class="btn-auth-inline-reset">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              Reset Password &amp; Sign In
+            </button>
+          </div>
+        `;
+        authErrorAlert.style.display = "block";
+        const inlineBtn = document.getElementById("authInlineResetBtn");
+        if (inlineBtn) {
+          inlineBtn.addEventListener("click", () => {
+            const currentPass = authPassword?.value || "";
+            if (currentPass.length >= 6) {
+              executeResetAndLogin(username, currentPass);
+            } else {
+              openAuthModal("reset");
+              if (authUsername) authUsername.value = username;
+              if (authPassword) {
+                authPassword.focus();
+                authPassword.placeholder = "Enter new password (min 6 chars)";
+              }
+            }
+          });
+        }
+      } else {
+        authErrorAlert.innerHTML = `<div class="auth-error-text">${escapeHtml(err.message)}</div>`;
+        authErrorAlert.style.display = "block";
+      }
     }
   } finally {
     if (authSubmitBtn) {
       authSubmitBtn.disabled = false;
-      authSubmitBtn.textContent = authMode === "register" ? "Get Started" : "Sign In";
+      authSubmitBtn.textContent = authMode === "register" ? "Get Started" : (authMode === "reset" ? "Reset Password & Sign In" : "Sign In");
     }
   }
 }
@@ -6792,6 +6932,13 @@ authModal?.addEventListener("click", (e) => {
 });
 tabSignIn?.addEventListener("click", () => openAuthModal("login"));
 tabRegister?.addEventListener("click", () => openAuthModal("register"));
+authForgotToggleBtn?.addEventListener("click", () => {
+  if (authMode === "reset") {
+    openAuthModal("login");
+  } else {
+    openAuthModal("reset");
+  }
+});
 authForm?.addEventListener("submit", handleAuthSubmit);
 
 // Password Visibility Toggle
@@ -7665,6 +7812,25 @@ function closeGuideDrawer() {
 
 guideBtn?.addEventListener("click", openGuideDrawer);
 guideCloseBtn?.addEventListener("click", closeGuideDrawer);
+
+// Guide Zero-Data-Loss Sync & Recovery Actions
+document.getElementById("guideSyncNowBtn")?.addEventListener("click", () => {
+  if (typeof syncFullWorkspaceState === "function") {
+    syncFullWorkspaceState(true);
+    showToast("Workspace synchronized with cloud database!");
+  }
+});
+
+document.getElementById("guideOpenSettingsBtn")?.addEventListener("click", () => {
+  closeGuideDrawer();
+  openSettingsModal();
+  setTimeout(() => {
+    const backupSection = document.querySelector(".settings-backup-section");
+    if (backupSection) {
+      backupSection.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, 100);
+});
 
 // Guide Navigation Tabs Switching
 document.querySelectorAll(".guide-tab-btn").forEach((btn) => {
