@@ -3487,15 +3487,25 @@ function showToast(message, duration = 3000) {
 }
 
 async function forkConversationAt(messageId) {
-  if (!currentConversationId) {
-    showToast("Cannot branch an unsaved chat.");
+  if (!currentConversationId && (!messages || messages.length === 0)) {
+    showToast("Cannot branch an empty chat.");
     return;
   }
   try {
     showToast("Branching conversation…");
-    const payload = {};
-    if (messageId) payload.up_to_message_id = messageId;
-    const res = await fetch(`/api/conversations/${currentConversationId}/fork`, {
+    const activeConv = conversations.find((c) => c.id === currentConversationId);
+    const activeTitle = activeConv ? activeConv.title : "Chat";
+    const payload = {
+      up_to_message_id: messageId || undefined,
+      title: `${activeTitle} (Fork)`,
+      messages: Array.isArray(messages) ? messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+      })) : [],
+    };
+    const convIdToTarget = currentConversationId || (conversations[0]?.id || "new");
+    const res = await fetch(`/api/conversations/${convIdToTarget}/fork`, {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
@@ -3520,14 +3530,27 @@ async function forkConversationAt(messageId) {
 }
 
 async function handleMessageFeedback(messageId, value, btnUp, btnDown) {
-  if (!messageId) {
-    showToast("Message ID not ready yet.");
-    return;
-  }
   const isAlreadyActive =
     (value === 1 && btnUp?.classList.contains("active")) ||
     (value === -1 && btnDown?.classList.contains("active"));
   const finalValue = isAlreadyActive ? 0 : value;
+
+  // Immediate optimistic UI response
+  if (btnUp) btnUp.classList.toggle("active", finalValue === 1);
+  if (btnDown) btnDown.classList.toggle("active", finalValue === -1);
+
+  if (messageId) {
+    const m = messages.find((x) => x.id === messageId);
+    if (m) m.feedback = finalValue;
+  }
+
+  if (finalValue === 1) {
+    showToast("Thanks for your positive feedback! 👍");
+  } else if (finalValue === -1) {
+    showToast("Thanks for your feedback. We'll work to improve! 👎");
+  }
+
+  if (!messageId) return;
 
   try {
     const res = await fetch(`/api/messages/${messageId}/feedback`, {
@@ -3539,21 +3562,8 @@ async function handleMessageFeedback(messageId, value, btnUp, btnDown) {
       signOut();
       return;
     }
-    if (res.ok) {
-      if (btnUp) btnUp.classList.toggle("active", finalValue === 1);
-      if (btnDown) btnDown.classList.toggle("active", finalValue === -1);
-
-      const m = messages.find((x) => x.id === messageId);
-      if (m) m.feedback = finalValue;
-
-      if (finalValue === 1) {
-        showToast("Thanks for your positive feedback! 👍");
-      } else if (finalValue === -1) {
-        showToast("Thanks for your feedback. We'll work to improve! 👎");
-      }
-    }
   } catch (err) {
-    console.error("Feedback error:", err);
+    console.warn("Feedback sync warning:", err);
   }
 }
 
@@ -4628,7 +4638,7 @@ function renderStreamedText(bubbleEl, fullText, done, options = {}) {
   bubbleEl.innerHTML = `<span class="raw-stream">${escapeHtml(cleanText)}</span><span class="stream-cursor"></span>`;
 }
 
-function attachActions(actionsEl, { getText, onRetry, showRetry, isTruncated, onContinue, messageId, feedback = 0 }) {
+function attachActions(actionsEl, { getText, onRetry, showRetry, isTruncated, onContinue, messageId, feedback = 0, isError = false }) {
   actionsEl.hidden = false;
   actionsEl.innerHTML = "";
 
@@ -4651,6 +4661,19 @@ function attachActions(actionsEl, { getText, onRetry, showRetry, isTruncated, on
     }
   });
   actionsEl.appendChild(copyBtn);
+
+  if (isError) {
+    // Error notices only have Copy & Retry (no Download, TTS, Thumbs, or Fork)
+    if (showRetry && onRetry) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "icon-btn";
+      retryBtn.innerHTML = `${ICONS.retry}<span>Retry</span>`;
+      retryBtn.addEventListener("click", onRetry);
+      actionsEl.appendChild(retryBtn);
+    }
+    return;
+  }
 
   // 2. Direct 1-Click Download .md button for ANY assistant response!
   const downloadBtn = document.createElement("button");
@@ -4781,7 +4804,7 @@ function addErrorMessage(detail, onRetry) {
   chatEl.appendChild(row);
 
   const actionsEl = row.querySelector(".msg-actions");
-  attachActions(actionsEl, { getText: () => cleanDetail, onRetry, showRetry: true });
+  attachActions(actionsEl, { getText: () => cleanDetail, onRetry, showRetry: true, isError: true });
 
   scrollToBottom();
   return row;
