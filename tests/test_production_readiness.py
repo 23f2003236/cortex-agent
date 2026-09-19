@@ -266,6 +266,10 @@ class TestProductionReadiness(unittest.TestCase):
     def test_model_and_mode_allowlist(self):
         """Verify model and mode validation sets."""
         self.assertIn("nvidia/nemotron-3-super-120b-a12b", main.VALID_MODEL_IDS)
+        self.assertIn("z-ai/glm-5.3", main.VALID_MODEL_IDS)
+        self.assertIn("z-ai/glm-5.3-flash", main.VALID_MODEL_IDS)
+        self.assertNotIn("nvidia/nemotron-3.5-content-safety", main.VALID_MODEL_IDS)
+        self.assertNotIn("nvidia/nemotron-3-embed-1b", main.VALID_MODEL_IDS)
         self.assertIn("auto", main.ALLOWED_MODES)
         self.assertIn("fast", main.ALLOWED_MODES)
         self.assertIn("thinking", main.ALLOWED_MODES)

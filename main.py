@@ -1374,8 +1374,8 @@ AVAILABLE_MODELS = [
     {"id": "openai/gpt-oss-20b", "name": "Cortex 4 (Deep Reasoning)"},
     {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "name": "Cortex 4 Omni (Vision & Reasoning)"},
     {"id": "nvidia/nemotron-3.5-lightning-30b-a3b", "name": "Cortex 3.5 Lightning (Ultra-Fast)"},
-    {"id": "nvidia/nemotron-3.5-content-safety", "name": "Cortex Guard (Safety & Policy) [Free]"},
-    {"id": "nvidia/nemotron-3-embed-1b", "name": "Cortex Embed (Vector & RAG) [Free]"},
+    {"id": "z-ai/glm-5.3", "name": "Cortex 5.3 (Frontier MoE 753B)"},
+    {"id": "z-ai/glm-5.3-flash", "name": "Cortex 5.3 Flash (Vision & Reasoning 320B)"},
 ]
 
 MODEL_TOKEN_LIMITS = {
@@ -1384,20 +1384,33 @@ MODEL_TOKEN_LIMITS = {
     "openai/gpt-oss-20b": 16384,                            # Cortex 4 (Deep Reasoning)
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": 16384, # Cortex 4 Omni (Vision & Reasoning)
     "nvidia/nemotron-3.5-lightning-30b-a3b": 16384,         # Cortex 3.5 Lightning (Ultra-Fast)
-    "nvidia/nemotron-3.5-content-safety": 4096,             # Cortex Guard (Safety & Policy)
-    "nvidia/nemotron-3-embed-1b": 2048,                     # Cortex Embed (Vector & RAG)
+    "z-ai/glm-5.3": 32768,                                  # Cortex 5.3 (Frontier MoE 753B)
+    "z-ai/glm-5.3-flash": 32768,                            # Cortex 5.3 Flash (Vision & Reasoning 320B)
+}
+
+MODEL_ALIASES = {
+    "z-ai/glm-5-3": "z-ai/glm-5.3",
+    "z-ai/glm-5-3-flash": "z-ai/glm-5.3-flash",
 }
 
 
+def normalize_model_id(model_id: Optional[str]) -> str:
+    if not model_id:
+        return MODEL_NAME
+    mid = model_id.strip()
+    return MODEL_ALIASES.get(mid, mid)
+
+
 def get_model_max_tokens(model_id: str) -> int:
-    return MODEL_TOKEN_LIMITS.get((model_id or "").strip(), MAX_OUTPUT_TOKENS)
+    resolved_id = normalize_model_id(model_id)
+    return MODEL_TOKEN_LIMITS.get(resolved_id, MAX_OUTPUT_TOKENS)
 
 
 def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> int:
     """Dynamically determine maximum token budget based on model limits, query intent, and mode.
-    Super Agent & Ultra Agent have unrestricted 32k+ output headroom across all modes.
+    Super Agent, Ultra Agent & GLM 5.3 models have unrestricted 32k+ output headroom across all modes.
     Cortex 4 models have 16k+ output headroom."""
-    m_id = (model_id or "").strip()
+    m_id = normalize_model_id(model_id)
     model_max = get_model_max_tokens(m_id)
 
     mode_str = (mode or "").lower()
@@ -1407,8 +1420,8 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
             return 1024
         return min(model_max, 8192)
 
-    # Super Agent & Ultra Agent: Full 32k+ response headroom across auto & thinking modes
-    if m_id in ("nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b"):
+    # Super Agent, Ultra Agent & GLM 5.3: Full 32k+ response headroom across auto & thinking modes
+    if m_id in ("nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b", "z-ai/glm-5.3", "z-ai/glm-5.3-flash"):
         return 32768
 
     # Cortex 4 models: Full 16k+ output headroom
@@ -1883,7 +1896,7 @@ def should_run_fast_tools(raw_content: str) -> bool:
     return False
 
 
-VALID_MODEL_IDS = {m["id"] for m in AVAILABLE_MODELS}
+VALID_MODEL_IDS = {m["id"] for m in AVAILABLE_MODELS} | set(MODEL_ALIASES.keys())
 ALLOWED_MODES = {"auto", "fast", "thinking"}
 
 
@@ -3077,7 +3090,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             detail=f"Invalid mode '{request.mode}'. Allowed modes are: auto, fast, thinking.",
         )
 
-    req_model = (request.model or MODEL_NAME).strip()
+    req_model = normalize_model_id((request.model or MODEL_NAME).strip())
     if req_model not in VALID_MODEL_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3174,8 +3187,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         return f"data: {json.dumps(data)}\n\n"
 
     effective_model = req_model
-    if has_image and effective_model != "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning":
-        effective_model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    if has_image and effective_model not in ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "z-ai/glm-5.3-flash"):
+        effective_model = "z-ai/glm-5.3-flash"
 
     def generate():
         ctx_token = _current_user_id_ctx.set(current_user["id"])
@@ -3251,22 +3264,21 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 "user_message_id": user_msg_id,
             })
 
-            is_free_model = effective_model in ("nvidia/nemotron-3.5-content-safety", "nvidia/nemotron-3-embed-1b")
-            if not is_free_model:
-                tokens_ok, used_tok, limit_tok = database.reserve_quota(current_user["id"], estimated_tokens=estimated_tokens)
-                if not tokens_ok:
-                    err_msg = f"Daily token quota reached ({used_tok:,} / {limit_tok:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
-                    yield event({"type": "token", "text": err_msg})
-                    yield event({
-                        "type": "done",
-                        "conversation_id": conv_id,
-                        "user_message_id": user_msg_id,
-                        "assistant_message_id": None,
-                        "full_text": err_msg,
-                        "usage": database.get_daily_usage(current_user["id"]),
-                    })
-                    return
-                quota_reserved = True
+            is_free_model = False
+            tokens_ok, used_tok, limit_tok = database.reserve_quota(current_user["id"], estimated_tokens=estimated_tokens)
+            if not tokens_ok:
+                err_msg = f"Daily token quota reached ({used_tok:,} / {limit_tok:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
+                yield event({"type": "token", "text": err_msg})
+                yield event({
+                    "type": "done",
+                    "conversation_id": conv_id,
+                    "user_message_id": user_msg_id,
+                    "assistant_message_id": None,
+                    "full_text": err_msg,
+                    "usage": database.get_daily_usage(current_user["id"]),
+                })
+                return
+            quota_reserved = True
 
             # Check if user explicitly asked to save a memory (robust English + Hindi + Hinglish)
             raw_memory_fact, raw_memory_cat = extract_explicit_memory_request(raw_content)
