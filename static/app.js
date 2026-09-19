@@ -5529,11 +5529,33 @@ initModeSelector();
 
 // ---------------- Model Selector & Health ----------------
 
+function applyModelSpecificModes(modelId) {
+  const isLightning = modelId === "nvidia/nemotron-3.5-lightning-30b-a3b";
+  const menu = document.getElementById("modeMenu");
+  if (!menu) return;
+
+  const autoOpt = menu.querySelector('[data-mode="auto"]');
+  const thinkingOpt = menu.querySelector('[data-mode="thinking"]');
+
+  if (isLightning) {
+    if (autoOpt) autoOpt.style.display = "none";
+    if (thinkingOpt) thinkingOpt.style.display = "none";
+    if (typeof window.setResponseMode === "function") {
+      window.setResponseMode("fast");
+    }
+  } else {
+    if (autoOpt) autoOpt.style.display = "";
+    if (thinkingOpt) thinkingOpt.style.display = "";
+  }
+}
+
 if (modelSelect) {
   const savedModel = localStorage.getItem("cortex_model");
   if (savedModel) modelSelect.value = savedModel;
+  applyModelSpecificModes(modelSelect.value);
   modelSelect.addEventListener("change", () => {
     localStorage.setItem("cortex_model", modelSelect.value);
+    applyModelSpecificModes(modelSelect.value);
   });
 }
 
@@ -5554,6 +5576,7 @@ async function loadHealth() {
         modelSelect.value = modelsList[0].id;
         localStorage.setItem("cortex_model", modelSelect.value);
       }
+      applyModelSpecificModes(modelSelect.value);
     }
   } catch {
     /* ignore health failure */
@@ -7638,6 +7661,7 @@ function selectFleetModel(modelKey) {
 
   if (modelSelect && info.modelValue) {
     modelSelect.value = info.modelValue;
+    modelSelect.dispatchEvent(new Event("change"));
   }
 }
 
@@ -7652,6 +7676,7 @@ inspectorTryBtn?.addEventListener("click", () => {
   const info = modelFleetData[activeFleetModelKey];
   if (info && modelSelect && info.modelValue) {
     modelSelect.value = info.modelValue;
+    modelSelect.dispatchEvent(new Event("change"));
   }
   handleLaunchOrRegister();
 });
