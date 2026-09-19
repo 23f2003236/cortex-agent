@@ -422,6 +422,29 @@ function saveCachedArchivedIds(idSet) {
   }
 }
 
+function getDeletedConvIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(getUserScopedKey("cortex_deleted_conv_ids"))) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedConvId(id) {
+  if (!id) return;
+  try {
+    const s = getDeletedConvIds();
+    s.add(id);
+    const payload = JSON.stringify(Array.from(s));
+    localStorage.setItem(getUserScopedKey("cortex_deleted_conv_ids"), payload);
+    if (currentUser && currentUser.id) {
+      localStorage.setItem(`cortex_deleted_conv_ids_${currentUser.id}`, payload);
+    }
+  } catch (e) {
+    console.warn("Failed to cache deleted conv ID:", e);
+  }
+}
+
 function getCachedMessages(convId) {
   if (!convId) return [];
   try {
@@ -2905,9 +2928,10 @@ async function loadConversations(autoSelectLatest = false) {
   if (!currentUser) return;
   const cached = getCachedConversations();
   const archivedSet = getCachedArchivedIds();
+  const deletedSet = getDeletedConvIds();
 
   if (cached && cached.length > 0) {
-    const activeCached = cached.filter((c) => !archivedSet.has(c.id));
+    const activeCached = cached.filter((c) => !archivedSet.has(c.id) && !deletedSet.has(c.id));
     if (!conversations || conversations.length === 0) {
       conversations = activeCached;
       sortConversationsList();
@@ -2934,12 +2958,12 @@ async function loadConversations(autoSelectLatest = false) {
       let merged = Array.isArray(serverConvs) ? [...serverConvs] : [];
       const seen = new Set(merged.map((c) => c.id));
       for (const c of cached) {
-        if (!seen.has(c.id) && !archivedSet.has(c.id)) {
+        if (!seen.has(c.id) && !archivedSet.has(c.id) && !deletedSet.has(c.id)) {
           merged.push(c);
           seen.add(c.id);
         }
       }
-      merged = merged.filter((c) => !archivedSet.has(c.id));
+      merged = merged.filter((c) => !archivedSet.has(c.id) && !deletedSet.has(c.id));
       conversations = merged;
       sortConversationsList();
       saveCachedConversations();
@@ -3058,7 +3082,7 @@ function createConversationItem(c) {
   const editBtn = item.querySelector(".edit-btn");
   editBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
-    startInlineRename(item, c);
+    openRenameChatModal(c.id, c.title);
   });
 
   const archiveBtn = item.querySelector(".archive-btn");
@@ -3068,10 +3092,9 @@ function createConversationItem(c) {
   });
 
   const delBtn = item.querySelector(".delete-btn");
-  delBtn?.addEventListener("click", async (e) => {
+  delBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (!confirm(`Delete chat "${c.title}"?\nThis cannot be undone.`)) return;
-    await deleteConversation(c.id);
+    openDeleteChatModal(c.id, c.title);
   });
 
   return item;
@@ -3190,14 +3213,118 @@ function startInlineRename(itemEl, conv) {
   input.addEventListener("click", (e) => e.stopPropagation());
 }
 
+// ---------------- In-App Modals for Chat Rename & Deletion (Claude/GPT Style) ----------------
+let convIdToRename = null;
+
+function openRenameChatModal(id, currentTitle) {
+  convIdToRename = id;
+  const modal = document.getElementById("renameChatModal");
+  const input = document.getElementById("renameChatModalInput");
+  if (input) {
+    input.value = currentTitle || "";
+  }
+  if (modal) {
+    modal.style.display = "flex";
+    modal.setAttribute("aria-hidden", "false");
+    setTimeout(() => {
+      input?.focus();
+      input?.select();
+    }, 60);
+  }
+}
+
+function closeRenameChatModal() {
+  convIdToRename = null;
+  const modal = document.getElementById("renameChatModal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+let convIdToDelete = null;
+
+function openDeleteChatModal(id, title) {
+  convIdToDelete = id;
+  const modal = document.getElementById("deleteChatModal");
+  const titleEl = document.getElementById("deleteChatModalTargetTitle");
+  if (titleEl) {
+    titleEl.textContent = `"${title || "this chat"}"`;
+  }
+  if (modal) {
+    modal.style.display = "flex";
+    modal.setAttribute("aria-hidden", "false");
+  }
+}
+
+function closeDeleteChatModal() {
+  convIdToDelete = null;
+  const modal = document.getElementById("deleteChatModal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+// Bind modal buttons & shortcuts
+const cancelRenameChatBtn = document.getElementById("cancelRenameChatBtn");
+const confirmRenameChatBtn = document.getElementById("confirmRenameChatBtn");
+const renameChatModalInput = document.getElementById("renameChatModalInput");
+const renameChatModal = document.getElementById("renameChatModal");
+
+cancelRenameChatBtn?.addEventListener("click", closeRenameChatModal);
+renameChatModal?.addEventListener("click", (e) => {
+  if (e.target === renameChatModal) closeRenameChatModal();
+});
+
+const submitRenameModal = () => {
+  if (!convIdToRename || !renameChatModalInput) return;
+  const val = renameChatModalInput.value.trim();
+  if (val) {
+    renameConversation(convIdToRename, val);
+  }
+  closeRenameChatModal();
+};
+
+confirmRenameChatBtn?.addEventListener("click", submitRenameModal);
+renameChatModalInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    submitRenameModal();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeRenameChatModal();
+  }
+});
+
+const cancelDeleteChatBtn = document.getElementById("cancelDeleteChatBtn");
+const confirmDeleteChatBtn = document.getElementById("confirmDeleteChatBtn");
+const deleteChatModal = document.getElementById("deleteChatModal");
+
+cancelDeleteChatBtn?.addEventListener("click", closeDeleteChatModal);
+deleteChatModal?.addEventListener("click", (e) => {
+  if (e.target === deleteChatModal) closeDeleteChatModal();
+});
+
+confirmDeleteChatBtn?.addEventListener("click", async () => {
+  if (convIdToDelete) {
+    const targetId = convIdToDelete;
+    closeDeleteChatModal();
+    await deleteConversation(targetId);
+  }
+});
+
 async function renameConversation(id, newTitle) {
+  if (!id || !newTitle) return;
   const conv = conversations.find((c) => c.id === id);
-  const oldTitle = conv ? conv.title : "";
   if (conv) conv.title = newTitle;
   if (id === currentConversationId) {
     chatTitleHeader.textContent = newTitle;
   }
+  saveCachedConversations();
   renderConversationsList();
+  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
+  showToast("Chat renamed.");
 
   try {
     const res = await fetch(`/api/conversations/${id}`, {
@@ -3209,20 +3336,8 @@ async function renameConversation(id, newTitle) {
       signOut();
       return;
     }
-    if (res.ok) {
-      broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
-    } else if (conv) {
-      conv.title = oldTitle;
-      if (id === currentConversationId) chatTitleHeader.textContent = oldTitle;
-      renderConversationsList();
-    }
   } catch (err) {
-    console.error("Failed to rename conversation:", err);
-    if (conv) {
-      conv.title = oldTitle;
-      if (id === currentConversationId) chatTitleHeader.textContent = oldTitle;
-      renderConversationsList();
-    }
+    console.warn("Server rename sync warning:", err);
   }
 }
 
@@ -3230,11 +3345,7 @@ function promptRenameActiveChat() {
   if (!currentConversationId) return;
   const activeConv = conversations.find((c) => c.id === currentConversationId);
   const currentTitle = activeConv ? activeConv.title : (chatTitleHeader.textContent || "Chat");
-  const newTitle = window.prompt("Enter new title for this conversation:", currentTitle);
-  if (newTitle === null) return;
-  const trimmed = newTitle.trim();
-  if (!trimmed || trimmed === currentTitle) return;
-  renameConversation(currentConversationId, trimmed);
+  openRenameChatModal(currentConversationId, currentTitle);
 }
 
 async function switchConversation(id) {
@@ -3292,26 +3403,30 @@ async function switchConversation(id) {
 }
 
 async function deleteConversation(id) {
+  if (!id) return;
+  saveDeletedConvId(id);
+  conversations = conversations.filter((c) => c.id !== id);
+  saveCachedConversations();
+  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
+  try {
+    localStorage.removeItem(`cortex_msgs_${id}`);
+  } catch {}
+  if (currentConversationId === id) {
+    localStorage.removeItem("cortex_active_conv");
+    startNewChat();
+  } else {
+    renderConversationsList();
+  }
+  showToast("Chat deleted.");
+
   try {
     const res = await fetch(`/api/conversations/${id}`, { method: "DELETE", headers: authHeaders() });
     if (res.status === 401) {
       signOut();
       return;
     }
-    conversations = conversations.filter((c) => c.id !== id);
-    saveCachedConversations();
-    broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
-    try {
-      localStorage.removeItem(`cortex_msgs_${id}`);
-    } catch {}
-    if (currentConversationId === id) {
-      localStorage.removeItem("cortex_active_conv");
-      startNewChat();
-    } else {
-      renderConversationsList();
-    }
   } catch (err) {
-    console.error("Failed to delete conversation:", err);
+    console.error("Failed to delete conversation on server:", err);
   }
 }
 
