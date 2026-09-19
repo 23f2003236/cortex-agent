@@ -2773,56 +2773,318 @@ async function loadProjects() {
   }
 }
 
-function renderProjectPills() {
+// ---------------- Project Workspaces (ChatGPT-Style Tree & Modals) ----------------
+
+function getPinnedProjectIds() {
+  try {
+    const raw = localStorage.getItem("cortex_pinned_projects");
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function savePinnedProjectIds(set) {
+  try {
+    localStorage.setItem("cortex_pinned_projects", JSON.stringify(Array.from(set)));
+  } catch (_) {}
+}
+
+function isProjectPinned(projectId) {
+  return getPinnedProjectIds().has(projectId);
+}
+
+function togglePinProject(projectId) {
+  const pinned = getPinnedProjectIds();
+  if (pinned.has(projectId)) {
+    pinned.delete(projectId);
+    showToast("Project unpinned.");
+  } else {
+    pinned.add(projectId);
+    showToast("Project pinned.");
+  }
+  savePinnedProjectIds(pinned);
+  renderProjectsTree();
+}
+
+let activeContextMenuProjectId = null;
+const projectContextMenu = document.getElementById("projectContextMenu");
+
+function openProjectContextMenu(e, projectId) {
+  e.preventDefault();
+  e.stopPropagation();
+  activeContextMenuProjectId = projectId;
+  if (!projectContextMenu) return;
+
+  const pinLabel = document.getElementById("ctxPinLabel");
+  if (pinLabel) {
+    pinLabel.textContent = isProjectPinned(projectId) ? "Unpin project" : "Pin project";
+  }
+
+  const rect = e.currentTarget.getBoundingClientRect();
+  const menuWidth = 180;
+  let left = rect.right + 4;
+  let top = rect.top;
+
+  if (left + menuWidth > window.innerWidth) {
+    left = rect.left - menuWidth - 4;
+  }
+  if (top + 220 > window.innerHeight) {
+    top = window.innerHeight - 230;
+  }
+  projectContextMenu.style.left = `${Math.max(10, left)}px`;
+  projectContextMenu.style.top = `${Math.max(10, top)}px`;
+  projectContextMenu.style.display = "block";
+}
+
+function closeProjectContextMenu() {
+  if (projectContextMenu) {
+    projectContextMenu.style.display = "none";
+  }
+  activeContextMenuProjectId = null;
+}
+
+// In-App Modals for Project Rename & Delete
+let projectToRenameId = null;
+const renameProjectModal = document.getElementById("renameProjectModal");
+const renameProjectModalInput = document.getElementById("renameProjectModalInput");
+const cancelRenameProjectBtn = document.getElementById("cancelRenameProjectBtn");
+const confirmRenameProjectBtn = document.getElementById("confirmRenameProjectBtn");
+
+function openRenameProjectModal(projectId) {
+  projectToRenameId = projectId;
+  const proj = userProjects.find((p) => p.id === projectId);
+  if (!proj || !renameProjectModal) return;
+  if (renameProjectModalInput) {
+    renameProjectModalInput.value = proj.name || "";
+  }
+  renameProjectModal.style.display = "flex";
+  renameProjectModal.setAttribute("aria-hidden", "false");
+  setTimeout(() => {
+    renameProjectModalInput?.focus();
+    renameProjectModalInput?.select();
+  }, 60);
+}
+
+function closeRenameProjectModal() {
+  projectToRenameId = null;
+  if (renameProjectModal) {
+    renameProjectModal.style.display = "none";
+    renameProjectModal.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function submitRenameProjectModal() {
+  if (!projectToRenameId || !renameProjectModalInput) return;
+  const newName = renameProjectModalInput.value.trim();
+  if (!newName) {
+    showToast("Please enter a project name.");
+    return;
+  }
+  const proj = userProjects.find((p) => p.id === projectToRenameId);
+  if (!proj) return;
+
+  try {
+    const res = await fetch(`/api/projects/${projectToRenameId}`, {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        name: newName,
+        description: proj.description || "",
+        system_prompt: proj.system_prompt || ""
+      }),
+    });
+    if (!res.ok) throw new Error("Failed to rename project");
+    const updated = await res.json();
+    const idx = userProjects.findIndex((p) => p.id === projectToRenameId);
+    if (idx !== -1) userProjects[idx] = updated;
+    closeRenameProjectModal();
+    renderProjectsTree();
+    showToast("Project renamed.");
+  } catch (err) {
+    console.error("Rename project error:", err);
+    showToast(err.message || "Failed to rename project.");
+  }
+}
+
+let projectToDeleteId = null;
+const deleteProjectModal = document.getElementById("deleteProjectModal");
+const deleteProjectModalTargetName = document.getElementById("deleteProjectModalTargetName");
+const cancelDeleteProjectBtn = document.getElementById("cancelDeleteProjectBtn");
+const confirmDeleteProjectBtn = document.getElementById("confirmDeleteProjectBtn");
+
+function openDeleteProjectModal(projectId) {
+  projectToDeleteId = projectId;
+  const proj = userProjects.find((p) => p.id === projectId);
+  if (!proj || !deleteProjectModal) return;
+  if (deleteProjectModalTargetName) {
+    deleteProjectModalTargetName.textContent = proj.name || "this project";
+  }
+  deleteProjectModal.style.display = "flex";
+  deleteProjectModal.setAttribute("aria-hidden", "false");
+}
+
+function closeDeleteProjectModal() {
+  projectToDeleteId = null;
+  if (deleteProjectModal) {
+    deleteProjectModal.style.display = "none";
+    deleteProjectModal.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function submitDeleteProjectModal() {
+  if (!projectToDeleteId) return;
+  try {
+    const res = await fetch(`/api/projects/${projectToDeleteId}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error("Failed to delete project");
+    userProjects = userProjects.filter((p) => p.id !== projectToDeleteId);
+    if (currentProjectId === projectToDeleteId) {
+      currentProjectId = "";
+    }
+    closeDeleteProjectModal();
+    renderProjectsTree();
+    loadConversations(false);
+    showToast("Project deleted.");
+  } catch (err) {
+    console.error("Delete project error:", err);
+    showToast(err.message || "Failed to delete project.");
+  }
+}
+
+function renderProjectsTree() {
   if (!projectsListContainer) return;
   projectsListContainer.innerHTML = "";
 
-  // "All Chats" pill
-  const allBtn = document.createElement("button");
-  allBtn.className = `project-pill ${!currentProjectId ? "active" : ""}`;
-  allBtn.dataset.projectId = "";
-  allBtn.type = "button";
-  allBtn.textContent = "All Chats";
-  allBtn.addEventListener("click", () => {
-    selectProject("");
+  if (!userProjects || userProjects.length === 0) {
+    return;
+  }
+
+  const pinnedSet = getPinnedProjectIds();
+
+  // Sort projects: pinned first, then by name
+  const sortedProjects = [...userProjects].sort((a, b) => {
+    const aPinned = pinnedSet.has(a.id) ? 1 : 0;
+    const bPinned = pinnedSet.has(b.id) ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned;
+    return (a.name || "").localeCompare(b.name || "");
   });
-  projectsListContainer.appendChild(allBtn);
 
-  // User project pills
-  userProjects.forEach((proj) => {
-    const pill = document.createElement("button");
-    pill.className = `project-pill ${currentProjectId === proj.id ? "active" : ""}`;
-    pill.dataset.projectId = proj.id;
-    pill.type = "button";
-    pill.title = proj.description || proj.name;
+  sortedProjects.forEach((proj) => {
+    const isActive = currentProjectId === proj.id;
+    const isPinned = pinnedSet.has(proj.id);
 
-    const span = document.createElement("span");
-    span.textContent = proj.name;
-    pill.appendChild(span);
+    const itemWrap = document.createElement("div");
+    itemWrap.className = `project-tree-item ${isActive ? "active" : ""}`;
+    itemWrap.dataset.projectId = proj.id;
 
-    // Edit icon on pill
-    const editBtn = document.createElement("span");
-    editBtn.style.marginLeft = "6px";
-    editBtn.style.opacity = "0.7";
-    editBtn.style.cursor = "pointer";
-    editBtn.innerHTML = "✎";
-    editBtn.title = "Edit Project";
-    editBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openProjectModal(proj.id);
+    // Row: [📁 Name] [📌] [···]
+    const row = document.createElement("div");
+    row.className = `project-tree-row ${isActive ? "active" : ""}`;
+    row.title = proj.description || proj.name;
+
+    // Folder icon & label
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "project-title-wrap";
+    titleWrap.innerHTML = `
+      <span class="project-folder-icon">📁</span>
+      <span class="project-tree-name">${escapeHtml(proj.name)}</span>
+      ${isPinned ? '<span class="project-pinned-badge" title="Pinned project">📌</span>' : ""}
+    `;
+
+    // 3-dots context menu trigger
+    const menuBtn = document.createElement("button");
+    menuBtn.type = "button";
+    menuBtn.className = "project-menu-trigger";
+    menuBtn.title = "Project options";
+    menuBtn.setAttribute("aria-label", "Project options");
+    menuBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+        <circle cx="5" cy="12" r="2"/>
+        <circle cx="12" cy="12" r="2"/>
+        <circle cx="19" cy="12" r="2"/>
+      </svg>
+    `;
+    menuBtn.addEventListener("click", (e) => {
+      openProjectContextMenu(e, proj.id);
     });
-    pill.appendChild(editBtn);
 
-    pill.addEventListener("click", () => {
-      selectProject(proj.id);
+    row.appendChild(titleWrap);
+    row.appendChild(menuBtn);
+
+    // Clicking row toggles / selects project
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".project-menu-trigger")) return;
+      if (currentProjectId === proj.id) {
+        selectProject("");
+      } else {
+        selectProject(proj.id);
+      }
     });
-    projectsListContainer.appendChild(pill);
+
+    itemWrap.appendChild(row);
+
+    // If active project, render nested conversations (ChatGPT style)
+    if (isActive) {
+      const nestedContainer = document.createElement("div");
+      nestedContainer.className = "project-nested-chats";
+
+      const projConvs = (conversations || []).filter(
+        (c) => c.project_id === proj.id || (!c.project_id && currentProjectId === proj.id)
+      );
+
+      if (projConvs.length > 0) {
+        projConvs.forEach((c) => {
+          const chatItem = document.createElement("div");
+          const isChatActive = currentConversationId === c.id;
+          chatItem.className = `project-nested-chat-item ${isChatActive ? "active" : ""}`;
+          chatItem.title = c.title || "Untitled Chat";
+          chatItem.innerHTML = `
+            <svg class="nested-chat-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="nested-chat-title">${escapeHtml(c.title || "Untitled Chat")}</span>
+          `;
+          chatItem.addEventListener("click", (e) => {
+            e.stopPropagation();
+            switchConversation(c.id);
+          });
+          nestedContainer.appendChild(chatItem);
+        });
+      }
+
+      // Mini button to create a new chat in this project
+      const newChatInProjBtn = document.createElement("button");
+      newChatInProjBtn.type = "button";
+      newChatInProjBtn.className = "project-nested-new-chat";
+      newChatInProjBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New chat</span>
+      `;
+      newChatInProjBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        currentConversationId = null;
+        startNewChat();
+        promptEl?.focus();
+      });
+      nestedContainer.appendChild(newChatInProjBtn);
+
+      itemWrap.appendChild(nestedContainer);
+    }
+
+    projectsListContainer.appendChild(itemWrap);
   });
+}
+
+function renderProjectPills() {
+  renderProjectsTree();
 }
 
 function selectProject(projId) {
   currentProjectId = projId;
-  renderProjectPills();
+  renderProjectsTree();
   loadConversations(false);
 }
 
@@ -2890,7 +3152,7 @@ async function saveProjectFromModal() {
       userProjects.push(created);
       currentProjectId = created.id;
     }
-    renderProjectPills();
+    renderProjectsTree();
     closeProjectModal();
     loadConversations(false);
   } catch (err) {
@@ -2913,13 +3175,80 @@ async function deleteProjectFromModal() {
     if (currentProjectId === editingProjectId) {
       currentProjectId = "";
     }
-    renderProjectPills();
+    renderProjectsTree();
     closeProjectModal();
     loadConversations(false);
   } catch (err) {
     console.error("Delete project error:", err);
     showToast(err.message || "Failed to delete project.");
   }
+}
+
+// Global Context Menu & Project Modals Setup
+document.addEventListener("click", (e) => {
+  if (projectContextMenu && !projectContextMenu.contains(e.target) && !e.target.closest(".project-menu-trigger")) {
+    closeProjectContextMenu();
+  }
+});
+
+projectContextMenu?.addEventListener("click", (e) => {
+  const item = e.target.closest(".project-ctx-item");
+  if (!item) return;
+  const action = item.dataset.action;
+  const projId = activeContextMenuProjectId;
+  closeProjectContextMenu();
+  if (!projId) return;
+
+  if (action === "rename") {
+    openRenameProjectModal(projId);
+  } else if (action === "settings") {
+    openProjectModal(projId);
+  } else if (action === "home") {
+    selectProject(projId);
+    startNewChat();
+  } else if (action === "pin") {
+    togglePinProject(projId);
+  } else if (action === "delete") {
+    openDeleteProjectModal(projId);
+  }
+});
+
+cancelRenameProjectBtn?.addEventListener("click", closeRenameProjectModal);
+renameProjectModal?.addEventListener("click", (e) => {
+  if (e.target === renameProjectModal) closeRenameProjectModal();
+});
+confirmRenameProjectBtn?.addEventListener("click", submitRenameProjectModal);
+renameProjectModalInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    submitRenameProjectModal();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeRenameProjectModal();
+  }
+});
+
+cancelDeleteProjectBtn?.addEventListener("click", closeDeleteProjectModal);
+deleteProjectModal?.addEventListener("click", (e) => {
+  if (e.target === deleteProjectModal) closeDeleteProjectModal();
+});
+confirmDeleteProjectBtn?.addEventListener("click", submitDeleteProjectModal);
+
+const projectsHeaderToggle = document.getElementById("projectsHeaderToggle");
+const sidebarProjectsSection = document.getElementById("sidebarProjectsSection");
+if (projectsHeaderToggle && sidebarProjectsSection) {
+  projectsHeaderToggle.addEventListener("click", (e) => {
+    if (e.target.closest("#createProjectBtn")) return;
+    const isCollapsed = sidebarProjectsSection.classList.toggle("collapsed");
+    try {
+      localStorage.setItem("cortex_projects_collapsed", isCollapsed ? "1" : "0");
+    } catch (_) {}
+  });
+  try {
+    if (localStorage.getItem("cortex_projects_collapsed") === "1") {
+      sidebarProjectsSection.classList.add("collapsed");
+    }
+  } catch (_) {}
 }
 
 // ---------------- Sidebar & Conversations ----------------
@@ -2936,6 +3265,7 @@ async function loadConversations(autoSelectLatest = false) {
       conversations = activeCached;
       sortConversationsList();
       renderConversationsList();
+      renderProjectsTree();
     }
   }
 
@@ -2968,6 +3298,7 @@ async function loadConversations(autoSelectLatest = false) {
       sortConversationsList();
       saveCachedConversations();
       renderConversationsList();
+      renderProjectsTree();
     }
     if (currentConversationId && currentConversationId !== "new") {
       const active = conversations.find((c) => c.id === currentConversationId);
@@ -3375,6 +3706,7 @@ async function switchConversation(id) {
     messages = [];
   }
   renderConversationsList();
+  renderProjectsTree();
 
   try {
     const res = await fetch(`/api/conversations/${id}`, { headers: authHeaders() });
@@ -3592,6 +3924,7 @@ function startNewChat() {
     window.setResponseMode("auto");
   }
   renderConversationsList();
+  renderProjectsTree();
   closeMobileSidebar();
   promptEl.focus();
 }
@@ -4105,6 +4438,145 @@ function formatDisplayName(raw) {
     .join(" ");
 }
 
+// ---------------- Cortex Dynamic Greeting Engine ----------------
+
+const CORTEX_GREETING_POOLS = {
+  MORNING: [
+    "Good morning, {name}",
+    "Welcome back, {name}",
+    "Morning, {name}",
+    "Ready to build, {name}?",
+    "What's on your mind, {name}?",
+    "Coffee time, {name}?",
+    "Another day, another build, {name}.",
+    "Let's make something today, {name}."
+  ],
+  AFTERNOON: [
+    "Good afternoon, {name}",
+    "Back at it, {name}",
+    "What's new, {name}?",
+    "Welcome back, {name}",
+    "Afternoon session, {name}?",
+    "What are we building today, {name}?"
+  ],
+  EVENING: [
+    "Good evening, {name}",
+    "Evening, {name}",
+    "{name} returns!",
+    "How was your day, {name}?",
+    "Ready for another session, {name}?",
+    "Evening build session?"
+  ],
+  NIGHT: [
+    "What's on your mind tonight, {name}?",
+    "How's it going, {name}?",
+    "Night session, {name}?",
+    "Still building, {name}?",
+    "Late-night ideas, {name}?",
+    "The night shift begins, {name}."
+  ],
+  VERY_LATE_NIGHT: [
+    "Up late, {name}?",
+    "Still here, {name}?",
+    "Hello, night owl.",
+    "{name}, you're still awake?",
+    "Late-night session?",
+    "It's getting late, {name}.",
+    "Burning the midnight oil, {name}?",
+    "Another late one, {name}?",
+    "Midnight engineering, {name}?",
+    "Couldn't sleep or couldn't stop building?"
+  ]
+};
+
+const CORTEX_WEEKDAY_POOLS = {
+  1: [ // Monday
+    "Monday already, {name}?",
+    "Let's get the week started, {name}."
+  ],
+  5: [ // Friday
+    "Friday, {name}. What are we shipping?",
+    "That Friday feeling, {name}."
+  ],
+  6: [ // Saturday
+    "Weekend session, {name}?",
+    "Saturday build mode?"
+  ],
+  0: [ // Sunday
+    "Sunday session, {name}?",
+    "Quiet Sunday, big ideas?"
+  ]
+};
+
+function getCortexTimeClassification(hour) {
+  if (hour >= 6 && hour < 12) return "MORNING";
+  if (hour >= 12 && hour < 17) return "AFTERNOON";
+  if (hour >= 17 && hour < 21) return "EVENING";
+  if (hour >= 21 && hour <= 23) return "NIGHT";
+  return "VERY_LATE_NIGHT"; // 00:00 - 05:59
+}
+
+function generateCortexGreeting(name) {
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const timeClass = getCortexTimeClassification(hour);
+
+  // Session & Returning User Tracking
+  let isReturningUser = false;
+  let hoursSinceLastSeen = null;
+  const nowMs = Date.now();
+  try {
+    const lastSeenStr = localStorage.getItem("cortex_last_seen");
+    if (lastSeenStr) {
+      const lastSeenMs = parseInt(lastSeenStr, 10);
+      if (!isNaN(lastSeenMs) && lastSeenMs > 0) {
+        hoursSinceLastSeen = (nowMs - lastSeenMs) / (1000 * 60 * 60);
+        if (hoursSinceLastSeen < 36) {
+          isReturningUser = true;
+        }
+      }
+    }
+    localStorage.setItem("cortex_last_seen", String(nowMs));
+  } catch (_) {}
+
+  // Base pool from current time classification
+  let pool = [...(CORTEX_GREETING_POOLS[timeClass] || CORTEX_GREETING_POOLS.MORNING)];
+
+  // Dynamic context awareness
+  if (timeClass === "VERY_LATE_NIGHT") {
+    if (day === 0) {
+      pool.push("Up late, {name}? Another Sunday night session?");
+      pool.push("Quiet Sunday night, big ideas?");
+    } else if (day === 1) {
+      pool.push("Early Monday hours, {name}. Late night or early start?");
+    } else if (day === 6) {
+      pool.push("Weekend night owl mode, {name}?");
+    }
+  }
+
+  // Weekday intelligence (35% probability if day matches Monday, Friday, Saturday, Sunday)
+  const weekdayOptions = CORTEX_WEEKDAY_POOLS[day];
+  if (weekdayOptions && weekdayOptions.length > 0 && Math.random() < 0.35) {
+    pool = [...pool, ...weekdayOptions, ...weekdayOptions];
+  }
+
+  // Returning user session awareness (seen in last 12 hours)
+  if (isReturningUser && hoursSinceLastSeen !== null && hoursSinceLastSeen < 12) {
+    if (timeClass === "VERY_LATE_NIGHT") {
+      pool.push("Still going strong, {name}?");
+      pool.push("Back for midnight engineering, {name}?");
+    } else if (timeClass === "MORNING") {
+      pool.push("Early riser, {name}? Welcome back.");
+    } else if (timeClass === "AFTERNOON") {
+      pool.push("Back at it, {name}. Let's continue.");
+    }
+  }
+
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
+  return chosen.replace(/\{name\}/g, name);
+}
+
 function getDynamicGreeting(username) {
   const rawName =
     username ||
@@ -4113,7 +4585,7 @@ function getDynamicGreeting(username) {
     "Explorer";
   const name = formatDisplayName(rawName) || "Explorer";
   return {
-    title: `Hey ${name} , Do you want to explore something with me ?`,
+    title: generateCortexGreeting(name),
     subtitle: ""
   };
 }
@@ -8201,14 +8673,14 @@ const tourSteps = [
   {
     icon: "🧠",
     title: "Frontier AI Models",
-    desc: "Switch dynamically between 7 state-of-the-art models: Cortex 5 (Super Agent 120B), Cortex 5 Ultra (550B), Cortex 4 Deep Reasoning, Cortex 4 Omni (Vision), and more.",
+    desc: "Switch dynamically between state-of-the-art models: Cortex 5.3 (Frontier MoE 753B), Cortex 5.3 Flash (Vision & Reasoning 320B), Cortex 5 (Super Agent 120B), and more.",
     selector: "#modelSelect"
   },
   {
-    icon: "🪄",
-    title: "Agent Presets & Code Architecture",
-    desc: "Use magic presets for web research, Chart.js plots, deep reasoning, and production code architecture synthesis.",
-    selector: "#presetsBtn"
+    icon: "📂",
+    title: "Project Workspaces",
+    desc: "Organize your conversations into dedicated workspaces with custom directives, nested chats, and instant context management.",
+    selector: "#sidebarProjectsSection"
   }
 ];
 
