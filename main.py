@@ -1374,8 +1374,8 @@ AVAILABLE_MODELS = [
     {"id": "openai/gpt-oss-20b", "name": "Cortex 4 (Deep Reasoning)"},
     {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "name": "Cortex 4 Omni (Vision & Reasoning)"},
     {"id": "nvidia/nemotron-3.5-lightning-30b-a3b", "name": "Cortex 3.5 Lightning (Ultra-Fast)"},
-    {"id": "nvidia/nemotron-3.5-content-safety", "name": "Cortex Guard (Safety & Policy)"},
-    {"id": "nvidia/nemotron-3-embed-1b", "name": "Cortex Embed (Vector & RAG)"},
+    {"id": "nvidia/nemotron-3.5-content-safety", "name": "Cortex Guard (Safety & Policy) [Free]"},
+    {"id": "nvidia/nemotron-3-embed-1b", "name": "Cortex Embed (Vector & RAG) [Free]"},
 ]
 
 MODEL_TOKEN_LIMITS = {
@@ -1907,11 +1907,21 @@ class ChatRequest(BaseModel):
     @classmethod
     def validate_total_message_length(cls, messages: list[ChatMessage]) -> list[ChatMessage]:
         total_chars = sum(len(m.content) for m in messages)
-        if total_chars > 250_000:
-            raise ValueError(
-                f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > 250,000 characters). "
-                "Please shorten your prompt or start a new conversation thread."
-            )
+        has_image = any("(Visual Image Base64:" in m.content or "data:image/" in m.content for m in messages)
+        if has_image:
+            # Multimodal vision payloads (screenshots/diagrams) safely permit up to 2,000,000 characters
+            if total_chars > 2_000_000:
+                raise ValueError(
+                    f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > 2,000,000 characters). "
+                    "Please shorten your prompt or start a new conversation thread."
+                )
+        else:
+            # Pure text prompts enforce strict 250,000 character context ceiling
+            if total_chars > 250_000:
+                raise ValueError(
+                    f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > 250,000 characters). "
+                    "Please shorten your prompt or start a new conversation thread."
+                )
         return messages
 
 
@@ -2836,6 +2846,7 @@ class ForkConversationPayload(BaseModel):
     up_to_message_id: Optional[str] = None
     title: Optional[str] = None
     new_title: Optional[str] = None
+    messages: Optional[list[dict[str, Any]]] = None
 
     @property
     def target_message_id(self) -> Optional[str]:
@@ -2881,11 +2892,13 @@ def fork_conversation_endpoint(
     """Branch/fork an existing conversation from a specific turn into a new conversation thread."""
     target_msg_id = payload.target_message_id if payload else None
     target_title = payload.target_title if payload else None
+    fallback_msgs = payload.messages if payload else None
     forked = database.fork_conversation(
         conv_id,
         up_to_message_id=target_msg_id,
         user_id=current_user["id"],
         new_title=target_title,
+        fallback_messages=fallback_msgs,
     )
     if not forked:
         raise HTTPException(status_code=404, detail="Conversation or message not found.")
@@ -3071,6 +3084,10 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             detail=f"Invalid model '{request.model}'. Please choose an active model from the available models list.",
         )
 
+    # Cortex 3.5 Lightning (Ultra-Fast): strictly enforce Fast mode for <10s ultra-fast generation
+    if req_model == "nvidia/nemotron-3.5-lightning-30b-a3b":
+        mode = "fast"
+
     user_id = current_user["id"]
     stream_ok, stream_id = acquire_user_stream(user_id)
     if not stream_ok:
@@ -3234,20 +3251,22 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 "user_message_id": user_msg_id,
             })
 
-            tokens_ok, used_tok, limit_tok = database.reserve_quota(current_user["id"], estimated_tokens=estimated_tokens)
-            if not tokens_ok:
-                err_msg = f"Daily token quota reached ({used_tok:,} / {limit_tok:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
-                yield event({"type": "token", "text": err_msg})
-                yield event({
-                    "type": "done",
-                    "conversation_id": conv_id,
-                    "user_message_id": user_msg_id,
-                    "assistant_message_id": None,
-                    "full_text": err_msg,
-                    "usage": database.get_daily_usage(current_user["id"]),
-                })
-                return
-            quota_reserved = True
+            is_free_model = effective_model in ("nvidia/nemotron-3.5-content-safety", "nvidia/nemotron-3-embed-1b")
+            if not is_free_model:
+                tokens_ok, used_tok, limit_tok = database.reserve_quota(current_user["id"], estimated_tokens=estimated_tokens)
+                if not tokens_ok:
+                    err_msg = f"Daily token quota reached ({used_tok:,} / {limit_tok:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
+                    yield event({"type": "token", "text": err_msg})
+                    yield event({
+                        "type": "done",
+                        "conversation_id": conv_id,
+                        "user_message_id": user_msg_id,
+                        "assistant_message_id": None,
+                        "full_text": err_msg,
+                        "usage": database.get_daily_usage(current_user["id"]),
+                    })
+                    return
+                quota_reserved = True
 
             # Check if user explicitly asked to save a memory (robust English + Hindi + Hinglish)
             raw_memory_fact, raw_memory_cat = extract_explicit_memory_request(raw_content)
@@ -3618,12 +3637,17 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             # Web search (duckduckgo, fetch_webpage) and tool execution tokens are free compute - do not charge user quota for tool tokens
             consumed_tokens = synthesis_tokens + image_token_cost
+            if is_free_model:
+                consumed_tokens = 0
             # Per-turn safety ceiling: guarantees a single file/photo query never drains excessive tokens
             turn_ceiling = max(1500, min(budget_tokens + 2500, 8192))
             consumed_tokens = min(consumed_tokens, turn_ceiling)
 
-            current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
-            quota_reserved = False
+            if quota_reserved:
+                current_usage = database.release_quota(current_user["id"], estimated_tokens=estimated_tokens, actual_tokens=consumed_tokens)
+                quota_reserved = False
+            else:
+                current_usage = database.get_daily_usage(current_user["id"])
 
             yield event({
                 "type": "done",

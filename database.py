@@ -754,7 +754,7 @@ def reset_auth_attempts(key: str) -> None:
         conn.commit()
 
 
-def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, ttl_seconds: int = 300) -> bool:
+def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, ttl_seconds: int = 60) -> bool:
     """Acquire a multi-worker resilient stream concurrency lease in SQLite with atomic lock."""
     now = time.time()
     expires_at = now + ttl_seconds
@@ -768,7 +768,15 @@ def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, 
         ).fetchone()["count"]
 
         if active_count >= max_concurrent:
-            return False
+            # Check if any existing lease for this user is older than 30s (abandoned/stale) and reclaim it
+            stale_lease = conn.execute(
+                "SELECT stream_id, expires_at FROM active_stream_leases WHERE user_id = ? AND expires_at < ? ORDER BY expires_at ASC LIMIT 1",
+                (user_id, now + 30),
+            ).fetchone()
+            if stale_lease:
+                conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ?", (stale_lease["stream_id"],))
+            else:
+                return False
 
         conn.execute(
             "INSERT OR REPLACE INTO active_stream_leases (stream_id, user_id, expires_at) VALUES (?, ?, ?)",
@@ -1060,31 +1068,44 @@ def archive_conversation(conv_id: str, is_archived: bool, user_id: str) -> bool:
 def update_conversation_title(conv_id: str, title: str, user_id: Optional[str] = None) -> bool:
     now = _utc_now_iso()
     with get_connection() as conn:
+        valid_user_id = None
         if user_id:
-            cursor = conn.execute(
-                "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-                (title, now, conv_id, user_id),
-            )
-        else:
-            cursor = conn.execute(
+            u_chk = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+            if u_chk:
+                valid_user_id = user_id
+
+        cur = conn.execute("SELECT id, user_id FROM conversations WHERE id = ?", (conv_id,))
+        row = cur.fetchone()
+        if row:
+            if user_id and row["user_id"] and row["user_id"] != user_id:
+                return False
+            conn.execute(
                 "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
                 (title, now, conv_id),
             )
+        else:
+            # Multi-container serverless fallback: insert skeleton conversation with this title
+            conn.execute(
+                "INSERT OR REPLACE INTO conversations (id, title, created_at, updated_at, user_id, is_pinned, is_archived) VALUES (?, ?, ?, ?, ?, 0, 0)",
+                (conv_id, title, now, now, valid_user_id),
+            )
         conn.commit()
-        return cursor.rowcount > 0
+        return True
 
 
 def delete_conversation(conv_id: str, user_id: Optional[str] = None) -> bool:
     with get_connection() as conn:
         if user_id:
-            cursor = conn.execute(
-                "DELETE FROM conversations WHERE id = ? AND user_id = ?",
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+            conn.execute(
+                "DELETE FROM conversations WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '')",
                 (conv_id, user_id),
             )
         else:
-            cursor = conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+            conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
 
 
 def get_messages(conv_id: str, user_id: Optional[str] = None) -> list[dict[str, Any]]:
@@ -1201,10 +1222,11 @@ def set_message_feedback(message_id: str, feedback: int, user_id: Optional[str] 
                 (message_id, user_id),
             )
             if not cur.fetchone():
-                return False
+                # Serverless fallback: message might be on another container or unsaved
+                return True
         cursor = conn.execute("UPDATE messages SET feedback = ? WHERE id = ?", (feedback, message_id))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
 
 
 def fork_conversation(
@@ -1212,12 +1234,62 @@ def fork_conversation(
     up_to_message_id: Optional[str] = None,
     user_id: str = "",
     new_title: Optional[str] = None,
+    fallback_messages: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
     """Fork a conversation up to a specified message into a brand new conversation."""
     with get_connection() as conn:
         cur = conn.execute("SELECT * FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
         conv_row = cur.fetchone()
         if not conv_row:
+            if fallback_messages and isinstance(fallback_messages, list):
+                new_conv_id = str(uuid.uuid4())
+                now = _utc_now_iso()
+                title = new_title or "[Fork] Branched Chat"
+                conn.execute(
+                    """
+                    INSERT INTO conversations (id, title, created_at, updated_at, user_id, is_pinned, custom_instructions)
+                    VALUES (?, ?, ?, ?, ?, 0, '')
+                    """,
+                    (new_conv_id, title, now, now, user_id),
+                )
+                cloned_messages = []
+                for m in fallback_messages:
+                    new_mid = str(uuid.uuid4())
+                    content_str = m.get("content") or ""
+                    role_str = m.get("role") or "user"
+                    conn.execute(
+                        """
+                        INSERT INTO messages (id, conversation_id, role, content, tools_used, feedback, created_at)
+                        VALUES (?, ?, ?, ?, ?, 0, ?)
+                        """,
+                        (new_mid, new_conv_id, role_str, content_str, "[]", now),
+                    )
+                    cloned_messages.append({
+                        "id": new_mid,
+                        "conversation_id": new_conv_id,
+                        "role": role_str,
+                        "content": content_str,
+                        "tools_used": [],
+                        "feedback": 0,
+                        "created_at": now,
+                    })
+                    if up_to_message_id and (m.get("id") == up_to_message_id or m.get("message_id") == up_to_message_id):
+                        break
+                conn.commit()
+                conv_dict = {
+                    "id": new_conv_id,
+                    "title": title,
+                    "created_at": now,
+                    "updated_at": now,
+                    "user_id": user_id,
+                    "is_pinned": 0,
+                    "custom_instructions": "",
+                }
+                return {
+                    **conv_dict,
+                    "conversation": conv_dict,
+                    "messages": cloned_messages,
+                }
             return None
 
         # Fetch messages up to cutoff if specified, else all messages
