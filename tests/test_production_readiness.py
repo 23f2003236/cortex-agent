@@ -276,6 +276,24 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertNotIn("untrusted-custom-model", main.VALID_MODEL_IDS)
         self.assertNotIn("jailbreak", main.ALLOWED_MODES)
 
+    def test_glm_model_normalization_and_routing(self):
+        """Verify GLM 5.3 aliases, token limits, and vision routing capabilities."""
+        self.assertEqual(main.normalize_model_id("z-ai/glm-5.3"), "z-ai/glm-5.3")
+        self.assertEqual(main.normalize_model_id("z-ai/glm-5-3"), "z-ai/glm-5.3")
+        self.assertEqual(main.normalize_model_id("z-ai/glm-5.3-flash"), "z-ai/glm-5.3-flash")
+        self.assertEqual(main.normalize_model_id("z-ai/glm-5-3-flash"), "z-ai/glm-5.3-flash")
+
+        # Verify token headroom
+        self.assertEqual(main.MODEL_TOKEN_LIMITS["z-ai/glm-5.3"], 32768)
+        self.assertEqual(main.MODEL_TOKEN_LIMITS["z-ai/glm-5.3-flash"], 32768)
+
+        # Verify presence in AVAILABLE_MODELS
+        available_ids = [m["id"] for m in main.AVAILABLE_MODELS]
+        self.assertIn("z-ai/glm-5.3", available_ids)
+        self.assertIn("z-ai/glm-5.3-flash", available_ids)
+        self.assertNotIn("nvidia/nemotron-3.5-content-safety", available_ids)
+        self.assertNotIn("nvidia/nemotron-3-embed-1b", available_ids)
+
     # ---------------- 8. Project Ownership Isolation ----------------
 
     def test_project_ownership_isolation(self):
