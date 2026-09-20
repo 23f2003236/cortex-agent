@@ -3692,7 +3692,12 @@ function promptRenameActiveChat() {
 }
 
 async function switchConversation(id) {
-  if (busy) return;
+  if (busy) {
+    try {
+      if (abortController) abortController.abort();
+    } catch {}
+    setGeneratingState(false);
+  }
   if (id === currentConversationId && messages.length > 0) return;
   hideArtifactsView();
   closeMobileSidebar();
@@ -3932,8 +3937,13 @@ async function handleMessageFeedback(messageId, value, btnUp, btnDown) {
   }
 }
 
-function startNewChat() {
-  if (busy) return;
+function startNewChat(force = false) {
+  if (busy) {
+    try {
+      if (abortController) abortController.abort();
+    } catch {}
+    setGeneratingState(false);
+  }
   hideArtifactsView();
   currentConversationId = null;
   localStorage.setItem("cortex_active_conv", "new");
@@ -5529,186 +5539,199 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     settled = true;
     clearInterval(thoughtTimer);
 
-    const totalDuration = ((Date.now() - streamStartTime) / 1000).toFixed(1);
-    if (shell.thoughtTimerBadge) {
-      shell.thoughtTimerBadge.textContent = `Thought for ${totalDuration}s`;
-    }
-    if (shell.thoughtBox && (toolSteps.length > 0 || (shell.thoughtContent && shell.thoughtContent.textContent.trim())) && cleanFullText) {
-      shell.thoughtBox.classList.remove("open");
-    }
+    try {
+      const cleanFullText = fullText
+        .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+        .replace(/<tool_call>[\s\S]*$/gi, "")
+        .replace(/<\/?(?:function|parameter)[^>]*>/gi, "")
+        .trim();
 
-    // Detect code or chart generation
-    if ((fullText.includes("```") || isCodePrompt) && !toolsUsed.includes("code_generator")) {
-      toolsUsed.push("code_generator");
-      toolSteps.push({
-        name: "code_generator",
-        label: "Code Architecture & Generator",
-        args: { language: "code/script" },
-        result: "Generated structured code implementation with syntax highlighting.",
-      });
-    }
-    if (fullText.includes("```chart") && !toolsUsed.includes("chart_renderer")) {
-      toolsUsed.push("chart_renderer");
-      toolSteps.push({
-        name: "chart_renderer",
-        label: "Chart.js Visualizer",
-        args: { type: "interactive_chart" },
-        result: "Rendered interactive Chart.js visualization in conversation.",
-      });
-    }
-    if (hasFileAttached && !toolsUsed.includes("document_reader")) {
-      toolsUsed.unshift("document_reader");
-    }
+      const totalDuration = ((Date.now() - streamStartTime) / 1000).toFixed(1);
+      if (shell.thoughtTimerBadge) {
+        shell.thoughtTimerBadge.textContent = `Thought for ${totalDuration}s`;
+      }
+      if (shell.thoughtBox && (toolSteps.length > 0 || (shell.thoughtContent && shell.thoughtContent.textContent.trim())) && cleanFullText) {
+        shell.thoughtBox.classList.remove("open");
+      }
 
-    // Hide live spinner
-    shell.liveBadge.style.display = "none";
+      // Detect code or chart generation
+      if ((fullText.includes("```") || isCodePrompt) && !toolsUsed.includes("code_generator")) {
+        toolsUsed.push("code_generator");
+        toolSteps.push({
+          name: "code_generator",
+          label: "Code Architecture & Generator",
+          args: { language: "code/script" },
+          result: "Generated structured code implementation with syntax highlighting.",
+        });
+      }
+      if (fullText.includes("```chart") && !toolsUsed.includes("chart_renderer")) {
+        toolsUsed.push("chart_renderer");
+        toolSteps.push({
+          name: "chart_renderer",
+          label: "Chart.js Visualizer",
+          args: { type: "interactive_chart" },
+          result: "Rendered interactive Chart.js visualization in conversation.",
+        });
+      }
+      if (hasFileAttached && !toolsUsed.includes("document_reader")) {
+        toolsUsed.unshift("document_reader");
+      }
 
-    const cleanFullText = fullText
-      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
-      .replace(/<tool_call>[\s\S]*$/gi, "")
-      .replace(/<\/?(?:function|parameter)[^>]*>/gi, "")
-      .trim();
+      // Hide live spinner
+      shell.liveBadge.style.display = "none";
 
-    const hasReply = Boolean(cleanFullText);
-    const displayText = hasReply
-      ? cleanFullText
-      : "*(The AI model did not return any tokens. The provider may be temporarily overloaded or rate-limited. Please click Retry below.)*";
+      const hasReply = Boolean(cleanFullText);
+      const displayText = hasReply
+        ? cleanFullText
+        : "*(The AI model did not return any tokens. The provider may be temporarily overloaded or rate-limited. Please click Retry below.)*";
 
-    if (!hasReply) {
-      shell.row.classList.add("actions-visible");
-    }
+      if (!hasReply) {
+        shell.row.classList.add("actions-visible");
+      }
 
-    const isContinuation = isContinuationPrompt(lastUserMsg);
-    let fullDocText = cleanFullText;
-    if (isContinuation && cleanFullText) {
-      const parts = [];
-      let walk = messages.length - 1;
-      while (walk >= 0) {
-        if (messages[walk]?.role === "assistant") {
-          parts.unshift(messages[walk].content);
-          const priorUser = walk > 0 ? messages[walk - 1] : null;
-          if (priorUser && priorUser.role === "user" && isContinuationPrompt(priorUser.content)) {
-            walk -= 2;
+      const isContinuation = isContinuationPrompt(lastUserMsg);
+      let fullDocText = cleanFullText;
+      if (isContinuation && cleanFullText) {
+        const parts = [];
+        let walk = messages.length - 1;
+        while (walk >= 0) {
+          if (messages[walk]?.role === "assistant") {
+            parts.unshift(messages[walk].content);
+            const priorUser = walk > 0 ? messages[walk - 1] : null;
+            if (priorUser && priorUser.role === "user" && isContinuationPrompt(priorUser.content)) {
+              walk -= 2;
+            } else {
+              break;
+            }
           } else {
             break;
           }
-        } else {
-          break;
+        }
+        if (parts.length > 0) {
+          fullDocText = [...parts, cleanFullText].join("\n\n");
         }
       }
-      if (parts.length > 0) {
-        fullDocText = [...parts, cleanFullText].join("\n\n");
-      }
-    }
 
-    renderStreamedText(shell.bubbleEl, displayText, true, {
-      isTruncated,
-      documentText: fullDocText,
-    });
-    if (hasReply) {
-      messages.push({
-        id: shell.row.dataset.messageId || undefined,
-        role: "assistant",
-        content: cleanFullText,
-        tools_used: toolsUsed,
+      renderStreamedText(shell.bubbleEl, displayText, true, {
+        isTruncated,
+        documentText: fullDocText,
+      });
+      if (hasReply) {
+        messages.push({
+          id: shell.row.dataset.messageId || undefined,
+          role: "assistant",
+          content: cleanFullText,
+          tools_used: toolsUsed,
+          feedback: 0,
+        });
+      }
+
+      if (currentConversationId) {
+        saveCachedMessages(currentConversationId, messages);
+        const conv = conversations.find((c) => c.id === currentConversationId);
+        if (conv) {
+          conv.updated_at = new Date().toISOString();
+        }
+        saveCachedConversations();
+      }
+
+      if (toolSteps.length > 0) {
+        shell.accordionEl.style.display = "block";
+        shell.accordionTitle.innerHTML = `${ICONS.tool} Used ${toolsUsed.length} tools (${toolsUsed.map((t) => TOOL_LABELS[t] || t).join(", ")})`;
+        shell.accordionDetails.innerHTML = toolSteps
+          .map(
+            (s) => `
+            <div class="tool-detail-item">
+              <div class="tool-detail-name">${TOOL_ICONS[s.name] || ICONS.tool}${escapeHtml(s.label)}</div>
+              ${s.args && Object.keys(s.args).length ? `<div class="tool-detail-args">Details: <code>${escapeHtml(JSON.stringify(s.args))}</code></div>` : ""}
+              ${s.result ? `<div class="tool-detail-preview">${escapeHtml(s.result)}</div>` : ""}
+            </div>
+          `
+          )
+          .join("");
+      }
+
+      // If response was truncated, inject the continuation pill button directly in the bubble
+      if (isTruncated) {
+        const continuationPill = document.createElement("div");
+        continuationPill.className = "continuation-pill-wrap";
+        continuationPill.innerHTML = `
+          <button type="button" class="continue-generating-btn" title="Continue generating response from where it stopped">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>Response reached maximum length • Click to Continue Generating</span>
+          </button>
+        `;
+        const btn = continuationPill.querySelector(".continue-generating-btn");
+        btn.addEventListener("click", () => {
+          continuationPill.remove();
+          sendUserMessage("Please continue directly from where you left off. Do not repeat previous text, resume seamlessly from the cutoff point.");
+        });
+        shell.bubbleEl.appendChild(continuationPill);
+      }
+
+      // Always resolve the exact preceding user message to retry
+      const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
+        ? retryUserIndex
+        : (() => {
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i]?.role === "user") return i;
+            }
+            return 0;
+          })();
+
+      attachActions(shell.actionsEl, {
+        getText: () => fullDocText || cleanFullText || fullText,
+        showRetry: true,
+        onRetry: () => retryFromMessage(targetUserIndex),
+        isTruncated,
+        onContinue: () => sendUserMessage("Please continue directly from where you left off. Do not repeat previous text, resume seamlessly from the cutoff point."),
+        messageId: shell.row.dataset.messageId,
         feedback: 0,
       });
-    }
 
-    if (currentConversationId) {
-      saveCachedMessages(currentConversationId, messages);
-      const conv = conversations.find((c) => c.id === currentConversationId);
-      if (conv) {
-        conv.updated_at = new Date().toISOString();
+      promptEl.focus();
+      loadConversations();
+      loadUserUsage();
+      if (toolsUsed.includes("remember")) {
+        loadUserMemories();
       }
-      saveCachedConversations();
+      // Indestructible persistence: sync turn & usage to cloud
+      if (typeof syncFullWorkspaceState === "function") {
+        syncFullWorkspaceState(false);
+      }
+      broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: currentConversationId });
+      broadcastWorkspaceUpdate("USAGE_UPDATED");
+    } catch (err) {
+      console.error("Error in finishSuccess:", err);
+    } finally {
+      setGeneratingState(false);
     }
-
-    if (toolSteps.length > 0) {
-      shell.accordionEl.style.display = "block";
-      shell.accordionTitle.innerHTML = `${ICONS.tool} Used ${toolsUsed.length} tools (${toolsUsed.map((t) => TOOL_LABELS[t] || t).join(", ")})`;
-      shell.accordionDetails.innerHTML = toolSteps
-        .map(
-          (s) => `
-          <div class="tool-detail-item">
-            <div class="tool-detail-name">${TOOL_ICONS[s.name] || ICONS.tool}${escapeHtml(s.label)}</div>
-            ${s.args && Object.keys(s.args).length ? `<div class="tool-detail-args">Details: <code>${escapeHtml(JSON.stringify(s.args))}</code></div>` : ""}
-            ${s.result ? `<div class="tool-detail-preview">${escapeHtml(s.result)}</div>` : ""}
-          </div>
-        `
-        )
-        .join("");
-    }
-
-    // If response was truncated, inject the continuation pill button directly in the bubble
-    if (isTruncated) {
-      const continuationPill = document.createElement("div");
-      continuationPill.className = "continuation-pill-wrap";
-      continuationPill.innerHTML = `
-        <button type="button" class="continue-generating-btn" title="Continue generating response from where it stopped">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span>Response reached maximum length • Click to Continue Generating</span>
-        </button>
-      `;
-      const btn = continuationPill.querySelector(".continue-generating-btn");
-      btn.addEventListener("click", () => {
-        continuationPill.remove();
-        sendUserMessage("Please continue directly from where you left off. Do not repeat previous text, resume seamlessly from the cutoff point.");
-      });
-      shell.bubbleEl.appendChild(continuationPill);
-    }
-
-    // Always resolve the exact preceding user message to retry
-    const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
-      ? retryUserIndex
-      : (() => {
-          for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i]?.role === "user") return i;
-          }
-          return 0;
-        })();
-
-    attachActions(shell.actionsEl, {
-      getText: () => fullDocText || cleanFullText || fullText,
-      showRetry: true,
-      onRetry: () => retryFromMessage(targetUserIndex),
-      isTruncated,
-      onContinue: () => sendUserMessage("Please continue directly from where you left off. Do not repeat previous text, resume seamlessly from the cutoff point."),
-      messageId: shell.row.dataset.messageId,
-      feedback: 0,
-    });
-
-    setGeneratingState(false);
-    promptEl.focus();
-    loadConversations();
-    loadUserUsage();
-    if (toolsUsed.includes("remember")) {
-      loadUserMemories();
-    }
-    // Indestructible persistence: sync turn & usage to cloud
-    if (typeof syncFullWorkspaceState === "function") {
-      syncFullWorkspaceState(false);
-    }
-    broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: currentConversationId });
-    broadcastWorkspaceUpdate("USAGE_UPDATED");
   };
 
   const finishError = (detail) => {
-    if (settled) return;
+    if (settled) {
+      setGeneratingState(false);
+      return;
+    }
     settled = true;
     clearInterval(thoughtTimer);
-    shell.row.remove();
-    const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
-      ? retryUserIndex
-      : (() => {
-          for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i]?.role === "user") return i;
-          }
-          return 0;
-        })();
-    addErrorMessage(detail, () => retryFromMessage(targetUserIndex));
-    setGeneratingState(false);
-    promptEl.focus();
+    try {
+      shell.row.remove();
+      const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
+        ? retryUserIndex
+        : (() => {
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i]?.role === "user") return i;
+            }
+            return 0;
+          })();
+      addErrorMessage(detail, () => retryFromMessage(targetUserIndex));
+    } catch (err) {
+      console.error("Error in finishError:", err);
+    } finally {
+      setGeneratingState(false);
+      promptEl.focus();
+    }
   };
 
   try {
@@ -5997,7 +6020,10 @@ form.addEventListener("submit", (event) => {
 sendBtn.addEventListener("click", (event) => {
   if (busy) {
     event.preventDefault();
-    if (abortController) abortController.abort();
+    try {
+      if (abortController) abortController.abort();
+    } catch {}
+    setGeneratingState(false);
   }
 });
 
@@ -7488,6 +7514,15 @@ async function handleAuthSubmit(e) {
     localStorage.setItem("cortex_tour_completed", "true");
     updateDynamicGreeting();
 
+    try {
+      if (abortController) abortController.abort();
+    } catch {}
+    setGeneratingState(false);
+    busy = false;
+    currentConversationId = null;
+    messages = [];
+    if (chatTitleHeader) chatTitleHeader.textContent = "New Chat";
+
     closeAuthModal();
     showChatApp();
     launchConfettiCelebration();
@@ -7501,7 +7536,7 @@ async function handleAuthSubmit(e) {
     }
 
     // Fresh new chat screen on login / registration / entry
-    startNewChat();
+    startNewChat(true);
   } catch (err) {
     if (authErrorAlert) {
       const isAuthFail = authMode === "login" && (
@@ -7575,6 +7610,12 @@ async function handleAuthSubmit(e) {
 function signOut() {
   showSplashTransition("Signing out securely...", 1800, () => {
     try {
+      if (abortController) abortController.abort();
+    } catch {}
+    setGeneratingState(false);
+    busy = false;
+
+    try {
       fetch("/api/auth/logout", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
@@ -7603,8 +7644,8 @@ function signOut() {
       projectsListContainer.innerHTML = '<button class="project-pill active" data-project-id="" type="button">All Chats</button>';
     }
     currentConversationId = null;
-    startNewChat();
-    if (chatEl) chatEl.innerHTML = "";
+    if (chatTitleHeader) chatTitleHeader.textContent = "New Chat";
+    startNewChat(true);
     if (conversationsListEl) conversationsListEl.innerHTML = "";
     showLandingPage();
     showToast("Signed out successfully.");
@@ -7666,7 +7707,7 @@ async function checkAuth() {
       if (targetConvId) {
         await switchConversation(targetConvId);
       } else {
-        startNewChat();
+        startNewChat(true);
       }
 
       dismissSplash();
