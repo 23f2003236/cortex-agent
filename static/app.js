@@ -3836,13 +3836,6 @@ function createConversationItem(c) {
       <button class="conv-action-btn edit-btn" type="button" title="Rename chat" aria-label="Rename chat">
         ${ICONS.edit}
       </button>
-      <button class="conv-action-btn archive-btn" type="button" title="Archive chat" aria-label="Archive chat">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="21 8 21 21 3 21 3 8"></polyline>
-          <rect x="1" y="3" width="22" height="5"></rect>
-          <line x1="10" y1="12" x2="14" y2="12"></line>
-        </svg>
-      </button>
       <button class="conv-action-btn delete-btn" type="button" title="Delete chat" aria-label="Delete chat">
         ${ICONS.trash}
       </button>
@@ -3864,12 +3857,6 @@ function createConversationItem(c) {
   editBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     openRenameChatModal(c.id, c.title);
-  });
-
-  const archiveBtn = item.querySelector(".archive-btn");
-  archiveBtn?.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    await archiveConversation(c.id, true);
   });
 
   const delBtn = item.querySelector(".delete-btn");
@@ -7970,7 +7957,6 @@ async function executeResetAndLogin(identifier, password, rememberMe = true) {
     closeAuthModal();
     showToast("Password updated successfully! Welcome back.");
     showChatApp();
-    launchConfettiCelebration();
     await loadProjects();
     await loadConversations(false);
     loadUserMemories();
@@ -8078,7 +8064,6 @@ async function handleAuthSubmit(e) {
 
     closeAuthModal();
     showChatApp();
-    launchConfettiCelebration();
     await loadProjects();
     await loadConversations(false);
     loadUserMemories();
@@ -8514,7 +8499,6 @@ async function handleGuestTestDrive() {
 
     closeAuthModal();
     showChatApp();
-    launchConfettiCelebration();
     startNewChat();
     await loadProjects();
     await loadConversations(false);
@@ -9529,28 +9513,10 @@ function finishTour() {
   if (overlay) overlay.style.display = "none";
   if (card) card.style.display = "none";
   localStorage.setItem("cortex_tour_completed", "true");
-
-  // Blast Confetti Cannon & Show Celebration Toast for 4.5 seconds!
-  launchConfettiCelebration();
 }
 
 function launchConfettiCelebration() {
-  const toast = document.getElementById("celebrationToast") || celebrationToast;
-  const canvas = document.getElementById("confettiCanvas") || confettiCanvas;
-
-  if (toast) {
-    toast.style.display = "flex";
-    toast.style.animation = "toastPop 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards";
-    clearTimeout(toast._hideTimeout);
-    toast._hideTimeout = setTimeout(() => {
-      toast.style.animation = "toastPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) reverse forwards";
-      setTimeout(() => { toast.style.display = "none"; }, 300);
-    }, 4500);
-  }
-
-  if (canvas) {
-    runConfettiAnimation(canvas, 4500);
-  }
+  // Confetti celebration disabled per clean UI preference
 }
 
 function runConfettiAnimation(canvas, durationMs = 4500) {
