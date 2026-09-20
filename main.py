@@ -2246,26 +2246,27 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
                     pass
 
                 width, height = img.size
-                # Auto-downscale if larger than 1600px in either dimension to prevent token/memory explosion
-                if width > 1600 or height > 1600:
-                    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                # Auto-downscale if larger than 1280px in either dimension to prevent 500k char API limits
+                if width > 1280 or height > 1280:
+                    img.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
                     width, height = img.size
 
                 out_buf = io.BytesIO()
                 if ext in [".jpg", ".jpeg"]:
                     if img.mode in ("RGBA", "P"):
                         img = img.convert("RGB")
-                    img.save(out_buf, format="JPEG", quality=85, optimize=True)
+                    img.save(out_buf, format="JPEG", quality=82, optimize=True)
                     processed_bytes = out_buf.getvalue()
                     mime = "image/jpeg"
                 elif ext == ".png":
-                    if img.mode == "P":
-                        img = img.convert("RGBA")
-                    img.save(out_buf, format="PNG", optimize=True)
+                    # Convert PNGs to JPEG if RGBA/P to compress high-resolution screenshots/photos effectively
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    img.save(out_buf, format="JPEG", quality=82, optimize=True)
                     processed_bytes = out_buf.getvalue()
-                    mime = "image/png"
+                    mime = "image/jpeg"
                 elif ext == ".webp":
-                    img.save(out_buf, format="WEBP", quality=85)
+                    img.save(out_buf, format="WEBP", quality=82)
                     processed_bytes = out_buf.getvalue()
                     mime = "image/webp"
                 else:
@@ -2297,7 +2298,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
 
         kb = max(1, len(processed_bytes) // 1024)
         b64_str = base64.b64encode(processed_bytes).decode("ascii")
-        data_url = f"data:{mime};base64,{b64_str}"
+        data_url = _compress_b64_image_if_needed(f"data:{mime};base64,{b64_str}", max_chars=350000)
         extracted_text = (
             f"[Attached Image: {filename} ({kb} KB, {width}x{height} px)]\n"
             f"(Visual Image Base64: {data_url})"
@@ -2499,13 +2500,61 @@ def archive_conversation(
     return {"ok": True, "is_archived": target_val}
 
 
+def _compress_b64_image_if_needed(data_url: str, max_chars: int = 350000) -> str:
+    """Ensure base64 image data URI never exceeds API character thresholds (NVIDIA 500k limit).
+    Downscales large high-res images and compresses to optimized JPEG under max_chars."""
+    if not data_url or len(data_url) <= max_chars:
+        return data_url
+    try:
+        import base64
+        import io
+        from PIL import Image
+
+        if ";base64," not in data_url:
+            return data_url
+
+        header, b64_str = data_url.split(";base64,", 1)
+        raw_bytes = base64.b64decode(b64_str)
+        img = Image.open(io.BytesIO(raw_bytes))
+        img = img.convert("RGB")
+
+        max_dim = 1280
+        w, h = img.size
+        if max(w, h) > max_dim:
+            if w > h:
+                new_w, new_h = max_dim, max(1, int(h * max_dim / w))
+            else:
+                new_w, new_h = max(1, int(w * max_dim / h)), max_dim
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        out_buf = io.BytesIO()
+        quality = 82
+        img.save(out_buf, format="JPEG", quality=quality, optimize=True)
+        new_b64 = base64.b64encode(out_buf.getvalue()).decode("ascii")
+
+        while len(new_b64) > max_chars and quality > 35:
+            quality -= 15
+            out_buf = io.BytesIO()
+            img.save(out_buf, format="JPEG", quality=quality, optimize=True)
+            new_b64 = base64.b64encode(out_buf.getvalue()).decode("ascii")
+
+        logger.info(
+            f"[IMAGE_COMPRESSION] Compressed oversized base64 image from {len(data_url):,} chars "
+            f"down to {len(new_b64):,} chars (quality={quality}, dim={img.size})."
+        )
+        return f"data:image/jpeg;base64,{new_b64}"
+    except Exception as e:
+        logger.warning(f"Server-side image compression fallback error: {e}")
+        return data_url
+
+
 def _format_user_message(content: str) -> HumanMessage:
     """Parse user message content. If it contains a visual image base64 data URI,
     construct a multimodal LangChain HumanMessage with image_url content parts."""
     import re
     m = re.search(r"\(Visual Image Base64:\s*(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)\)", content)
     if m:
-        data_url = m.group(1)
+        data_url = _compress_b64_image_if_needed(m.group(1))
         clean_text = re.sub(r"\(Visual Image Base64:\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)\n*", "", content).strip()
         return HumanMessage(
             content=[

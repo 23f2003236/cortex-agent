@@ -4194,7 +4194,7 @@ function readFileAsDataURL(file) {
   });
 }
 
-async function compressImageIfNeeded(file, maxDimension = 1600, quality = 0.85) {
+async function compressImageIfNeeded(file, maxDimension = 1200, quality = 0.82) {
   if (!file) return file;
   const isImg = file.type.startsWith("image/") || /\.(png|jpe?g|webp|bmp)$/i.test(file.name);
   if (!isImg) return file;
@@ -4209,7 +4209,9 @@ async function compressImageIfNeeded(file, maxDimension = 1600, quality = 0.85) 
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
         let { width, height } = img;
-        if (width <= maxDimension && height <= maxDimension && file.size < 400 * 1024) {
+        // Target: keep base64 data URL under 300,000 characters (~220 KB raw binary).
+        // If JPEG and already within bounds and small, keep original.
+        if (width <= maxDimension && height <= maxDimension && file.size < 200 * 1024 && file.type === "image/jpeg") {
           resolve(file);
           return;
         }
@@ -4232,11 +4234,13 @@ async function compressImageIfNeeded(file, maxDimension = 1600, quality = 0.85) 
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
 
-        const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+        // Convert PNGs and heavy images to JPEG so compression ratio is guaranteed
+        const mime = "image/jpeg";
         canvas.toBlob(
           (blob) => {
-            if (blob && (blob.size < file.size || width < img.naturalWidth)) {
-              const newFile = new File([blob], file.name.replace(/\.[^.]+$/, mime === "image/png" ? ".png" : ".jpg"), {
+            if (blob) {
+              const newName = file.name.replace(/\.[^.]+$/, ".jpg");
+              const newFile = new File([blob], newName, {
                 type: mime,
                 lastModified: Date.now(),
               });
@@ -4273,11 +4277,11 @@ async function uploadSingleFile(file) {
   try {
     if (attachBtn) attachBtn.disabled = true;
 
-    // 1. Client-side auto-downscale & compression for images to ensure fast uploads & reasonable token use
+    // 1. Client-side auto-downscale & compression for images to ensure fast uploads & safe base64 length (< 300k chars)
     let uploadPayload = file;
     if (isImg && file.type !== "image/svg+xml" && !file.name.endsWith(".svg") && !file.name.endsWith(".gif")) {
       try {
-        uploadPayload = await compressImageIfNeeded(file, 1600, 0.85);
+        uploadPayload = await compressImageIfNeeded(file, 1200, 0.82);
       } catch (cErr) {
         console.warn("Client image compression bypassed:", cErr);
       }
