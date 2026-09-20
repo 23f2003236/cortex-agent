@@ -8272,12 +8272,34 @@ document.addEventListener("keydown", (e) => {
 // ==================== CORTEX 3.1 UX & ARCHITECTURAL SUITE ====================
 
 // 1. Daily Quota Usage & Notification Toast
-function updateUsageDisplay(tokensUsed, limit = 300000) {
+function updateUsageDisplay(tokensUsed, limit = 100000000) {
   const used = Math.max(0, Number(tokensUsed) || 0);
-  const maxLimit = Math.max(1, Number(limit) || 300000);
+  const maxLimit = Math.max(1, Number(limit) || 100000000);
   saveCachedUsage(used, maxLimit);
   const remaining = Math.max(0, maxLimit - used);
   const pct = Math.min(100, Math.max(0, (used / maxLimit) * 100));
+
+  const isUnlimited = maxLimit >= 5000000;
+  if (isUnlimited) {
+    const menuUsageBadge = document.getElementById("menuUsageBadge");
+    const menuUsageBar = document.getElementById("menuUsageBar");
+    if (menuUsageBadge) menuUsageBadge.textContent = "100% Free";
+    if (menuUsageBar) menuUsageBar.style.width = "100%";
+
+    const flyoutPercentBadge = document.getElementById("flyoutPercentBadge");
+    const flyoutUsedText = document.getElementById("flyoutUsedText");
+    const flyoutRemainingText = document.getElementById("flyoutRemainingText");
+    const flyoutProgressBar = document.getElementById("flyoutProgressBar");
+
+    if (flyoutPercentBadge) flyoutPercentBadge.textContent = "Unlimited";
+    if (flyoutUsedText) flyoutUsedText.textContent = `${used.toLocaleString()} tokens`;
+    if (flyoutRemainingText) flyoutRemainingText.textContent = "Unlimited";
+    if (flyoutProgressBar) {
+      flyoutProgressBar.style.width = "100%";
+      flyoutProgressBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
+    }
+    return;
+  }
 
   let formattedUsed = used.toLocaleString();
   if (used >= 1000) {

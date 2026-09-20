@@ -2592,9 +2592,9 @@ def _build_messages(
 
     is_fast_mode = (mode or "").lower() == "fast"
 
-    # Fast mode uses tighter history bounds for lightning-fast tokenization
-    max_history_chars = 18000 if is_fast_mode else 60000
-    max_history_turns = 12 if is_fast_mode else 30
+    # Expanded deep context window: 400,000 chars (~100k tokens) for Auto/Thinking, 120,000 chars for Fast mode
+    max_history_chars = 120000 if is_fast_mode else 400000
+    max_history_turns = 30 if is_fast_mode else 80
 
     trimmed_history = history[-max_history_turns:] if len(history) > max_history_turns else history
 
@@ -3311,31 +3311,14 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             has_image_b64 = bool(re.search(r"\(Visual Image Base64:\s*data:image\/", raw_content)) or has_image
             image_token_cost = 800 if has_image_b64 else 0
             # 3) Minimum viable turn threshold (input context + image + minimum response tokens)
-            min_viable_turn = estimated_input_tokens + image_token_cost + 100
-
-            if remaining_allowance < min_viable_turn:
-                err_msg = (
-                    f"Daily token quota reached ({current_used:,} / {tok_limit:,} tokens). "
-                    f"Remaining allowance ({remaining_allowance:,}) is insufficient for this request (~{min_viable_turn:,} tokens required). "
-                    f"Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
-                )
-                yield event({"type": "token", "text": err_msg})
-                yield event({
-                    "type": "done",
-                    "conversation_id": conv_id,
-                    "user_message_id": user_msg_id,
-                    "assistant_message_id": None,
-                    "full_text": err_msg,
-                    "usage": usage_info,
-                })
-                return
-
+            # Dynamic response budget based on selected model and query intent
             raw_requested_budget = estimate_response_tokens(effective_model, raw_content, mode=mode)
-            available_output = max(100, remaining_allowance - (estimated_input_tokens + image_token_cost))
-            budget_tokens = max(100, min(raw_requested_budget, available_output))
-            # Bound the in-flight reservation (max 4000 tokens) so large 32k output headroom never prematurely starves reservation
+            if current_user.get("is_guest"):
+                budget_tokens = min(raw_requested_budget, remaining_allowance, 25000)
+            else:
+                budget_tokens = raw_requested_budget
             reservation_estimate = min(budget_tokens, 4000)
-            estimated_tokens = min(remaining_allowance, estimated_input_tokens + image_token_cost + reservation_estimate)
+            estimated_tokens = estimated_input_tokens + image_token_cost + reservation_estimate
 
             yield event({
                 "type": "init",
@@ -3350,9 +3333,9 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 "user_message_id": user_msg_id,
             })
 
-            is_free_model = False
+            is_free_model = effective_model in ("z-ai/glm-5.3", "z-ai/glm-5.3-flash", "nvidia/nemotron-3.5-lightning-30b-a3b")
             tokens_ok, used_tok, limit_tok = database.reserve_quota(current_user["id"], estimated_tokens=estimated_tokens)
-            if not tokens_ok:
+            if not is_free_model and not tokens_ok:
                 err_msg = f"Daily token quota reached ({used_tok:,} / {limit_tok:,} tokens). Your quota resets at midnight UTC. Thank you for building with Cortex Agent!"
                 yield event({"type": "token", "text": err_msg})
                 yield event({
@@ -3509,13 +3492,6 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             if clean_chunk:
                                 full_text += clean_chunk
                                 yield event({"type": "token", "text": clean_chunk})
-                                # In-stream token guard: if generated tokens reach reserved budget, halt gracefully
-                                if (len(full_text) // 4) >= budget_tokens:
-                                    is_truncated = True
-                                    trunc_note = "\n\n[Generation completed: Reached daily token allowance limit.]"
-                                    full_text += trunc_note
-                                    yield event({"type": "token", "text": trunc_note})
-                                    break
                             continue
 
                         # Still evaluating or buffering initial tokens
@@ -3785,7 +3761,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 except Exception:
                     pass
             err_msg = str(exc)
-            req_model = (request.model or MODEL_NAME or "").strip()
+            clean_req_model = (request.model or MODEL_NAME or "").strip()
             if "resource exhausted" in err_msg.lower() or "limit reached" in err_msg.lower() or "16/16" in err_msg or "32/32" in err_msg:
                 detail = "NVIDIA NIM worker capacity is temporarily full for this model. Please retry in a few seconds or switch to another model."
             elif "overloaded" in err_msg.lower() or "503" in err_msg:
@@ -3796,7 +3772,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 detail = "This model has reached its End-of-Life on NVIDIA NIM. Please select an active model from the dropdown."
             elif "404" in err_msg or "not found" in err_msg.lower():
                 if "function not found for account" in err_msg.lower():
-                    detail = f"Your current API key does not have entitlement for '{req_model}'. Please generate a key for this model on build.nvidia.com or select a Nemotron model."
+                    detail = f"Your current API key does not have entitlement for '{clean_req_model}'. Please generate a key for this model on build.nvidia.com or select a Nemotron model."
                 else:
                     detail = f"Model endpoint not found on NVIDIA NIM: {err_msg[:120]}"
             else:

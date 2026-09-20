@@ -1647,56 +1647,49 @@ class DistributedRateLimiter:
           <span>Settings</span>
         </button>
 
-        <!-- Daily Token Usage Item under Settings with Flyout -->
+        <!-- Plan & Access Info Item with Flyout -->
         <div id="menuUsageItem" class="user-menu-item user-menu-usage-item" tabindex="0">
           <div class="menu-usage-main">
-            <svg class="menu-item-icon usage-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            <svg class="menu-item-icon usage-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
             </svg>
             <div class="menu-usage-texts">
               <div class="menu-usage-label-row">
-                <span>Usage</span>
-                <span id="menuUsageBadge" class="menu-usage-badge">0 / 300k</span>
+                <span>Plan</span>
+                <span id="menuUsageBadge" class="menu-usage-badge" style="background: rgba(34, 197, 94, 0.15); color: #22c55e; font-weight: 600;">100% Free</span>
               </div>
-              <div class="menu-usage-mini-track">
-                <div id="menuUsageBar" class="menu-usage-mini-fill" style="width: 0%;"></div>
-              </div>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 1px;">Unlimited Frontier AI</div>
             </div>
           </div>
 
-          <!-- Hover Flyout displaying exact day usage & reset info -->
+          <!-- Hover Flyout displaying plan details -->
           <div class="usage-flyout-card" id="usageFlyoutCard">
             <div class="flyout-header">
               <div class="flyout-title-wrap">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span class="flyout-title">Daily Token Quota</span>
+                <span class="flyout-title">Cortex Plan</span>
               </div>
-              <span id="flyoutPercentBadge" class="flyout-percent-badge">0%</span>
+              <span id="flyoutPercentBadge" class="flyout-percent-badge" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">Unlimited</span>
             </div>
 
             <div class="flyout-row">
-              <span class="flyout-label">Used Today:</span>
-              <strong id="flyoutUsedText" class="flyout-val">0 tokens</strong>
+              <span class="flyout-label">Frontier Models:</span>
+              <strong class="flyout-val" style="color: #22c55e;">100% Free Forever</strong>
             </div>
             <div class="flyout-row">
-              <span class="flyout-label">Daily Limit:</span>
-              <span class="flyout-val">300,000 tokens</span>
+              <span class="flyout-label">Token Limits:</span>
+              <span class="flyout-val">Unlimited</span>
             </div>
             <div class="flyout-row">
-              <span class="flyout-label">Remaining:</span>
-              <strong id="flyoutRemainingText" class="flyout-remaining">300,000 tokens</strong>
-            </div>
-
-            <div class="flyout-progress-track">
-              <div id="flyoutProgressBar" class="flyout-progress-fill" style="width: 0%;"></div>
+              <span class="flyout-label">Reasoning Speed:</span>
+              <strong class="flyout-remaining" style="color: var(--accent);">Ultra-Fast & Deep</strong>
             </div>
 
             <div class="flyout-footer">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
+                <path d="M20 6L9 17l-5-5"></path>
               </svg>
-              <span>Resets daily at 00:00 UTC (midnight)</span>
+              <span>Full Frontier Intelligence with Zero Subscription Fees</span>
             </div>
           </div>
         </div>
@@ -2036,9 +2029,9 @@ class DistributedRateLimiter:
           </div>
 
           <div class="guide-card">
-            <h4>⚡ Daily Quotas & Free Tier Highlights</h4>
+            <h4>⚡ 100% Free Frontier Intelligence</h4>
             <ul class="guide-bullet-list">
-              <li><strong>300,000 Tokens/Day:</strong> Full access to NVIDIA NIM frontier reasoning models with live progress tracking in the top bar.</li>
+              <li><strong>Unlimited Tokens:</strong> Full 100% free access to NVIDIA NIM frontier reasoning models with zero artificial token caps.</li>
               <li><strong>10 Uploads/Day:</strong> Attach documents (PDF, CSV, Excel, Code) and screenshots for vision OCR analysis.</li>
               <li><strong>Zero Subscriptions:</strong> No $20/mo fees, no credit card required, 100% private.</li>
             </ul>
