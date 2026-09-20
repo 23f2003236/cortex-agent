@@ -1401,6 +1401,14 @@ def normalize_model_id(model_id: Optional[str]) -> str:
     return MODEL_ALIASES.get(mid, mid)
 
 
+def get_model_profile(model_id: Optional[str]) -> dict:
+    resolved = normalize_model_id(model_id)
+    for m in AVAILABLE_MODELS:
+        if m["id"] == resolved:
+            return m
+    return {"id": resolved, "name": resolved}
+
+
 def get_model_max_tokens(model_id: str) -> int:
     resolved_id = normalize_model_id(model_id)
     return MODEL_TOKEN_LIMITS.get(resolved_id, MAX_OUTPUT_TOKENS)
@@ -2570,10 +2578,11 @@ def _build_messages(
     user_id: Optional[str] = None,
     conv_id: Optional[str] = None,
     mode: str = "auto",
+    model: Optional[str] = None,
 ) -> tuple[list, ChatMessage]:
     """Build LangChain messages with smart sliding window context budgeting.
     In Fast mode, uses lightweight prompt and compact history for instant TTFT.
-    In Auto/Thinking modes, preserves deep 30-turn context and full directives."""
+    In Auto/Thinking modes, preserves deep context and full directives."""
     if not request.messages:
         raise HTTPException(status_code=400, detail="Send at least one message.")
 
@@ -2601,6 +2610,18 @@ def _build_messages(
 
     active_sys_prompt = FAST_SYSTEM_PROMPT if is_fast_mode else SYSTEM_PROMPT
     messages = [SystemMessage(content=active_sys_prompt)]
+
+    # Model identity & role alignment directive:
+    resolved_model = normalize_model_id(model or request.model or MODEL_NAME)
+    model_profile = get_model_profile(resolved_model)
+    model_display_name = model_profile.get("name", "Cortex Agent")
+    identity_directive = (
+        f"[ACTIVE MODEL PROFILE: You are currently active in Cortex as '{model_display_name}' (Model ID: {resolved_model}) in {mode.capitalize()} mode.\n"
+        f"- Assigned identity: {model_display_name}.\n"
+        f"- When asked what model you are, your role in Cortex, or what tasks you are best suited for, identify yourself accurately as '{model_display_name}' in Cortex.\n"
+        "- Do not guess hidden backend provider infrastructure or internal endpoints.]"
+    )
+    messages.append(SystemMessage(content=identity_directive))
 
     # Inject Persistent Memories and Custom Personalization Instructions
     if user_id:
@@ -3223,7 +3244,24 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             except Exception as sync_err:
                 logger.warning(f"Error syncing client tokens: {sync_err}")
 
-        messages, last_user = _build_messages(request, user_id=current_user["id"], conv_id=conv_id, mode=mode)
+        effective_model = req_model
+        if has_image and effective_model not in ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "z-ai/glm-5.3-flash"):
+            effective_model = "z-ai/glm-5.3-flash"
+
+        request_id = f"req_{uuid.uuid4().hex[:12]}"
+        logger.info(
+            f"[MODEL_DISPATCH] request_id={request_id} user_id={user_id} "
+            f"requested_model={req_model} resolved_provider_model={effective_model} "
+            f"mode={mode} conv_id={conv_id}"
+        )
+
+        messages, last_user = _build_messages(
+            request,
+            user_id=current_user["id"],
+            conv_id=conv_id,
+            mode=mode,
+            model=effective_model,
+        )
 
         # Save user message to persistent DB
         user_msg = database.add_message(conv_id, role="user", content=last_user.content, user_id=current_user["id"])
@@ -3234,10 +3272,6 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
     def event(data: dict) -> str:
         return f"data: {json.dumps(data)}\n\n"
-
-    effective_model = req_model
-    if has_image and effective_model not in ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "z-ai/glm-5.3-flash"):
-        effective_model = "z-ai/glm-5.3-flash"
 
     def generate():
         ctx_token = _current_user_id_ctx.set(current_user["id"])
@@ -3308,6 +3342,9 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 "conversation_id": conv_id,
                 "title": title,
                 "model": effective_model,
+                "requested_model": req_model,
+                "resolved_provider_model": effective_model,
+                "request_id": request_id,
                 "mode": mode,
                 "budget_tokens": budget_tokens,
                 "user_message_id": user_msg_id,
@@ -3710,6 +3747,13 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             else:
                 current_usage = database.get_daily_usage(current_user["id"])
 
+            latency = round(time.time() - stream_start_time, 3)
+            logger.info(
+                f"[MODEL_COMPLETED] request_id={request_id} user_id={user_id} "
+                f"requested_model={req_model} resolved_provider_model={effective_model} "
+                f"latency={latency}s tokens={consumed_tokens} status=200"
+            )
+
             yield event({
                 "type": "done",
                 "conversation_id": conv_id,
@@ -3729,7 +3773,12 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     pass
             raise
         except Exception as exc:
-            logger.error(f"Stream error: {type(exc).__name__}: {exc}")
+            latency = round(time.time() - stream_start_time, 3)
+            logger.error(
+                f"[MODEL_ERROR] request_id={request_id} user_id={user_id} "
+                f"requested_model={req_model} resolved_provider_model={effective_model} "
+                f"latency={latency}s error={type(exc).__name__}: {exc} status=500"
+            )
             if full_text.strip():
                 try:
                     database.add_message(conv_id, role="assistant", content=full_text, tools_used=tools_used, user_id=current_user["id"])
