@@ -32,8 +32,23 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from langchain_openai import ChatOpenAI
+import langchain_openai.chat_models.base as _lc_openai_base
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
+
+# Monkeypatch LangChain's delta converter to preserve reasoning_content from reasoning models (e.g. GLM 5.3, DeepSeek)
+_orig_convert_delta_chunk = _lc_openai_base._convert_delta_to_message_chunk
+
+
+def _cortex_convert_delta_to_message_chunk(_dict, default_class):
+    chunk = _orig_convert_delta_chunk(_dict, default_class)
+    rc = _dict.get("reasoning_content") or _dict.get("reasoning")
+    if rc:
+        chunk.additional_kwargs["reasoning_content"] = rc
+    return chunk
+
+
+_lc_openai_base._convert_delta_to_message_chunk = _cortex_convert_delta_to_message_chunk
 
 import database
 
@@ -1537,7 +1552,10 @@ def run_tool_rounds(messages: list, model_override: Optional[str] = None) -> lis
     """Run non-streaming tool-calling rounds until the model has no more tool
     calls to make. Mutates `messages` in place by appending AI/Tool messages.
     Returns the list of tool names that were used."""
-    llm = make_llm(model_override=model_override, streaming=False, max_tokens=1024)
+    tool_model = model_override
+    if tool_model in ("z-ai/glm-5.3", "z-ai/glm-5.3-flash"):
+        tool_model = MODEL_NAME
+    llm = make_llm(model_override=tool_model, streaming=False, max_tokens=1024)
     llm_with_tools = llm.bind_tools(TOOLS)
     tools_used: list[str] = []
 
@@ -1584,6 +1602,9 @@ def run_tool_rounds_streaming(
     - ("tools_used", tools_used)
     Mutates `messages` in place.
     """
+    tool_model = model_override
+    if tool_model in ("z-ai/glm-5.3", "z-ai/glm-5.3-flash"):
+        tool_model = MODEL_NAME
     effective_tools = tools_subset if tools_subset is not None else TOOLS
     tools_by_name = {t.name: t for t in effective_tools}
     effective_rounds = max_rounds or MAX_TOOL_ROUNDS
@@ -1620,7 +1641,7 @@ def run_tool_rounds_streaming(
             break
 
         llm = make_llm(
-            model_override=model_override,
+            model_override=tool_model,
             streaming=False,
             max_tokens=tool_output_budget,
         )
@@ -3248,6 +3269,10 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         if has_image and effective_model not in ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "z-ai/glm-5.3-flash"):
             effective_model = "z-ai/glm-5.3-flash"
 
+        # Lock GLM models exclusively to Thinking Mode
+        if effective_model in ("z-ai/glm-5.3", "z-ai/glm-5.3-flash"):
+            mode = "thinking"
+
         request_id = f"req_{uuid.uuid4().hex[:12]}"
         logger.info(
             f"[MODEL_DISPATCH] request_id={request_id} user_id={user_id} "
@@ -3299,7 +3324,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             elif mode == "fast":
                 run_tools = False  # Zero tool overhead in Fast mode: instant direct streaming
             elif mode == "thinking":
-                run_tools = True
+                run_tools = should_run_tools(raw_content, messages)
             else:
                 run_tools = should_run_tools(raw_content, messages)
 
@@ -3441,7 +3466,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             # a full, high-quality response bounded by the user's actual remaining daily quota
             available_for_synthesis = max(200, remaining_allowance - (estimated_input_tokens + image_token_cost))
             synthesis_budget = max(200, min(budget_tokens, available_for_synthesis))
-            llm = make_llm(model_override=effective_model, streaming=True, max_tokens=synthesis_budget)
+            accumulated_reasoning = ""
+            active_stream_model = effective_model
             max_attempts = 3
             is_truncated = False
             last_finish_reason = None
@@ -3453,6 +3479,15 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             for attempt in range(max_attempts):
                 try:
+                    if attempt > 0:
+                        if active_stream_model == "z-ai/glm-5.3":
+                            active_stream_model = "z-ai/glm-5.3-flash"
+                            logger.info(f"Synthesis retry {attempt + 1}: falling back from z-ai/glm-5.3 to z-ai/glm-5.3-flash")
+                        elif active_stream_model == "z-ai/glm-5.3-flash":
+                            active_stream_model = MODEL_NAME
+                            logger.info(f"Synthesis retry {attempt + 1}: falling back from z-ai/glm-5.3-flash to {MODEL_NAME}")
+
+                    llm = make_llm(model_override=active_stream_model, streaming=True, max_tokens=synthesis_budget)
                     stream_buffer = ""
                     is_tool_call_stream = False if mode == "fast" else None  # Fast mode streams immediately with zero tool buffering delay
                     intercepted_tool_info = None
@@ -3479,6 +3514,12 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                         chunk_usage = getattr(chunk, "usage_metadata", None) or meta.get("usage") or meta.get("token_usage")
                         if chunk_usage and isinstance(chunk_usage, dict):
                             provider_usage = chunk_usage
+
+                        # Live stream reasoning / thinking tokens:
+                        rc_chunk = add_kw.get("reasoning_content") or add_kw.get("reasoning")
+                        if rc_chunk:
+                            accumulated_reasoning += str(rc_chunk)
+                            yield event({"type": "thought", "text": str(rc_chunk)})
 
                         text = _chunk_to_text(chunk.content)
                         if not text:
@@ -3623,8 +3664,18 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                             "Provide the complete, in-depth final answer now.]"
                         ))
                     ]
-                    fallback_llm = make_llm(model_override=effective_model, streaming=False, max_tokens=synthesis_budget)
-                    res = fallback_llm.invoke(fallback_messages)
+                    fallback_model = effective_model
+                    if fallback_model == "z-ai/glm-5.3":
+                        fallback_model = "z-ai/glm-5.3-flash"
+
+                    try:
+                        fallback_llm = make_llm(model_override=fallback_model, streaming=False, max_tokens=synthesis_budget)
+                        res = fallback_llm.invoke(fallback_messages)
+                    except Exception as fb_first_err:
+                        logger.warning(f"Primary fallback invoke on {fallback_model} failed: {fb_first_err}; falling back to {MODEL_NAME}")
+                        fallback_llm = make_llm(model_override=MODEL_NAME, streaming=False, max_tokens=synthesis_budget)
+                        res = fallback_llm.invoke(fallback_messages)
+
                     fb_usage = getattr(res, "usage_metadata", None) or getattr(res, "response_metadata", {}).get("token_usage") or getattr(res, "response_metadata", {}).get("usage")
                     if fb_usage and isinstance(fb_usage, dict):
                         provider_usage = fb_usage
@@ -3642,6 +3693,14 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                                 yield event({"type": "token", "text": final_text})
                 except Exception as fb_err:
                     logger.warning(f"Fallback invoke failed: {fb_err}")
+
+            # If still empty after fallback invoke, recover from accumulated reasoning if present
+            if not full_text.strip() and accumulated_reasoning.strip():
+                clean_reasoning = accumulated_reasoning.strip()
+                if len(clean_reasoning) > 30:
+                    logger.info("Recovered full_text from substantive accumulated_reasoning.")
+                    full_text = clean_reasoning
+                    yield event({"type": "token", "text": full_text})
 
             # If still completely empty after streaming and fallback, provide a clean fallback message
             if not full_text.strip():

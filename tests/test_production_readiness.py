@@ -1230,6 +1230,111 @@ class TestProductionReadiness(unittest.TestCase):
             self.assertIn('"request_id": "req_', content)
 
 
+    def test_glm_thinking_mode_auto_enforcement(self):
+        """Verify chat stream automatically locks GLM models into thinking mode regardless of client mode."""
+        for glm_id in ("z-ai/glm-5.3", "z-ai/glm-5.3-flash"):
+            with patch("main.make_llm") as mock_make_llm:
+                mock_instance = MagicMock()
+                mock_instance.stream.return_value = [
+                    MagicMock(content="Hello", response_metadata={}, additional_kwargs={})
+                ]
+                mock_make_llm.return_value = mock_instance
+
+                token = main.generate_token(self.user["id"], self.user["username"])
+                payload = {
+                    "model": glm_id,
+                    "mode": "fast",  # Client requested fast, but GLM must be forced to thinking
+                    "messages": [{"role": "user", "content": "What is machine learning?"}],
+                }
+                resp = self.client.post("/api/chat/stream", json=payload, headers={"Authorization": f"Bearer {token}"})
+                self.assertEqual(resp.status_code, 200)
+                content = resp.content.decode("utf-8")
+                self.assertIn('"mode": "thinking"', content, f"GLM model {glm_id} was not forced to thinking mode")
+
+    def test_langchain_reasoning_content_monkeypatch(self):
+        """Verify _convert_delta_to_message_chunk captures reasoning_content into chunk.additional_kwargs."""
+        from langchain_openai.chat_models.base import _convert_delta_to_message_chunk, AIMessageChunk
+        delta = {"role": "assistant", "content": None, "reasoning_content": "Deep reasoning steps here..."}
+        chunk = _convert_delta_to_message_chunk(delta, AIMessageChunk)
+        self.assertIn("reasoning_content", chunk.additional_kwargs)
+        self.assertEqual(chunk.additional_kwargs["reasoning_content"], "Deep reasoning steps here...")
+
+    def test_chat_stream_yields_thought_events_for_reasoning(self):
+        """Verify SSE stream emits thought events when reasoning_content is present in chunks."""
+        with patch("main.make_llm") as mock_make_llm:
+            mock_instance = MagicMock()
+            thought_chunk = MagicMock(
+                content="",
+                response_metadata={},
+                additional_kwargs={"reasoning_content": "Pondering the query..."}
+            )
+            answer_chunk = MagicMock(
+                content="Here is the solution.",
+                response_metadata={},
+                additional_kwargs={}
+            )
+            mock_instance.stream.return_value = [thought_chunk, answer_chunk]
+            mock_make_llm.return_value = mock_instance
+
+            token = main.generate_token(self.user["id"], self.user["username"])
+            payload = {
+                "model": "z-ai/glm-5.3-flash",
+                "messages": [{"role": "user", "content": "Explain quicksort"}],
+            }
+            resp = self.client.post("/api/chat/stream", json=payload, headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            content = resp.content.decode("utf-8")
+            self.assertIn('"type": "thought"', content)
+            self.assertIn("Pondering the query...", content)
+            self.assertIn('"type": "token"', content)
+            self.assertIn("Here is the solution.", content)
+
+    def test_glm_tool_execution_routes_to_super_agent(self):
+        """Verify tool rounds use MODEL_NAME for tool calling when model_override is a GLM model."""
+        with patch("main.make_llm") as mock_make_llm:
+            mock_instance = MagicMock()
+            mock_instance.bind_tools.return_value.invoke.return_value = MagicMock(
+                tool_calls=[], content="No tools needed"
+            )
+            mock_make_llm.return_value = mock_instance
+
+            main.run_tool_rounds([main.HumanMessage(content="test")], model_override="z-ai/glm-5.3")
+            # Should have called make_llm with MODEL_NAME, not z-ai/glm-5.3
+            self.assertEqual(mock_make_llm.call_args.kwargs.get("model_override"), main.MODEL_NAME)
+
+    def test_glm_substantive_reasoning_recovery(self):
+        """Verify chat_stream recovers reasoning content as full_text if content tokens were empty."""
+        with patch("main.make_llm") as mock_make_llm:
+            mock_stream_instance = MagicMock()
+            thought_chunk = MagicMock(
+                content="",
+                response_metadata={},
+                additional_kwargs={"reasoning_content": "This is comprehensive reasoning that answers the prompt completely."}
+            )
+            mock_stream_instance.stream.return_value = [thought_chunk]
+
+            mock_fb_instance = MagicMock()
+            mock_fb_instance.invoke.return_value = MagicMock(content="", response_metadata={})
+
+            def make_llm_side_effect(**kwargs):
+                if kwargs.get("streaming"):
+                    return mock_stream_instance
+                return mock_fb_instance
+
+            mock_make_llm.side_effect = make_llm_side_effect
+
+            token = main.generate_token(self.user["id"], self.user["username"])
+            payload = {
+                "model": "z-ai/glm-5.3",
+                "messages": [{"role": "user", "content": "Explain machine learning in detail"}],
+            }
+            resp = self.client.post("/api/chat/stream", json=payload, headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            content = resp.content.decode("utf-8")
+            self.assertIn("This is comprehensive reasoning that answers the prompt completely.", content)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 

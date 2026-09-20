@@ -5500,7 +5500,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     if (shell.thoughtTimerBadge) {
       shell.thoughtTimerBadge.textContent = `Thought for ${totalDuration}s`;
     }
-    if (shell.thoughtBox && toolSteps.length > 0) {
+    if (shell.thoughtBox && (toolSteps.length > 0 || (shell.thoughtContent && shell.thoughtContent.textContent.trim())) && cleanFullText) {
       shell.thoughtBox.classList.remove("open");
     }
 
@@ -5821,6 +5821,17 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           } else {
             shell.liveText.textContent = "Generating response…";
           }
+        } else if (payload.type === "thought") {
+          if (shell.thoughtBox) {
+            shell.thoughtBox.style.display = "block";
+            shell.thoughtBox.classList.add("open");
+            if (shell.thoughtContent) {
+              shell.thoughtContent.textContent += payload.text;
+            }
+          }
+          shell.liveBadge.style.display = "inline-flex";
+          shell.liveText.textContent = "Deep reasoning & thinking…";
+          if (isNearBottom()) scrollToBottom();
         } else if (payload.type === "token") {
           fullText += payload.text;
           renderStreamedText(shell.bubbleEl, fullText, false);
@@ -6045,21 +6056,36 @@ initModeSelector();
 
 function applyModelSpecificModes(modelId) {
   const isLightning = modelId === "nvidia/nemotron-3.5-lightning-30b-a3b";
+  const isGlm = modelId === "z-ai/glm-5.3" || modelId === "z-ai/glm-5.3-flash";
   const menu = document.getElementById("modeMenu");
+  const btn = document.getElementById("modeDropdownBtn");
   if (!menu) return;
 
   const autoOpt = menu.querySelector('[data-mode="auto"]');
+  const fastOpt = menu.querySelector('[data-mode="fast"]');
   const thinkingOpt = menu.querySelector('[data-mode="thinking"]');
 
-  if (isLightning) {
+  if (isGlm) {
+    if (autoOpt) autoOpt.style.display = "none";
+    if (fastOpt) fastOpt.style.display = "none";
+    if (thinkingOpt) thinkingOpt.style.display = "";
+    if (typeof window.setResponseMode === "function") {
+      window.setResponseMode("thinking");
+    }
+    if (btn) btn.title = "Cortex 5.3 operates exclusively in Deep Thinking mode";
+  } else if (isLightning) {
     if (autoOpt) autoOpt.style.display = "none";
     if (thinkingOpt) thinkingOpt.style.display = "none";
+    if (fastOpt) fastOpt.style.display = "";
     if (typeof window.setResponseMode === "function") {
       window.setResponseMode("fast");
     }
+    if (btn) btn.title = "Cortex 3.5 Lightning operates in Ultra-Fast mode";
   } else {
     if (autoOpt) autoOpt.style.display = "";
+    if (fastOpt) fastOpt.style.display = "";
     if (thinkingOpt) thinkingOpt.style.display = "";
+    if (btn) btn.title = "Select Response Mode";
   }
 }
 
