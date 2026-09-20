@@ -772,10 +772,11 @@ def acquire_stream_lease(user_id: str, stream_id: str, max_concurrent: int = 2, 
         ).fetchone()["count"]
 
         if active_count >= max_concurrent:
-            # Check if any existing lease for this user is older than 30s (abandoned/stale) and reclaim it
+            # Reclaim the lease closest to expiry — active streams renew to now+300, so any lease
+            # expiring within 60s has not been renewed recently and is likely abandoned
             stale_lease = conn.execute(
                 "SELECT stream_id, expires_at FROM active_stream_leases WHERE user_id = ? AND expires_at < ? ORDER BY expires_at ASC LIMIT 1",
-                (user_id, now + 30),
+                (user_id, now + 60),
             ).fetchone()
             if stale_lease:
                 conn.execute("DELETE FROM active_stream_leases WHERE stream_id = ?", (stale_lease["stream_id"],))

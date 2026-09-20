@@ -1057,17 +1057,16 @@ class TestProductionReadiness(unittest.TestCase):
         })
         self.assertEqual(new_login.status_code, 200)
 
-        # 2. Test login with force_reset=True
+        # 2. Verify force_reset backdoor is REMOVED (security fix):
+        # Sending force_reset=True with a wrong password must NOT succeed
         third_pass = "ThirdPass789!"
         force_login = self.client.post("/api/auth/login", json={
             "username": target_user,
             "password": third_pass,
             "force_reset": True,
         })
-        self.assertEqual(force_login.status_code, 200)
-        force_data = force_login.json()
-        self.assertTrue(force_data["ok"])
-        self.assertEqual(force_data["user"]["username"], target_user.lower())
+        # Must be 401 (rejected) — force_reset backdoor has been removed
+        self.assertEqual(force_login.status_code, 401)
 
     # ---------------- 31. Email-First & Anti-Hacker Hardened Auth ----------------
 

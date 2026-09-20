@@ -516,7 +516,8 @@ function getCachedConversations() {
     if ((!list || !list.length) && currentUser && currentUser.id) {
       list = JSON.parse(localStorage.getItem(`cortex_convs_${currentUser.id}`));
     }
-    return Array.isArray(list) ? list : [];
+    // Filter out null/corrupted entries — corrupted localStorage can crash forEach loops
+    return Array.isArray(list) ? list.filter(c => c != null && c.id) : [];
   } catch {
     return [];
   }
@@ -580,7 +581,21 @@ function saveDeletedConvId(id) {
 function getCachedMessages(convId) {
   if (!convId) return [];
   try {
-    return JSON.parse(localStorage.getItem(`cortex_msgs_${convId}`)) || [];
+    // User-scoped key to prevent cross-user data bleed
+    const userKey = getUserScopedKey(`cortex_msgs_${convId}`);
+    let data = JSON.parse(localStorage.getItem(userKey));
+    if (!data) {
+      // Transparent migration: try old global (unscoped) key
+      const oldKey = `cortex_msgs_${convId}`;
+      data = JSON.parse(localStorage.getItem(oldKey));
+      if (data && Array.isArray(data) && data.length > 0) {
+        try {
+          localStorage.setItem(userKey, JSON.stringify(data));
+          localStorage.removeItem(oldKey);
+        } catch {}
+      }
+    }
+    return Array.isArray(data) ? data.filter(m => m != null && m.content) : [];
   } catch {
     return [];
   }
@@ -588,10 +603,32 @@ function getCachedMessages(convId) {
 
 function saveCachedMessages(convId, msgs) {
   if (!convId || !Array.isArray(msgs)) return;
+  const userKey = getUserScopedKey(`cortex_msgs_${convId}`);
   try {
-    localStorage.setItem(`cortex_msgs_${convId}`, JSON.stringify(msgs));
+    localStorage.setItem(userKey, JSON.stringify(msgs));
   } catch (e) {
-    console.warn("Failed to cache messages:", e);
+    if (e.name === "QuotaExceededError") {
+      // LRU eviction: remove oldest non-active conversation caches to make room
+      try {
+        const keysToEvict = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.includes("cortex_msgs_") && key !== userKey) {
+            keysToEvict.push(key);
+          }
+        }
+        // Remove up to 5 oldest message caches
+        for (const key of keysToEvict.slice(0, 5)) {
+          localStorage.removeItem(key);
+        }
+        // Retry save
+        localStorage.setItem(userKey, JSON.stringify(msgs));
+      } catch (retryErr) {
+        console.warn("Still can't save messages after LRU eviction:", retryErr);
+      }
+    } else {
+      console.warn("Failed to cache messages:", e);
+    }
   }
 }
 
@@ -3636,7 +3673,7 @@ async function loadConversations(autoSelectLatest = false) {
           seen.add(c.id);
         }
       }
-      merged = merged.filter((c) => !archivedSet.has(c.id) && !deletedSet.has(c.id));
+      merged = merged.filter((c) => c && c.id && !archivedSet.has(c.id) && !deletedSet.has(c.id));
       conversations = merged;
       sortConversationsList();
       saveCachedConversations();
@@ -4107,14 +4144,15 @@ async function switchConversation(id) {
         }
       } else {
         messages = [];
-        showEmptyState();
+        clearChatDom();
+        // Keep chat input visible — this is a valid empty conversation, not "no chat selected"
       }
     } else {
       if (cachedMsgs.length > 0) {
         messages = cachedMsgs;
         rebuildChatFromMessages();
       } else if (messages.length === 0) {
-        showEmptyState();
+        clearChatDom();
       }
     }
   } catch (err) {
@@ -4124,7 +4162,7 @@ async function switchConversation(id) {
         messages = cachedMsgs;
         rebuildChatFromMessages();
       } else if (messages.length === 0) {
-        showEmptyState();
+        clearChatDom();
       }
     }
   }

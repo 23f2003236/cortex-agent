@@ -280,14 +280,6 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
 )
 
-@app.middleware("http")
-async def db_lifecycle_middleware(request: Request, call_next):
-    try:
-        response = await call_next(request)
-        return response
-    finally:
-        database.close_connection()
-
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -520,7 +512,6 @@ class LoginPayload(BaseModel):
     email_or_username: Optional[str] = Field(default=None, max_length=128)
     password: str = Field(min_length=1, max_length=128)
     remember_me: Optional[bool] = True
-    force_reset: Optional[bool] = False
 
 
 class ResetPasswordPayload(BaseModel):
@@ -682,13 +673,7 @@ def login(payload: LoginPayload, request: Request, response: Response):
             detail=f"Account temporarily locked due to repeated failed login attempts. Please try again in {wait_user} seconds.",
         )
 
-    if payload.force_reset:
-        try:
-            user = database.update_user_password(identifier, payload.password)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-    else:
-        user = database.authenticate_user(identifier, payload.password)
+    user = database.authenticate_user(identifier, payload.password)
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
@@ -910,7 +895,7 @@ _ALLOWED_OPERATORS = {
     ast.Div: operator.truediv,
     ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
+    ast.Pow: lambda a, b: (_ for _ in ()).throw(ValueError("Exponent too large (max base 10000, max exponent 1000)")) if (isinstance(b, (int, float)) and abs(b) > 1000) or (isinstance(a, (int, float)) and abs(a) > 10000) else operator.pow(a, b),
     ast.USub: operator.neg,
     ast.UAdd: operator.pos,
 }
@@ -943,7 +928,10 @@ _SAFE_CONSTANTS = {
 }
 
 
-def _safe_eval(node):
+
+def _safe_eval(node, _depth=0):
+    if _depth > 50:
+        raise ValueError("Expression too deeply nested (max depth: 50).")
     if isinstance(node, ast.Constant):
         if isinstance(node.value, (int, float)):
             return node.value
@@ -958,13 +946,13 @@ def _safe_eval(node):
         if op_type not in _ALLOWED_OPERATORS:
             raise ValueError(f"Operator {op_type.__name__} is not allowed.")
         return _ALLOWED_OPERATORS[op_type](
-            _safe_eval(node.left), _safe_eval(node.right)
+            _safe_eval(node.left, _depth + 1), _safe_eval(node.right, _depth + 1)
         )
     if isinstance(node, ast.UnaryOp):
         op_type = type(node.op)
         if op_type not in _ALLOWED_OPERATORS:
             raise ValueError(f"Operator {op_type.__name__} is not allowed.")
-        return _ALLOWED_OPERATORS[op_type](_safe_eval(node.operand))
+        return _ALLOWED_OPERATORS[op_type](_safe_eval(node.operand, _depth + 1))
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name):
             raise ValueError("Only direct mathematical function calls are supported.")
@@ -974,7 +962,7 @@ def _safe_eval(node):
                 f"Function '{node.func.id}' is not supported. Allowed: {', '.join(sorted(_SAFE_FUNCTIONS.keys()))}"
             )
         fn = _SAFE_FUNCTIONS[fn_name]
-        args = [_safe_eval(arg) for arg in node.args]
+        args = [_safe_eval(arg, _depth + 1) for arg in node.args]
         return fn(*args)
     raise ValueError(f"Unsupported syntax: {type(node).__name__}")
 
@@ -2334,8 +2322,18 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
         )
     elif ext == ".svg":
         svg_text = raw_content[:100000].decode("utf-8", errors="replace")
-        if re.search(r"<\s*script", svg_text, re.IGNORECASE):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SVG file contains forbidden script elements.")
+        _svg_dangerous_patterns = [
+            r"<\s*script",           # <script> tags
+            r"\bon\w+\s*=",          # onload=, onerror=, onclick=, etc.
+            r"javascript\s*:",       # javascript: URIs
+            r"data\s*:\s*text/html", # data:text/html injection
+            r"<\s*iframe",           # embedded iframes
+            r"<\s*embed",            # embedded objects
+            r"<\s*object",           # embedded objects
+        ]
+        for pat in _svg_dangerous_patterns:
+            if re.search(pat, svg_text, re.IGNORECASE):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SVG file contains potentially dangerous content. Remove scripts, event handlers, and embedded objects.")
         kb = max(1, len(raw_content) // 1024)
         b64_str = base64.b64encode(raw_content).decode("ascii")
         data_url = f"data:image/svg+xml;base64,{b64_str}"
@@ -3873,6 +3871,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             except Exception:
                 _current_harvested_plots_ctx.set([])
             release_user_stream(stream_id)
+            # Clean up thread-local DB connection for this threadpool worker
+            database.close_connection()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
