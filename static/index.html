@@ -92,13 +92,13 @@
           </div>
           <div class="brand-text">
             <span class="brand-title">Cortex</span>
-            <span class="brand-badge">Agent 3.1</span>
+            <span class="brand-badge">Agent 5.3</span>
           </div>
         </a>
 
         <nav class="landing-nav-links">
           <a href="#capabilities">Capabilities</a>
-          <a href="#showcase">Agent 3.1</a>
+          <a href="#showcase">Agent 5.3</a>
           <a href="#models">Models</a>
           <a href="#research">Research</a>
           <a href="#faqs">FAQs</a>
@@ -148,7 +148,7 @@
           <span>Launch Cortex Studio</span>
           <span class="cta-arrow-badge">Free Forever</span>
         </button>
-        <div class="hero-subtext">No credit card required &middot; Instant access &middot; 5 Frontier NIM Models</div>
+        <div class="hero-subtext">No credit card required &middot; Instant access &middot; 7 Frontier NIM Models &middot; 100% Free Unlimited Tokens</div>
       </div>
 
       <!-- Comparison Matrix Card (Screenshot 1) -->
@@ -159,8 +159,8 @@
               <svg viewBox="0 0 32 32" width="16" height="16" fill="none"><path d="M16 3L27 9.5V22.5L16 29L5 22.5V9.5L16 3Z" stroke="#22c55e" stroke-width="2"/><circle cx="16" cy="16" r="2.5" fill="#4ade80"/></svg>
             </div>
             <div class="comp-info">
-              <strong>Cortex Agent 3.1</strong>
-              <span>Frontier NIM Models &middot; Deep Reasoning &middot; Web Search</span>
+              <strong>Cortex Agent 5.3</strong>
+              <span>7 Frontier Models &middot; Deep Reasoning &middot; Unlimited Free Tokens</span>
             </div>
           </div>
           <div class="comp-bar-track">
@@ -199,7 +199,7 @@
       </div>
     </section>
 
-    <!-- 2. "Introducing Cortex Agent 3.1" Showcase Section with Live Claude Code Terminal Simulator -->
+    <!-- 2. "Introducing Cortex Agent 5.3" Showcase Section with Live Claude Code Terminal Simulator -->
     <section id="showcase" class="landing-showcase-section">
       <div class="showcase-container">
         <div class="showcase-left">
@@ -211,7 +211,7 @@
             Meet the Autonomous Agent That <span class="highlight-serif">Actually Codes & Architectures</span>
           </h2>
           <p class="showcase-desc">
-            Unlike chatbots that only talk, Cortex Agent 3.1 operates like a staff principal engineer. It breaks down prompts into autonomous sub-tasks, performs real-time web research, synthesizes production-grade code architectures, renders interactive charts, and packages deliverable markdown artifacts.
+            Unlike chatbots that only talk, Cortex Agent 5.3 operates like a staff principal engineer. It breaks down prompts into autonomous sub-tasks, performs real-time web research, synthesizes production-grade code architectures, renders interactive charts, and packages deliverable markdown artifacts.
           </p>
 
           <div class="replaces-block">
@@ -243,8 +243,8 @@
           <!-- Feature Metric Highlights -->
           <div class="showcase-stats-grid">
             <div class="showcase-stat-item">
-              <span class="showcase-stat-val">300k</span>
-              <span class="showcase-stat-label">Daily Tokens / Free</span>
+              <span class="showcase-stat-val">Unlimited</span>
+              <span class="showcase-stat-label">100% Free Tokens</span>
             </div>
             <div class="showcase-stat-item">
               <span class="showcase-stat-val">7</span>
@@ -278,7 +278,7 @@
                 <span class="dot green"></span>
               </div>
               <div class="terminal-sim-title-wrap">
-                <span class="terminal-sim-badge">cortex-agent@v3.1.4</span>
+                <span class="terminal-sim-badge">cortex-agent@v5.3</span>
                 <span class="terminal-sim-branch">git:(main)</span>
               </div>
               <div class="terminal-sim-status">
@@ -480,7 +480,7 @@ class DistributedRateLimiter:
         <div class="bento-card bento-hero-card">
           <div class="bento-icon">🧠</div>
           <h3>Frontier Intelligence Fleet</h3>
-          <p>Switch seamlessly between Cortex 5 (Super Agent), Cortex 5 Ultra (Master Agent), Cortex 4 (Deep Reasoning), and Cortex 3.5 Lightning.</p>
+          <p>Switch seamlessly between Cortex 5.3 (Frontier MoE 753B), Cortex 5.3 Flash (Vision & Reasoning 320B), Cortex 5 (Super Agent 120B), Cortex 5 Ultra (Master Agent 550B), and Cortex 4 (Deep Reasoning).</p>
           <div class="bento-tag-list">
             <span>Sub-second TTFT</span>
             <span>Zero Vendor Lock-in</span>
@@ -530,7 +530,35 @@ class DistributedRateLimiter:
 
       <!-- Interactive Model Cards Grid -->
       <div class="models-grid" id="modelsFleetGrid">
-        <div class="model-card active-model" data-model-id="cortex-5-super">
+        <div class="model-card active-model" data-model-id="cortex-53-frontier">
+          <div class="model-card-top">
+            <span class="model-tier">FLAGSHIP FRONTIER MoE</span>
+            <span class="model-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">753B Thinking</span>
+          </div>
+          <h3>Cortex 5.3</h3>
+          <p>Colossal 753B parameter frontier flagship locked into Deep Thinking mode for profound mathematical proofs and repo architecture.</p>
+          <div class="model-card-metrics">
+            <span>🧠 400k+ Context</span>
+            <span>⚡ Deep Thinking</span>
+            <span>🏆 753B MoE</span>
+          </div>
+        </div>
+
+        <div class="model-card" data-model-id="cortex-53-flash">
+          <div class="model-card-top">
+            <span class="model-tier">VISION & REASONING</span>
+            <span class="model-badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80;">320B Flash</span>
+          </div>
+          <h3>Cortex 5.3 Flash</h3>
+          <p>High-speed 320B multimodal & vision reasoning model with instantaneous first-token response and locked deep thinking.</p>
+          <div class="model-card-metrics">
+            <span>⚡ Fast TTFT</span>
+            <span>👁️ Vision & OCR</span>
+            <span>🧠 320B Reasoning</span>
+          </div>
+        </div>
+
+        <div class="model-card" data-model-id="cortex-5-super">
           <div class="model-card-top">
             <span class="model-tier">FLAGSHIP AUTONOMOUS AGENT</span>
             <span class="model-badge super">120B MoE</span>
@@ -606,27 +634,27 @@ class DistributedRateLimiter:
         <div class="inspector-header">
           <div class="inspector-left">
             <div class="inspector-pulse"></div>
-            <strong id="inspectorModelName">Cortex 5 Super Agent (120B MoE)</strong>
-            <span class="inspector-status-badge" id="inspectorModelStatus">DEPLOYED & HEALTHY</span>
+            <strong id="inspectorModelName">Cortex 5.3 (Frontier MoE 753B)</strong>
+            <span class="inspector-status-badge" id="inspectorModelStatus">FRONTIER FLAGSHIP ACTIVE</span>
           </div>
           <button class="inspector-try-btn" id="inspectorTryBtn" type="button">Select & Launch</button>
         </div>
         <div class="inspector-body">
           <div class="inspector-stat">
             <span class="inspector-label">Architecture</span>
-            <span class="inspector-val" id="inspectorArch">Sparse Mixture of Experts (MoE)</span>
+            <span class="inspector-val" id="inspectorArch">Sparse Mixture of Experts (MoE) 753B</span>
           </div>
           <div class="inspector-stat">
             <span class="inspector-label">Context Window</span>
-            <span class="inspector-val" id="inspectorContext">131,072 Tokens (128k)</span>
+            <span class="inspector-val" id="inspectorContext">400,000+ Tokens Context</span>
           </div>
           <div class="inspector-stat">
             <span class="inspector-label">Time to First Token</span>
-            <span class="inspector-val" id="inspectorTtft">&lt; 18ms</span>
+            <span class="inspector-val" id="inspectorTtft">&lt; 25ms</span>
           </div>
           <div class="inspector-stat">
             <span class="inspector-label">Autonomous Tool Loop</span>
-            <span class="inspector-val" id="inspectorTools">Web Search, Code Intelligence, Math, Memory</span>
+            <span class="inspector-val" id="inspectorTools">Deep Thinking Mode, Algorithmic Deduction, Full-Repo Synthesis</span>
           </div>
         </div>
       </div>
@@ -693,7 +721,7 @@ class DistributedRateLimiter:
       <div class="faqs-container">
         <div class="faqs-left">
           <h2 class="faqs-main-title">FAQs</h2>
-          <p class="faqs-subtitle">Everything you need to know about Cortex Agent 3.1 architecture, security, and models.</p>
+          <p class="faqs-subtitle">Everything you need to know about Cortex Agent 5.3 architecture, security, and models.</p>
         </div>
 
         <div class="faqs-right">
@@ -716,7 +744,7 @@ class DistributedRateLimiter:
                 <span class="faq-icon">▾</span>
               </button>
               <div class="faq-answer">
-                <p>You have instant access to 7 active frontier models: Cortex 5 (Super Agent), Cortex 5 Ultra (Master Agent), Cortex 4 (Deep Reasoning), Cortex 4 Omni (Vision & Reasoning), Cortex 3.5 Lightning (Ultra-Fast), Cortex Guard (Safety & Policy), and Cortex Embed (Vector & RAG).</p>
+                <p>You have instant access to 7 active frontier models: Cortex 5.3 (Frontier MoE 753B), Cortex 5.3 Flash (Vision & Reasoning 320B), Cortex 5 (Super Agent 120B), Cortex 5 Ultra (Master Agent 550B), Cortex 4 (Deep Reasoning), Cortex 4 Omni (Vision & Reasoning), and Cortex 3.5 Lightning (Ultra-Fast).</p>
               </div>
             </div>
 
@@ -816,7 +844,7 @@ class DistributedRateLimiter:
         <div class="footer-nav-left">
           <a href="#hero" class="footer-link">Home</a>
           <a href="#capabilities" class="footer-link">Capabilities</a>
-          <a href="#showcase" class="footer-link">Agent 3.1</a>
+          <a href="#showcase" class="footer-link">Agent 5.3</a>
           <a href="#models" class="footer-link">Models</a>
           <a href="#research" class="footer-link">Research</a>
           <a href="#faqs" class="footer-link">FAQs</a>
@@ -850,19 +878,19 @@ class DistributedRateLimiter:
           </div>
           <div>
             <span class="auth-brand-title">Cortex Agent</span>
-            <span class="auth-brand-tag">3.1 ENTERPRISE</span>
+            <span class="auth-brand-tag">5.3 FRONTIER</span>
           </div>
         </div>
 
         <h3 class="auth-showcase-heading">Autonomous Intelligence. Zero Paywalls.</h3>
-        <p class="auth-showcase-desc">Instant access to 7 frontier NIM models, production code architecture synthesis, and cross-session memory.</p>
+        <p class="auth-showcase-desc">Instant access to 7 frontier NIM models, 100% free unlimited tokens, production code architecture synthesis, and cross-session memory.</p>
 
         <div class="auth-perks-list">
           <div class="auth-perk-item">
             <div class="perk-check">✓</div>
             <div>
-              <strong>300,000 Free Daily Tokens</strong>
-              <span>Refreshes every 24h at 00:00 UTC</span>
+              <strong>100% Free Unlimited Daily Tokens</strong>
+              <span>Zero token caps &bull; Unlimited frontier intelligence</span>
             </div>
           </div>
           <div class="auth-perk-item">
@@ -1658,7 +1686,7 @@ class DistributedRateLimiter:
                 <span>Plan</span>
                 <span id="menuUsageBadge" class="menu-usage-badge" style="background: rgba(34, 197, 94, 0.15); color: #22c55e; font-weight: 600;">100% Free</span>
               </div>
-              <div style="font-size: 11px; color: var(--muted); margin-top: 1px;">Unlimited Frontier AI</div>
+              <div style="font-size: 11px; color: #22c55e; font-weight: 500; margin-top: 1px;">Unlimited Frontier AI</div>
             </div>
           </div>
 
@@ -1678,7 +1706,7 @@ class DistributedRateLimiter:
             </div>
             <div class="flyout-row">
               <span class="flyout-label">Token Limits:</span>
-              <span class="flyout-val">Unlimited</span>
+              <span class="flyout-val" style="color: #22c55e; font-weight: 600;">100% Free Unlimited</span>
             </div>
             <div class="flyout-row">
               <span class="flyout-label">Reasoning Speed:</span>
@@ -1989,7 +2017,7 @@ class DistributedRateLimiter:
         <div class="guide-header-info">
           <div class="guide-header-badge">
             <span class="guide-badge-dot"></span>
-            <span>Cortex 3.1 Playbook</span>
+            <span>Cortex 5.3 Playbook</span>
           </div>
           <h2 class="guide-title">Agent Playbook & Guide</h2>
           <p class="guide-subtitle">Architecture, Model Tiers, Prompt Engineering & Tool Reference</p>
@@ -2013,7 +2041,7 @@ class DistributedRateLimiter:
         <!-- 1. Quickstart Tab -->
         <div id="guideTab-quickstart" class="guide-tab-pane active">
           <div class="guide-card">
-            <h3>🚀 Welcome to Cortex Agent 3.1</h3>
+            <h3>🚀 Welcome to Cortex Agent 5.3</h3>
             <p>Cortex is an autonomous, multi-model AI workstation engineered for high-throughput reasoning, real-time web research, production code architecture, interactive Chart.js visualizations, and live artifact document editing.</p>
           </div>
 
@@ -2031,7 +2059,7 @@ class DistributedRateLimiter:
           <div class="guide-card">
             <h4>⚡ 100% Free Frontier Intelligence</h4>
             <ul class="guide-bullet-list">
-              <li><strong>Unlimited Tokens:</strong> Full 100% free access to NVIDIA NIM frontier reasoning models with zero artificial token caps.</li>
+              <li><strong>100% Free Unlimited Tokens:</strong> Full unlimited free access to NVIDIA NIM frontier reasoning models with zero artificial token caps or daily quotas.</li>
               <li><strong>10 Uploads/Day:</strong> Attach documents (PDF, CSV, Excel, Code) and screenshots for vision OCR analysis.</li>
               <li><strong>Zero Subscriptions:</strong> No $20/mo fees, no credit card required, 100% private.</li>
             </ul>
@@ -2043,6 +2071,20 @@ class DistributedRateLimiter:
           <div class="guide-card">
             <h3>🧠 Frontier Multi-Model Core</h3>
             <p>Cortex switches dynamically or manually between 7 state-of-the-art model architectures:</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">FRONTIER FLAGSHIP</div>
+            <h4>Cortex 5.3 (Frontier MoE 753B) &middot; 753B MoE</h4>
+            <p class="model-meta"><code>z-ai/glm-5.3</code> &bull; Locked Deep Thinking Mode &bull; 400k+ Context</p>
+            <p>Colossal 753B parameter frontier mixture-of-experts model operating in deep chain-of-thought thinking mode. Engineered for profound mathematical proofs, architectural decomposition, and complex code intelligence.</p>
+          </div>
+
+          <div class="guide-model-card">
+            <div class="model-badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80;">VISION & REASONING</div>
+            <h4>Cortex 5.3 Flash (Vision & Reasoning 320B) &middot; 320B MoE</h4>
+            <p class="model-meta"><code>z-ai/glm-5.3-flash</code> &bull; Multimodal Vision & Deep Thinking &bull; 400k+ Context</p>
+            <p>High-speed 320B multimodal & vision reasoning model with instantaneous first-token response. Combines visual diagram analysis, UI OCR inspection, and locked analytical thinking.</p>
           </div>
 
           <div class="guide-model-card">
@@ -2632,7 +2674,7 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     </div>
     <div class="tour-card-body">
       <div class="tour-card-icon" id="tourIcon">🚀</div>
-      <h3 id="tourTitle" class="tour-title">Welcome to Cortex 3.1</h3>
+      <h3 id="tourTitle" class="tour-title">Welcome to Cortex 5.3</h3>
       <p id="tourDescription" class="tour-description">Experience autonomous multi-model AI with frontier code intelligence, real-time research, and interactive data visualization.</p>
     </div>
     <div class="tour-card-footer">
@@ -2652,7 +2694,7 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     <div class="celebration-toast-icon">🎉</div>
     <div class="celebration-toast-content">
       <span class="celebration-toast-title">All Done! Welcome aboard!</span>
-      <span class="celebration-toast-sub">You can now explore, code, and analyze anything on Cortex 3.1.</span>
+      <span class="celebration-toast-sub">You can now explore, code, and analyze anything on Cortex 5.3.</span>
     </div>
   </div>
 
@@ -2662,6 +2704,6 @@ $$\ce{CH4 + 2O2 -> CO2 + 2H2O}$$</code></pre>
     <div class="quota-toast-text" id="quotaToastText">Daily upload limit reached (10 files/day). Quota resets at 00:00 UTC.</div>
   </div>
 
-  <script src="/static/app.js?v=20260918_v61"></script>
+  <script src="/static/app.js?v=20260920_v62"></script>
 </body>
 </html>

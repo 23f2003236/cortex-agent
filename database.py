@@ -1573,7 +1573,7 @@ def set_conversation_project(conv_id: str, project_id: Optional[str], user_id: s
 
 # ---------------- Daily Usage & Token Quotas ----------------
 
-DAILY_TOKEN_LIMIT = 300_000
+DAILY_TOKEN_LIMIT = 100_000_000
 DAILY_UPLOAD_LIMIT = 10
 GUEST_DAILY_TOKEN_LIMIT = 25_000
 GUEST_DAILY_UPLOAD_LIMIT = 3

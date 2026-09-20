@@ -572,7 +572,7 @@ function getCachedUsage() {
   }
 }
 
-function saveCachedUsage(tokensUsed, limit = 300000) {
+function saveCachedUsage(tokensUsed, limit = 100000000) {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const existing = getCachedUsage();
@@ -582,7 +582,7 @@ function saveCachedUsage(tokensUsed, limit = 300000) {
     const effectiveUsed = Math.max(prevUsed, newUsed);
     localStorage.setItem(getUserScopedKey("cortex_usage"), JSON.stringify({
       tokens_used: effectiveUsed,
-      tokens_limit: Number(limit) || 300000,
+      tokens_limit: Number(limit) || 100000000,
       date: today
     }));
   } catch (e) {
@@ -5888,7 +5888,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           }
           if (payload.usage) {
             const serverUsed = payload.usage.tokens_used ?? payload.usage.daily_tokens ?? 0;
-            const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 300000;
+            const limit = payload.usage.tokens_limit ?? payload.usage.limit ?? 100000000;
             const currentCached = getCachedUsage();
             const effectiveUsed = Math.max(currentCached?.tokens_used || 0, serverUsed);
             saveCachedUsage(effectiveUsed, limit);
@@ -6564,7 +6564,7 @@ async function importFullWorkspace(file) {
 
     // Monotonic Token Usage
     if (importData.usage && typeof importData.usage.tokens_used === "number") {
-      saveCachedUsage(importData.usage.tokens_used, importData.usage.tokens_limit || 300000);
+      saveCachedUsage(importData.usage.tokens_used, importData.usage.tokens_limit || 100000000);
     }
 
     // Refresh UI
@@ -7245,7 +7245,7 @@ function openAuthModal(mode = "login") {
     tabSignIn?.classList.add("active");
     tabRegister?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Welcome back";
-    if (authModalSubtitle) authModalSubtitle.textContent = "Sign in to resume your private workspace & past chats";
+    if (authModalSubtitle) authModalSubtitle.textContent = "Sign in to resume your private workspace, unlimited tokens & past chats";
     if (authIdentifierLabel) authIdentifierLabel.textContent = "Email or Username";
     if (authIdentifier) {
       authIdentifier.placeholder = "you@example.com or username";
@@ -7263,7 +7263,7 @@ function openAuthModal(mode = "login") {
     tabRegister?.classList.add("active");
     tabSignIn?.classList.remove("active");
     if (authModalTitle) authModalTitle.textContent = "Create Free Account";
-    if (authModalSubtitle) authModalSubtitle.textContent = "Start with 300,000 free tokens & your private workspace";
+    if (authModalSubtitle) authModalSubtitle.textContent = "100% Free Unlimited Tokens across all 7 frontier models & private workspace";
     if (authIdentifierLabel) authIdentifierLabel.textContent = "Email Address";
     if (authIdentifier) {
       authIdentifier.placeholder = "you@example.com";
@@ -8134,6 +8134,24 @@ simCustomInput?.addEventListener("keydown", (e) => {
 
 // Frontier Models Fleet Showcase & Dynamic Inspector
 const modelFleetData = {
+  "cortex-53-frontier": {
+    name: "Cortex 5.3 (Frontier MoE 753B)",
+    status: "FRONTIER FLAGSHIP ACTIVE",
+    arch: "Sparse Mixture of Experts (MoE) 753B",
+    context: "400,000+ Tokens Context",
+    ttft: "< 25ms",
+    tools: "Deep Thinking Mode, Algorithmic Deduction, Full-Repo Synthesis",
+    modelValue: "z-ai/glm-5.3"
+  },
+  "cortex-53-flash": {
+    name: "Cortex 5.3 Flash (Vision & Reasoning 320B)",
+    status: "MULTIMODAL ACTIVE",
+    arch: "High-Throughput Vision-Language MoE 320B",
+    context: "400,000+ Tokens Context",
+    ttft: "< 12ms",
+    tools: "Vision OCR, Diagram Inspection, Rapid Chain-of-Thought",
+    modelValue: "z-ai/glm-5.3-flash"
+  },
   "cortex-5-super": {
     name: "Cortex 5 Super Agent (120B MoE)",
     status: "DEPLOYED & HEALTHY",
@@ -8141,7 +8159,7 @@ const modelFleetData = {
     context: "131,072 Tokens (128k)",
     ttft: "< 18ms",
     tools: "Web Search, Code Intelligence, Math, Memory",
-    modelValue: "meta/llama-3.1-70b-instruct"
+    modelValue: "nvidia/nemotron-3-super-120b-a12b"
   },
   "cortex-5-ultra": {
     name: "Cortex 5 Ultra Master Agent (550B)",
@@ -8150,7 +8168,7 @@ const modelFleetData = {
     context: "131,072 Tokens (128k)",
     ttft: "< 32ms",
     tools: "Deep Research, Architecture PRDs, Full Codebase Synthesis",
-    modelValue: "deepseek-ai/deepseek-r1"
+    modelValue: "nvidia/nemotron-3-ultra-550b-a55b"
   },
   "cortex-4-deep": {
     name: "Cortex 4 Deep Reasoning (MoE)",
@@ -8159,7 +8177,7 @@ const modelFleetData = {
     context: "65,536 Tokens (64k)",
     ttft: "< 14ms",
     tools: "Mathematical Proofs, Bug Root Cause Isolation, Algorithms",
-    modelValue: "deepseek-ai/deepseek-r1"
+    modelValue: "openai/gpt-oss-20b"
   },
   "cortex-4-omni": {
     name: "Cortex 4 Omni Vision MoE",
@@ -8168,7 +8186,7 @@ const modelFleetData = {
     context: "65,536 Tokens (64k)",
     ttft: "< 22ms",
     tools: "High-Resolution Image Inspection, UI OCR, Visual Q&A",
-    modelValue: "meta/llama-3.2-11b-vision-instruct"
+    modelValue: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
   },
   "cortex-35-fast": {
     name: "Cortex 3.5 Fast Lightning",
@@ -8177,11 +8195,11 @@ const modelFleetData = {
     context: "32,768 Tokens (32k)",
     ttft: "< 6ms",
     tools: "Sub-Second Code Autocomplete, Stream Formatting",
-    modelValue: "meta/llama-3.1-8b-instruct"
+    modelValue: "nvidia/nemotron-3.5-lightning-30b-a3b"
   }
 };
 
-let activeFleetModelKey = "cortex-5-super";
+let activeFleetModelKey = "cortex-53-frontier";
 
 function selectFleetModel(modelKey) {
   const info = modelFleetData[modelKey];
@@ -8295,55 +8313,36 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ==================== CORTEX 3.1 UX & ARCHITECTURAL SUITE ====================
+// ==================== CORTEX 5.3 UX & ARCHITECTURAL SUITE ====================
 
 // 1. Daily Quota Usage & Notification Toast
 function updateUsageDisplay(tokensUsed, limit = 100000000) {
   const used = Math.max(0, Number(tokensUsed) || 0);
-  const maxLimit = Math.max(1, Number(limit) || 100000000);
+  const maxLimit = Math.max(100000000, Number(limit) || 100000000);
   saveCachedUsage(used, maxLimit);
-  const remaining = Math.max(0, maxLimit - used);
-  const pct = Math.min(100, Math.max(0, (used / maxLimit) * 100));
 
-  const isUnlimited = maxLimit >= 5000000;
-  if (isUnlimited) {
-    const menuUsageBadge = document.getElementById("menuUsageBadge");
-    const menuUsageBar = document.getElementById("menuUsageBar");
-    if (menuUsageBadge) menuUsageBadge.textContent = "100% Free";
-    if (menuUsageBar) menuUsageBar.style.width = "100%";
-
-    const flyoutPercentBadge = document.getElementById("flyoutPercentBadge");
-    const flyoutUsedText = document.getElementById("flyoutUsedText");
-    const flyoutRemainingText = document.getElementById("flyoutRemainingText");
-    const flyoutProgressBar = document.getElementById("flyoutProgressBar");
-
-    if (flyoutPercentBadge) flyoutPercentBadge.textContent = "Unlimited";
-    if (flyoutUsedText) flyoutUsedText.textContent = `${used.toLocaleString()} tokens`;
-    if (flyoutRemainingText) flyoutRemainingText.textContent = "Unlimited";
-    if (flyoutProgressBar) {
-      flyoutProgressBar.style.width = "100%";
-      flyoutProgressBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
-    }
-    return;
+  // Profile menu usage badge & bar - Always 100% Free Forever
+  const menuUsageBadge = document.getElementById("menuUsageBadge");
+  const menuUsageBar = document.getElementById("menuUsageBar");
+  if (menuUsageBadge) {
+    menuUsageBadge.textContent = "100% Free";
+    menuUsageBadge.style.color = "#22c55e";
+    menuUsageBadge.style.background = "rgba(34, 197, 94, 0.15)";
+    menuUsageBadge.style.fontWeight = "600";
   }
-
-  let formattedUsed = used.toLocaleString();
-  if (used >= 1000) {
-    formattedUsed = (used / 1000).toFixed(used >= 10000 ? 0 : 1) + "k";
+  if (menuUsageBar) {
+    menuUsageBar.style.width = "100%";
+    menuUsageBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
   }
-  const formattedLimit = Math.round(maxLimit / 1000) + "k";
 
   // Topbar display (if present)
   const usageText = document.getElementById("topbarUsageText");
   const usageBar = document.getElementById("topbarUsageBar");
-  if (usageText) usageText.textContent = `${formattedUsed} / ${formattedLimit}`;
-  if (usageBar) usageBar.style.width = `${pct}%`;
-
-  // Profile menu usage badge & bar
-  const menuUsageBadge = document.getElementById("menuUsageBadge");
-  const menuUsageBar = document.getElementById("menuUsageBar");
-  if (menuUsageBadge) menuUsageBadge.textContent = `${formattedUsed} / ${formattedLimit}`;
-  if (menuUsageBar) menuUsageBar.style.width = `${pct}%`;
+  if (usageText) usageText.textContent = "100% Free · Unlimited";
+  if (usageBar) {
+    usageBar.style.width = "100%";
+    usageBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
+  }
 
   // Detailed flyout card
   const flyoutPercentBadge = document.getElementById("flyoutPercentBadge");
@@ -8351,18 +8350,19 @@ function updateUsageDisplay(tokensUsed, limit = 100000000) {
   const flyoutRemainingText = document.getElementById("flyoutRemainingText");
   const flyoutProgressBar = document.getElementById("flyoutProgressBar");
 
-  if (flyoutPercentBadge) flyoutPercentBadge.textContent = `${Math.round(pct)}%`;
-  if (flyoutUsedText) flyoutUsedText.textContent = `${used.toLocaleString()} tokens`;
-  if (flyoutRemainingText) flyoutRemainingText.textContent = `${remaining.toLocaleString()} tokens`;
+  if (flyoutPercentBadge) {
+    flyoutPercentBadge.textContent = "Unlimited";
+    flyoutPercentBadge.style.color = "#22c55e";
+    flyoutPercentBadge.style.background = "rgba(34, 197, 94, 0.15)";
+  }
+  if (flyoutUsedText) flyoutUsedText.textContent = `${used.toLocaleString()} tokens used today`;
+  if (flyoutRemainingText) {
+    flyoutRemainingText.textContent = "Unlimited";
+    flyoutRemainingText.style.color = "#22c55e";
+  }
   if (flyoutProgressBar) {
-    flyoutProgressBar.style.width = `${pct}%`;
-    if (pct > 90) {
-      flyoutProgressBar.style.background = "linear-gradient(90deg, #ef4444, #dc2626)";
-    } else if (pct > 75) {
-      flyoutProgressBar.style.background = "linear-gradient(90deg, #f59e0b, #d97706)";
-    } else {
-      flyoutProgressBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
-    }
+    flyoutProgressBar.style.width = "100%";
+    flyoutProgressBar.style.background = "linear-gradient(90deg, #22c55e, #16a34a)";
   }
 }
 
@@ -8370,7 +8370,8 @@ async function loadUserUsage() {
   if (!currentUser) return;
   const cached = getCachedUsage();
   const cachedUsed = cached ? (Number(cached.tokens_used) || 0) : 0;
-  const cachedLimit = cached ? (Number(cached.tokens_limit) || 300000) : 300000;
+  const rawCachedLimit = cached ? Number(cached.tokens_limit) : 100000000;
+  const cachedLimit = rawCachedLimit > 500000 ? rawCachedLimit : 100000000;
   if (cachedUsed > 0) {
     updateUsageDisplay(cachedUsed, cachedLimit);
   }
@@ -8379,10 +8380,9 @@ async function loadUserUsage() {
     if (res.ok) {
       const data = await res.json();
       const serverUsed = Number(data.tokens_used) || 0;
-      const serverLimit = Number(data.tokens_limit) || 300000;
+      const serverLimit = Math.max(100000000, Number(data.tokens_limit) || 100000000);
       const finalUsed = Math.max(serverUsed, cachedUsed);
-      const finalLimit = serverLimit || cachedLimit || 300000;
-      updateUsageDisplay(finalUsed, finalLimit);
+      updateUsageDisplay(finalUsed, serverLimit);
     }
   } catch (err) {
     console.error("Failed to load daily usage:", err);
@@ -8738,7 +8738,7 @@ if (guideTabPrompting) {
 const tourSteps = [
   {
     icon: "🚀",
-    title: "Welcome to Cortex 3.1 Studio",
+    title: "Welcome to Cortex 5.3 Studio",
     desc: "Experience next-generation autonomous AI with frontier code intelligence, real-time web research, interactive Chart.js charts, and KaTeX math.",
     selector: null
   },
