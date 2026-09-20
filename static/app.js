@@ -2674,7 +2674,7 @@ if (SpeechRecognitionClass && micBtn) {
       stopVoiceInput();
     };
 
-    micBtn.addEventListener("click", () => {
+    micBtn?.addEventListener("click", () => {
       if (isRecordingVoice) {
         speechRecognition.stop();
       } else {
@@ -4027,7 +4027,7 @@ railNewChatBtn?.addEventListener("click", () => startNewChat());
 railSearchBtn?.addEventListener("click", () => {
   setSidebarCollapsed(false);
   setTimeout(() => {
-    chatSearchInput?.focus();
+    sidebarSearchInput?.focus();
   }, 120);
 });
 railArtifactsBtn?.addEventListener("click", () => showArtifactsView());
@@ -7850,6 +7850,9 @@ authTogglePasswordBtn?.addEventListener("click", () => {
 
 // Dynamic Password Strength Meter
 function updatePasswordStrength(password) {
+  const passwordStrengthWrap = document.getElementById("passwordStrengthWrap");
+  const passwordStrengthBar = document.getElementById("passwordStrengthBar");
+  const passwordStrengthText = document.getElementById("passwordStrengthText");
   if (!passwordStrengthWrap || !passwordStrengthBar || !passwordStrengthText) return;
   if (!password) {
     passwordStrengthBar.style.width = "0%";
