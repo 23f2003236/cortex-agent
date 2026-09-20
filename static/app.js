@@ -5365,8 +5365,23 @@ function rebuildChatFromMessages() {
 
 async function retryFromMessage(userIndex, customText) {
   if (busy) return;
-  const target = messages[userIndex];
-  if (!target) return;
+  let targetIdx = userIndex;
+  // Guard against invalid index or pointing to assistant message: search backward for the user turn
+  if (typeof targetIdx !== "number" || targetIdx < 0 || targetIdx >= messages.length || messages[targetIdx]?.role !== "user") {
+    targetIdx = -1;
+    const startSearch = (typeof userIndex === "number" && userIndex >= 0 && userIndex < messages.length)
+      ? userIndex
+      : messages.length - 1;
+    for (let i = startSearch; i >= 0; i--) {
+      if (messages[i]?.role === "user") {
+        targetIdx = i;
+        break;
+      }
+    }
+  }
+
+  const target = messages[targetIdx];
+  if (!target || target.role !== "user") return;
 
   let contentToRun = target.content;
   if (customText !== undefined) {
@@ -5394,10 +5409,10 @@ async function retryFromMessage(userIndex, customText) {
     }
   }
 
-  messages = messages.slice(0, userIndex);
+  messages = messages.slice(0, targetIdx);
   rebuildChatFromMessages();
 
-  sendUserMessage(contentToRun, { retryUserIndex: userIndex });
+  sendUserMessage(contentToRun, { retryUserIndex: targetIdx });
 }
 
 // ---------------- Streaming & Send Logic ----------------
@@ -5526,6 +5541,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       ? cleanFullText
       : "*(The AI model did not return any tokens. The provider may be temporarily overloaded or rate-limited. Please click Retry below.)*";
 
+    if (!hasReply) {
+      shell.row.classList.add("actions-visible");
+    }
+
     const isContinuation = isContinuationPrompt(lastUserMsg);
     let fullDocText = cleanFullText;
     if (isContinuation && cleanFullText) {
@@ -5606,10 +5625,20 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       shell.bubbleEl.appendChild(continuationPill);
     }
 
+    // Always resolve the exact preceding user message to retry
+    const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
+      ? retryUserIndex
+      : (() => {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]?.role === "user") return i;
+          }
+          return 0;
+        })();
+
     attachActions(shell.actionsEl, {
       getText: () => fullDocText || cleanFullText || fullText,
       showRetry: true,
-      onRetry: () => retryFromMessage(retryUserIndex ?? messages.length - 2),
+      onRetry: () => retryFromMessage(targetUserIndex),
       isTruncated,
       onContinue: () => sendUserMessage("Please continue directly from where you left off. Do not repeat previous text, resume seamlessly from the cutoff point."),
       messageId: shell.row.dataset.messageId,
@@ -5636,7 +5665,15 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     settled = true;
     clearInterval(thoughtTimer);
     shell.row.remove();
-    addErrorMessage(detail, () => retryFromMessage(retryUserIndex ?? messages.length - 1));
+    const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
+      ? retryUserIndex
+      : (() => {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]?.role === "user") return i;
+          }
+          return 0;
+        })();
+    addErrorMessage(detail, () => retryFromMessage(targetUserIndex));
     setGeneratingState(false);
     promptEl.focus();
   };
@@ -5885,13 +5922,14 @@ async function sendUserMessage(text, options = {}) {
   if (messages.length === 0) clearChatDom();
 
   messages.push({ role: "user", content: messageContent });
-  addUserMessage(messageContent, messages.length - 1, currentAttached);
+  const userMsgIndex = messages.length - 1;
+  addUserMessage(messageContent, userMsgIndex, currentAttached);
   updateExportButtonVisibility();
 
   promptEl.value = "";
   autoResize();
 
-  await streamAssistantReply([...messages], options);
+  await streamAssistantReply([...messages], { retryUserIndex: userMsgIndex, ...options });
 }
 
 function handleFormSubmit() {
