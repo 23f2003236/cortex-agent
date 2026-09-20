@@ -249,12 +249,20 @@ async function triggerLiveHeartbeatSync(force = false) {
     if (activeCount >= 0) url.searchParams.set("last_msg_count", activeCount);
     if (lastClientConvHash) url.searchParams.set("conv_hash", lastClientConvHash);
 
-    const res = await fetch(url.toString(), {
-      headers: authHeaders(),
-      cache: "no-store",
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    let res;
+    try {
+      res = await fetch(url.toString(), {
+        headers: authHeaders(),
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
-    if (!res.ok) {
+    if (!res || !res.ok) {
       return;
     }
 
@@ -265,10 +273,39 @@ async function triggerLiveHeartbeatSync(force = false) {
       lastClientConvHash = data.conv_hash;
     }
 
-    // 1. Conversations list updated from another browser or window
+    // 1. Conversations list updated from another browser or window (3-way merge: authoritative server + local cached + current active)
     if (data.conversations_changed && Array.isArray(data.conversations)) {
-      conversations = data.conversations;
-      saveCachedConversations(conversations);
+      const serverConvs = data.conversations;
+      const cached = getCachedConversations();
+      const archivedSet = getCachedArchivedIds();
+      const deletedSet = getDeletedConvIds();
+      const map = new Map();
+
+      // Authoritative server conversations
+      for (const sc of serverConvs) {
+        if (sc && sc.id && !archivedSet.has(sc.id) && !deletedSet.has(sc.id)) {
+          map.set(sc.id, sc);
+        }
+      }
+
+      // Preserve local client conversations that haven't synced yet
+      for (const cc of cached) {
+        if (cc && cc.id && !archivedSet.has(cc.id) && !deletedSet.has(cc.id) && !map.has(cc.id)) {
+          map.set(cc.id, cc);
+        }
+      }
+
+      // Preserve active in-memory conversation
+      if (currentConversationId && currentConversationId !== "new") {
+        const curConv = (conversations || []).find((c) => c.id === currentConversationId);
+        if (curConv && !map.has(currentConversationId)) {
+          map.set(currentConversationId, curConv);
+        }
+      }
+
+      conversations = Array.from(map.values());
+      sortConversationsList();
+      saveCachedConversations();
       renderConversationsList();
       renderProjectsTree();
       updateProjectPills();
@@ -278,13 +315,18 @@ async function triggerLiveHeartbeatSync(force = false) {
     if (data.active_messages && Array.isArray(data.active_messages) && activeId && currentConversationId === activeId) {
       const serverMsgs = data.active_messages;
       const currentLen = (messages || []).length;
-      if (serverMsgs.length > currentLen && !busy) {
-        messages = serverMsgs;
-        saveCachedMessages(activeId, messages);
-        rebuildChatFromMessages();
-        scrollChatToBottom();
-        updateExportButtonVisibility();
-      } else if (serverMsgs.length !== currentLen && !busy) {
+      let hasChanges = false;
+      if (serverMsgs.length !== currentLen) {
+        hasChanges = true;
+      } else if (serverMsgs.length > 0) {
+        const lastServer = serverMsgs[serverMsgs.length - 1];
+        const lastLocal = messages[messages.length - 1];
+        if (lastServer && lastLocal && (lastServer.content !== lastLocal.content || lastServer.feedback !== lastLocal.feedback || lastServer.id !== lastLocal.id)) {
+          hasChanges = true;
+        }
+      }
+
+      if (hasChanges && !busy) {
         messages = serverMsgs;
         saveCachedMessages(activeId, messages);
         rebuildChatFromMessages();
@@ -303,7 +345,7 @@ async function triggerLiveHeartbeatSync(force = false) {
       updateUsageDisplay(data.usage.tokens_used, 100000000);
     }
   } catch (err) {
-    // Network hiccup, silent ignore for background polling
+    // Network hiccup or abort timeout, silent ignore for background polling
   } finally {
     isSyncingLive = false;
   }
@@ -564,16 +606,16 @@ function hashString(str) {
 
 function getArtifactCanonicalKey(art) {
   if (!art) return "";
-  if (art.key) return String(art.key).trim();
-  const conv = (art.conversation_id || "global").trim();
+  const conv = (art.conversation_id || currentConversationId || "chat").trim();
   const rawFn = (art.filename || art.title || "document.md").trim();
-  const fn = rawFn.toLowerCase();
+  const normFn = rawFn.toLowerCase().replace(/[-\s]+/g, "_");
+  const stem = normFn.replace(/\.(md|markdown|txt|py|js|ts|html|css|json|sql|sh)$/i, "").slice(0, 32);
   if (art.type === "code" || art.type === "html" || art.type === "chart") {
     const snippet = (art.content || "").slice(0, 80).replace(/\s+/g, "");
     const hash = snippet ? hashString(snippet) : "0";
-    return `${conv}:${fn}:${hash}`;
+    return `${conv}:${stem}:${hash}`;
   }
-  return `${conv}:${fn}`;
+  return `${conv}:${stem}`;
 }
 
 function getCachedArtifacts() {
@@ -813,7 +855,15 @@ function deleteCachedArtifact(artKey) {
 }
 
 function updateArtifactsBadge(count) {
-  const c = Math.max(0, Number(count) || 0);
+  let c = Math.max(0, Number(count) || 0);
+  const cachedCount = (Array.isArray(allUserArtifacts) && allUserArtifacts.length > 0)
+    ? allUserArtifacts.length
+    : (getCachedArtifacts() || []).length;
+  if (c === 0 && cachedCount > 0) {
+    c = cachedCount;
+  } else if (cachedCount > c) {
+    c = cachedCount;
+  }
   const countEl = document.getElementById("sidebarArtifactsCount") || sidebarArtifactsCount;
   const viewCountEl = document.getElementById("artifactsCountBadge") || artifactsCountBadge;
   const railCountEl = document.getElementById("railArtifactsCount");
@@ -1186,14 +1236,14 @@ function extractDocumentFilename(text) {
 
       let clean = rawTitle
         .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
-        .replace(/[`*_\#]/g, "")
+        .replace(/[`*_\#~]/g, "")
         .replace(/[^a-zA-Z0-9_\-\s]/g, "")
         .trim()
-        .replace(/\s+/g, "_")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 45);
+        .replace(/[-\s]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 48);
 
-      if (clean && !/^[-_]+$/.test(clean) && clean.length >= 3) {
+      if (clean && !/^_+$/.test(clean) && clean.length >= 3) {
         return `${clean.toLowerCase()}.md`;
       }
     }
@@ -3985,7 +4035,7 @@ async function switchConversation(id) {
     } catch {}
     setGeneratingState(false);
   }
-  if (id === currentConversationId && messages.length > 0) return;
+  if (id === currentConversationId && busy) return;
   hideArtifactsView();
   closeMobileSidebar();
 
@@ -8912,7 +8962,7 @@ async function loadArtifactsCount() {
       const map = new Map();
       serverList.forEach((a) => {
         if (!a) return;
-        const canonKey = a.key || getArtifactCanonicalKey(a);
+        const canonKey = getArtifactCanonicalKey(a);
         if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
@@ -8920,7 +8970,7 @@ async function loadArtifactsCount() {
       });
       cached.forEach((a) => {
         if (!a) return;
-        const canonKey = a.key || getArtifactCanonicalKey(a);
+        const canonKey = getArtifactCanonicalKey(a);
         if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
@@ -8986,7 +9036,7 @@ async function loadArtifacts() {
       const map = new Map();
       serverList.forEach((a) => {
         if (!a) return;
-        const canonKey = a.key || getArtifactCanonicalKey(a);
+        const canonKey = getArtifactCanonicalKey(a);
         if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
@@ -8994,7 +9044,7 @@ async function loadArtifacts() {
       });
       cached.forEach((a) => {
         if (!a) return;
-        const canonKey = a.key || getArtifactCanonicalKey(a);
+        const canonKey = getArtifactCanonicalKey(a);
         if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }

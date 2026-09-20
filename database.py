@@ -612,11 +612,15 @@ def authenticate_user(identifier: str, password: str, allow_auto_provision: bool
                     email_arg = clean_id if "@" in clean_id else f"{clean_id}@local.cortex"
                     uname_arg = clean_id.split("@")[0] if "@" in clean_id else clean_id
                     try:
-                        return create_user(username=uname_arg, password=password, email=email_arg, user_id=generate_user_id(clean_id))
+                        u = create_user(username=uname_arg, password=password, email=email_arg, user_id=generate_user_id(clean_id))
+                        transfer_guest_data_to_user(None, u["id"])
+                        return u
                     except Exception:
                         try:
                             uname_unique = f"{uname_arg}_{secrets.token_hex(2)}"
-                            return create_user(username=uname_unique, password=password, email=email_arg, user_id=generate_user_id(clean_id))
+                            u = create_user(username=uname_unique, password=password, email=email_arg, user_id=generate_user_id(clean_id))
+                            transfer_guest_data_to_user(None, u["id"])
+                            return u
                         except Exception as e:
                             logger.warning("Auto-provisioning user '%s' failed: %s", clean_id, e)
             return None
@@ -1880,6 +1884,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             safe_slug = re.sub(r"[-\s]+", "_", clean_title_ascii.lower()).strip("_")
             if not safe_slug or len(safe_slug) < 3:
                 safe_slug = "document"
+            safe_slug = safe_slug[:48].rstrip("_")
 
             if code_match and len(code_match.group(2).strip()) > 40:
                 raw_l = (code_match.group(1) or "").lower().strip()
@@ -1906,17 +1911,20 @@ def get_user_artifacts(user_id: str) -> list[dict]:
                 if not safe_slug.endswith(".md"):
                     safe_slug += ".md"
 
-            conv_file_key = (item["conversation_id"], safe_slug.lower())
+            # Normalized stem without file extension for bulletproof conversation-level deduplication
+            stem = re.sub(r"\.[a-zA-Z0-9]+$", "", safe_slug).lower()[:32]
+            conv_file_key = (item["conversation_id"], stem)
             if conv_file_key in seen_conv_files:
                 continue
             seen_conv_files.add(conv_file_key)
 
-            # Check if this artifact was deleted by the user (match strictly by unique message id or conversation-scoped key)
+            # Check if this artifact was deleted by the user
             if (
                 item["id"] in deleted_keys
                 or f"{item['conversation_id']}:{item['id']}" in deleted_keys
                 or f"{item['conversation_id']}:{safe_slug}" in deleted_keys
                 or f"{item['conversation_id']}:{safe_slug.lower()}" in deleted_keys
+                or f"{item['conversation_id']}:{stem}" in deleted_keys
             ):
                 continue
 
@@ -1925,6 +1933,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             artifacts.append({
                 "id": item["id"],
                 "key": f"{item['conversation_id']}:{safe_slug.lower()}",
+                "stem_key": f"{item['conversation_id']}:{stem}",
                 "conversation_id": item["conversation_id"],
                 "conversation_title": item["conv_title"] or "Chat",
                 "title": title,
@@ -2290,6 +2299,7 @@ def get_user_sync_heartbeat(
         "conv_hash": server_conv_hash,
         "conversations_changed": conversations_changed,
         "conversations": conv_rows if conversations_changed else None,
+        "latest_active_conv": conv_rows[0] if conv_rows else None,
         "active_conv_id": active_conv_id,
         "active_msg_count": active_msg_count,
         "active_messages": active_messages,

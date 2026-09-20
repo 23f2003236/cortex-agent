@@ -18,8 +18,25 @@ import main
 class TestMultiBrowserSync(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import os
+        import tempfile
+        from pathlib import Path
+        cls.orig_db_path = database.DB_PATH
+        cls.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        cls.temp_db.close()
+        database.set_db_path(Path(cls.temp_db.name))
         database.init_db()
         cls.client = TestClient(main.app)
+
+    @classmethod
+    def tearDownClass(cls):
+        import os
+        database.close_all_connections()
+        database.set_db_path(cls.orig_db_path)
+        try:
+            os.unlink(cls.temp_db.name)
+        except Exception:
+            pass
 
     def setUp(self):
         # Create fresh isolated test users for each test
@@ -478,6 +495,27 @@ class TestMultiBrowserSync(unittest.TestCase):
         data = resp.json()
         self.assertTrue(data["conversations_changed"])
         self.assertIsNotNone(data["conversations"])
+
+    def test_heartbeat_returns_latest_active_conv(self):
+        c1 = database.create_conversation("Latest Active Test", user_id=self.user1["id"])
+        hb = self.client.get("/api/sync/heartbeat", headers=self.auth1).json()
+        self.assertIn("latest_active_conv", hb)
+        self.assertEqual(hb["latest_active_conv"]["id"], c1["id"])
+
+    def test_artifact_deduplication_by_stem(self):
+        c1 = database.create_conversation("JEE", user_id=self.user1["id"])
+        # Message 1
+        msg1_content = "## 🚀 How to Tackle JEE-Advanced Questions Like a Pro\n\nTips on solving JEE advanced problems thoroughly.\n" + ("Text " * 80)
+        # Message 2 with slightly different continuation/heading
+        msg2_content = "## How to Tackle JEE-Advanced Questions Like a Pro (Part 2)\n\nMore tips on solving.\n" + ("Text " * 80)
+        database.add_message(c1["id"], role="assistant", content=msg1_content, user_id=self.user1["id"])
+        database.add_message(c1["id"], role="assistant", content=msg2_content, user_id=self.user1["id"])
+
+        arts = database.get_user_artifacts(self.user1["id"])
+        # Stem deduplication should deduplicate both messages in the same conversation into 1 artifact
+        jee_arts = [a for a in arts if a["conversation_id"] == c1["id"]]
+        self.assertEqual(len(jee_arts), 1)
+        self.assertTrue(jee_arts[0]["key"].startswith(f"{c1['id']}:how_to_tackle_jee_advanced_"))
 
 
 if __name__ == "__main__":
