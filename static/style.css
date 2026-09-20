@@ -8821,7 +8821,8 @@ body.light-theme .cortex-toast {
   transition: background 0.15s ease;
 }
 
-.project-item-row {
+.project-item-row,
+.project-tree-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -8831,43 +8832,58 @@ body.light-theme .cortex-toast {
   color: var(--text);
   font-size: 13px;
   transition: background 0.15s ease, color 0.15s ease;
+  user-select: none;
 }
 
-.project-item-row:hover {
+.project-item-row:hover,
+.project-tree-row:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme="light"] .project-item-row:hover {
+[data-theme="light"] .project-item-row:hover,
+[data-theme="light"] .project-tree-row:hover {
   background: rgba(0, 0, 0, 0.05);
 }
 
-.project-tree-item.active .project-item-row {
+.project-tree-item.active .project-item-row,
+.project-tree-item.active .project-tree-row {
   background: rgba(34, 197, 94, 0.12);
   color: #4ade80;
   font-weight: 600;
 }
 
-.project-item-left {
+.project-item-left,
+.project-title-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   flex: 1;
 }
 
-.project-item-icon {
+.project-folder-chevron {
+  color: var(--muted);
+  transition: transform 0.18s ease;
+  flex-shrink: 0;
+}
+
+.project-item-icon,
+.project-folder-icon {
   font-size: 14px;
   flex-shrink: 0;
   line-height: 1;
 }
 
-.project-item-name {
+.project-item-name,
+.project-tree-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 13px;
 }
 
-.project-item-pin-badge {
+.project-item-pin-badge,
+.project-pinned-badge {
   font-size: 11px;
   opacity: 0.8;
   margin-left: 2px;
@@ -8876,39 +8892,54 @@ body.light-theme .cortex-toast {
 .project-item-actions {
   display: flex;
   align-items: center;
+  gap: 2px;
   opacity: 0;
   transition: opacity 0.15s ease;
 }
 
 .project-item-row:hover .project-item-actions,
+.project-tree-row:hover .project-item-actions,
 .project-tree-item.menu-open .project-item-actions {
   opacity: 1;
 }
 
+.project-quick-edit-btn,
+.project-menu-trigger,
 .project-menu-btn {
   background: transparent;
   border: 0;
   color: var(--muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
-  padding: 3px 6px;
+  padding: 4px 5px;
   border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.15s, color 0.15s;
 }
 
+.project-quick-edit-btn:hover,
+.project-menu-trigger:hover,
 .project-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   color: var(--text);
 }
 
-/* Indented nested chats under active project (Image 3) */
+[data-theme="light"] .project-quick-edit-btn:hover,
+[data-theme="light"] .project-menu-trigger:hover,
+[data-theme="light"] .project-menu-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* Indented nested chats under active project (Image 3 & 4) */
 .project-nested-chats {
-  margin-left: 22px;
+  margin-left: 20px;
   padding-left: 10px;
   border-left: 1.5px solid rgba(255, 255, 255, 0.1);
   margin-top: 2px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -8921,8 +8952,9 @@ body.light-theme .cortex-toast {
 .project-nested-chat-item {
   display: flex;
   align-items: center;
+  gap: 7px;
   padding: 5px 8px;
-  font-size: 12px;
+  font-size: 12.5px;
   border-radius: 6px;
   color: var(--muted);
   cursor: pointer;
@@ -8945,6 +8977,48 @@ body.light-theme .cortex-toast {
   color: #4ade80;
   font-weight: 500;
   background: rgba(34, 197, 94, 0.08);
+}
+
+/* ChatGPT-Style Empty State: "No project chats" (Image 4) */
+.project-empty-chats {
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.65;
+  font-style: italic;
+  user-select: none;
+}
+
+/* ChatGPT-Style Mini New Chat in Project */
+.project-nested-new-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 4px 8px;
+  margin-top: 4px;
+  cursor: pointer;
+  width: fit-content;
+  transition: all 0.15s ease;
+}
+
+.project-nested-new-chat:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="light"] .project-nested-new-chat {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .project-nested-new-chat:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.3);
 }
 
 /* Floating ChatGPT-Style Project Context Menu (Image 3) */

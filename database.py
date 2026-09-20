@@ -1167,6 +1167,26 @@ def add_message(
                 (now, conv_id),
             )
 
+        # Check if identical message was already inserted within the last 15 seconds to prevent duplicate turns
+        existing = conn.execute(
+            "SELECT id, created_at FROM messages WHERE conversation_id = ? AND role = ? AND content = ? ORDER BY rowid DESC LIMIT 1",
+            (conv_id, role, content),
+        ).fetchone()
+        if existing:
+            try:
+                msg_time = datetime.fromisoformat(existing["created_at"].replace("Z", "+00:00")).timestamp()
+                if time.time() - msg_time < 15.0:
+                    return {
+                        "id": existing["id"],
+                        "conversation_id": conv_id,
+                        "role": role,
+                        "content": content,
+                        "tools_used": tools_used or [],
+                        "created_at": existing["created_at"],
+                    }
+            except Exception:
+                pass
+
         conn.execute(
             "INSERT INTO messages (id, conversation_id, role, content, tools_used, feedback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (mid, conv_id, role, content, tools_json, feedback, now),
@@ -2097,6 +2117,18 @@ def sync_full_user_state(
                         "INSERT INTO conversations (id, title, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?)",
                         (conv_id, "New Chat", mcreated, mcreated, user_id),
                     )
+
+                # Deduplicate: Check if a message with identical (conversation_id, role, content) already exists
+                existing_msg = conn.execute(
+                    "SELECT id FROM messages WHERE conversation_id = ? AND role = ? AND content = ? LIMIT 1",
+                    (conv_id, role, content),
+                ).fetchone()
+                if existing_msg:
+                    conn.execute(
+                        "UPDATE messages SET tools_used = COALESCE(?, tools_used), feedback = ? WHERE id = ?",
+                        (tools_json, feedback, existing_msg["id"]),
+                    )
+                    continue
 
                 conn.execute(
                     """

@@ -517,6 +517,51 @@ class TestMultiBrowserSync(unittest.TestCase):
         self.assertEqual(len(jee_arts), 1)
         self.assertTrue(jee_arts[0]["key"].startswith(f"{c1['id']}:how_to_tackle_jee_advanced_"))
 
+    def test_sync_state_does_not_duplicate_messages_with_same_role_and_content(self):
+        c1 = database.create_conversation("Deep Learning Chat", user_id=self.user1["id"])
+        # Initial user message added during stream
+        m1 = database.add_message(c1["id"], role="user", content="Explain Deep Learning in detail", user_id=self.user1["id"])
+
+        # Client-side full workspace sync sends messages, potentially without ID
+        sync_res = database.sync_full_user_state(
+            user_id=self.user1["id"],
+            conversations_data=[{"id": c1["id"], "title": "Deep Learning Chat"}],
+            messages_data=[
+                {"conversation_id": c1["id"], "role": "user", "content": "Explain Deep Learning in detail"},
+            ]
+        )
+        self.assertTrue(sync_res["ok"])
+
+        # Fetch messages for conversation — MUST have strictly 1 message, NOT 2 duplicates
+        conv_data = database.get_conversation(c1["id"], user_id=self.user1["id"])
+        all_msgs = database.get_messages(c1["id"])
+        self.assertEqual(len(all_msgs), 1)
+        self.assertEqual(all_msgs[0]["content"], "Explain Deep Learning in detail")
+        self.assertEqual(all_msgs[0]["id"], m1["id"])
+
+    def test_projects_conversation_separation(self):
+        # General root conversation (no project)
+        c_root = database.create_conversation("Casual Chat", user_id=self.user1["id"])
+        # Project
+        proj = database.create_project(name="Physics", description="Physics studies", user_id=self.user1["id"])
+        # Conversation inside project
+        c_proj = database.create_conversation("Quantum Mechanics", user_id=self.user1["id"], project_id=proj["id"])
+
+        # All conversations
+        all_convs = database.get_conversations(user_id=self.user1["id"])
+        root_convs = [c for c in all_convs if not c.get("project_id")]
+        project_convs = [c for c in all_convs if c.get("project_id") == proj["id"]]
+
+        self.assertEqual(len(root_convs), 1)
+        self.assertEqual(root_convs[0]["id"], c_root["id"])
+        self.assertEqual(len(project_convs), 1)
+        self.assertEqual(project_convs[0]["id"], c_proj["id"])
+
+        # Direct project filter
+        filtered = database.get_conversations(user_id=self.user1["id"], project_id=proj["id"])
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["title"], "Quantum Mechanics")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

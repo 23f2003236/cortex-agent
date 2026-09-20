@@ -316,9 +316,9 @@ async function triggerLiveHeartbeatSync(force = false) {
       const serverMsgs = data.active_messages;
       const currentLen = (messages || []).length;
       let hasChanges = false;
-      if (serverMsgs.length !== currentLen) {
+      if (serverMsgs.length > currentLen) {
         hasChanges = true;
-      } else if (serverMsgs.length > 0) {
+      } else if (serverMsgs.length === currentLen && serverMsgs.length > 0) {
         const lastServer = serverMsgs[serverMsgs.length - 1];
         const lastLocal = messages[messages.length - 1];
         if (lastServer && lastLocal && (lastServer.content !== lastLocal.content || lastServer.feedback !== lastLocal.feedback || lastServer.id !== lastLocal.id)) {
@@ -326,11 +326,16 @@ async function triggerLiveHeartbeatSync(force = false) {
         }
       }
 
-      if (hasChanges && !busy) {
+      // Safe Local-First Rule: NEVER overwrite confirmed local messages with fewer messages (e.g. serverless lag or empty DB)
+      if (hasChanges && !busy && serverMsgs.length >= currentLen) {
         messages = serverMsgs;
         saveCachedMessages(activeId, messages);
-        rebuildChatFromMessages();
-        scrollChatToBottom();
+        try {
+          rebuildChatFromMessages();
+        } catch (rbErr) {
+          console.error("Error rebuilding chat from heartbeat sync:", rbErr);
+        }
+        scrollToBottom(false);
         updateExportButtonVisibility();
       }
     }
@@ -3334,6 +3339,21 @@ async function submitDeleteProjectModal() {
   }
 }
 
+function getExpandedProjectIds() {
+  try {
+    const raw = localStorage.getItem("cortex_expanded_projects");
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function setExpandedProjectIds(set) {
+  try {
+    localStorage.setItem("cortex_expanded_projects", JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
 function renderProjectsTree() {
   if (!projectsListContainer) return;
   projectsListContainer.innerHTML = "";
@@ -3343,6 +3363,7 @@ function renderProjectsTree() {
   }
 
   const pinnedSet = getPinnedProjectIds();
+  const expandedSet = getExpandedProjectIds();
 
   // Sort projects: pinned first, then by name
   const sortedProjects = [...userProjects].sort((a, b) => {
@@ -3353,28 +3374,51 @@ function renderProjectsTree() {
   });
 
   sortedProjects.forEach((proj) => {
-    const isActive = currentProjectId === proj.id;
+    const isCurrentActive = currentProjectId === proj.id;
     const isPinned = pinnedSet.has(proj.id);
+    const isExpanded = expandedSet.has(proj.id) || isCurrentActive;
 
     const itemWrap = document.createElement("div");
-    itemWrap.className = `project-tree-item ${isActive ? "active" : ""}`;
+    itemWrap.className = `project-tree-item ${isCurrentActive ? "active" : ""}`;
     itemWrap.dataset.projectId = proj.id;
 
-    // Row: [📁 Name] [📌] [···]
+    // Row: [> 📁 Name] [Pencil] [···]
     const row = document.createElement("div");
-    row.className = `project-tree-row ${isActive ? "active" : ""}`;
+    row.className = `project-tree-row ${isCurrentActive ? "active" : ""}`;
     row.title = proj.description || proj.name;
 
-    // Folder icon & label
+    // Folder icon, chevron & label (ChatGPT style)
     const titleWrap = document.createElement("div");
     titleWrap.className = "project-title-wrap";
     titleWrap.innerHTML = `
+      <svg class="project-folder-chevron ${isExpanded ? "open" : ""}" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="${isExpanded ? "M6 9l6 6 6-6" : "M9 18l6-6-6-6"}"/>
+      </svg>
       <span class="project-folder-icon">📁</span>
       <span class="project-tree-name">${escapeHtml(proj.name)}</span>
       ${isPinned ? '<span class="project-pinned-badge" title="Pinned project">📌</span>' : ""}
     `;
 
-    // 3-dots context menu trigger
+    // Actions: rename pencil & 3-dots context menu
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "project-item-actions";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "project-quick-edit-btn";
+    renameBtn.title = "Rename project";
+    renameBtn.setAttribute("aria-label", "Rename project");
+    renameBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+      </svg>
+    `;
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRenameProjectModal(proj.id);
+    });
+
     const menuBtn = document.createElement("button");
     menuBtn.type = "button";
     menuBtn.className = "project-menu-trigger";
@@ -3391,28 +3435,39 @@ function renderProjectsTree() {
       openProjectContextMenu(e, proj.id);
     });
 
-    row.appendChild(titleWrap);
-    row.appendChild(menuBtn);
+    actionsWrap.appendChild(renameBtn);
+    actionsWrap.appendChild(menuBtn);
 
-    // Clicking row toggles / selects project
+    row.appendChild(titleWrap);
+    row.appendChild(actionsWrap);
+
+    // Clicking row toggles folder open/closed
     row.addEventListener("click", (e) => {
-      if (e.target.closest(".project-menu-trigger")) return;
-      if (currentProjectId === proj.id) {
-        selectProject("");
+      if (e.target.closest(".project-menu-trigger") || e.target.closest(".project-quick-edit-btn")) return;
+      if (isExpanded) {
+        expandedSet.delete(proj.id);
+        if (currentProjectId === proj.id) {
+          currentProjectId = "";
+        }
       } else {
-        selectProject(proj.id);
+        expandedSet.add(proj.id);
+        currentProjectId = proj.id;
       }
+      setExpandedProjectIds(expandedSet);
+      renderProjectsTree();
+      renderConversationsList();
     });
 
     itemWrap.appendChild(row);
 
-    // If active project, render nested conversations (ChatGPT style)
-    if (isActive) {
+    // If expanded, render project-nested-chats (ChatGPT style)
+    if (isExpanded) {
       const nestedContainer = document.createElement("div");
       nestedContainer.className = "project-nested-chats";
 
+      // STRICT filtering: Only chats explicitly assigned to this project!
       const projConvs = (conversations || []).filter(
-        (c) => c.project_id === proj.id || (!c.project_id && currentProjectId === proj.id)
+        (c) => c && c.project_id === proj.id
       );
 
       if (projConvs.length > 0) {
@@ -3429,10 +3484,17 @@ function renderProjectsTree() {
           `;
           chatItem.addEventListener("click", (e) => {
             e.stopPropagation();
+            currentProjectId = proj.id;
             switchConversation(c.id);
           });
           nestedContainer.appendChild(chatItem);
         });
+      } else {
+        // Exact ChatGPT empty state: "No project chats"
+        const emptyState = document.createElement("div");
+        emptyState.className = "project-empty-chats";
+        emptyState.textContent = "No project chats";
+        nestedContainer.appendChild(emptyState);
       }
 
       // Mini button to create a new chat in this project
@@ -3445,8 +3507,9 @@ function renderProjectsTree() {
       `;
       newChatInProjBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        currentProjectId = proj.id;
         currentConversationId = null;
-        startNewChat();
+        startNewChat(false, true);
         promptEl?.focus();
       });
       nestedContainer.appendChild(newChatInProjBtn);
@@ -3464,8 +3527,13 @@ function renderProjectPills() {
 
 function selectProject(projId) {
   currentProjectId = projId;
+  const expandedSet = getExpandedProjectIds();
+  if (projId) {
+    expandedSet.add(projId);
+  }
+  setExpandedProjectIds(expandedSet);
   renderProjectsTree();
-  loadConversations(false);
+  renderConversationsList();
 }
 
 function openProjectModal(projectId = null) {
@@ -3650,10 +3718,7 @@ async function loadConversations(autoSelectLatest = false) {
   }
 
   try {
-    let url = "/api/conversations";
-    if (currentProjectId) {
-      url += `?project_id=${encodeURIComponent(currentProjectId)}`;
-    }
+    const url = "/api/conversations";
     let res = await fetch(url, { headers: authHeaders() });
     if (res.status === 401) {
       const meRes = await fetch("/api/auth/me", { headers: authHeaders() }).catch(() => null);
@@ -3711,7 +3776,12 @@ function renderConversationsList() {
   }
 
   const filtered = conversations.filter((c) => {
-    if (!query) return true;
+    if (!c || !c.id) return false;
+    if (!query) {
+      // In ChatGPT, project chats stay neatly organized inside their project folder.
+      // Root conversations list displays general / unassigned chats.
+      return !c.project_id;
+    }
     return (c.title || "").toLowerCase().includes(query);
   });
 
@@ -4333,7 +4403,7 @@ async function handleMessageFeedback(messageId, value, btnUp, btnDown) {
   }
 }
 
-function startNewChat(force = false) {
+function startNewChat(force = false, keepProject = false) {
   if (busy) {
     try {
       if (abortController) abortController.abort();
@@ -4347,6 +4417,10 @@ function startNewChat(force = false) {
     setGeneratingState(false);
   }
   hideArtifactsView();
+
+  if (!keepProject) {
+    currentProjectId = "";
+  }
 
   // Eagerly preserve currently active conversation and messages before wiping!
   if (currentConversationId && Array.isArray(messages) && messages.length > 0) {
@@ -4476,7 +4550,7 @@ window.addEventListener("resize", () => {
   }
 });
 sidebarOverlay?.addEventListener("click", closeMobileSidebar);
-newChatBtn?.addEventListener("click", startNewChat);
+newChatBtn?.addEventListener("click", () => startNewChat(false, false));
 
 // Title renaming in topbar
 editChatTitleBtn?.addEventListener("click", promptRenameActiveChat);
@@ -6257,7 +6331,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
             const lastUserRow = userRows[userRows.length - 1];
             if (lastUserRow) lastUserRow.dataset.messageId = payload.user_message_id;
             const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-            if (lastUserMsg) lastUserMsg.id = payload.user_message_id;
+            if (lastUserMsg) {
+              lastUserMsg.id = payload.user_message_id;
+              saveCachedMessages(activeConvId, messages);
+            }
           }
           const convTitle = payload.title || (messages[0]?.content ? messages[0].content.slice(0, 36) : "New Chat");
           chatTitleHeader.textContent = convTitle;
@@ -6448,12 +6525,13 @@ async function sendUserMessage(text, options = {}) {
 
   if (messages.length === 0) clearChatDom();
 
-  messages.push({ role: "user", content: messageContent });
+  const clientMsgId = "msg-user-" + Date.now() + "-" + Math.random().toString(36).slice(2, 9);
+  messages.push({ id: clientMsgId, role: "user", content: messageContent, created_at: new Date().toISOString() });
   if (currentConversationId) {
     saveCachedMessages(currentConversationId, messages);
   }
   const userMsgIndex = messages.length - 1;
-  addUserMessage(messageContent, userMsgIndex, currentAttached);
+  addUserMessage(messageContent, userMsgIndex, currentAttached, clientMsgId);
   updateExportButtonVisibility();
 
   promptEl.value = "";
