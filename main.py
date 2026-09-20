@@ -3143,6 +3143,24 @@ def sync_user_state_endpoint(payload: SyncStatePayload, current_user: dict = Dep
     return res
 
 
+@app.get("/api/sync/heartbeat")
+def sync_heartbeat_endpoint(
+    active_conv_id: Optional[str] = None,
+    last_msg_count: Optional[int] = None,
+    conv_hash: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Lightweight real-time multi-browser / multi-tab synchronization heartbeat.
+    Returns changes across conversations, active chat messages, artifacts, and daily usage.
+    """
+    return database.get_user_sync_heartbeat(
+        user_id=current_user["id"],
+        active_conv_id=active_conv_id,
+        last_msg_count=last_msg_count,
+        client_conv_hash=conv_hash,
+    )
+
+
 @app.get("/api/user/export-full")
 def export_full_workspace_endpoint(current_user: dict = Depends(get_current_user)):
     """Export complete workspace JSON backup for 100% data portability."""

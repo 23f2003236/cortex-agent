@@ -206,8 +206,12 @@ function isConvPinned(c) {
   return c.is_pinned === 1 || c.is_pinned === true || c.is_pinned === "1" || c.is_pinned === "true";
 }
 
-// ---------------- Cross-Tab / Cross-Window Live Synchronization ----------------
+// ---------------- Real-Time Cross-Browser & Cross-Tab Live Synchronization ----------------
 const cortexSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("cortex_workspace_channel") : null;
+
+let liveSyncInterval = null;
+let lastClientConvHash = "";
+let isSyncingLive = false;
 
 function broadcastWorkspaceUpdate(type = "WORKSPACE_UPDATED", payload = {}) {
   if (cortexSyncChannel) {
@@ -215,6 +219,9 @@ function broadcastWorkspaceUpdate(type = "WORKSPACE_UPDATED", payload = {}) {
       cortexSyncChannel.postMessage({ type, payload, timestamp: Date.now() });
     } catch {}
   }
+  try {
+    triggerLiveHeartbeatSync(true);
+  } catch {}
 }
 
 if (cortexSyncChannel) {
@@ -222,24 +229,110 @@ if (cortexSyncChannel) {
     const { type } = event.data || {};
     if (type === "WORKSPACE_UPDATED" || type === "CONVERSATION_UPDATED" || type === "USAGE_UPDATED") {
       if (currentUser) {
-        await loadConversations(false);
-        await loadUserUsage();
-        await loadArtifactsCount();
-        await loadProjects();
+        await triggerLiveHeartbeatSync(true);
       }
     }
   };
 }
 
+async function triggerLiveHeartbeatSync(force = false) {
+  if (!currentUser || isSyncingLive) return;
+  // If this tab is actively streaming assistant response, don't interrupt active local generation
+  if (busy && !force) return;
+
+  isSyncingLive = true;
+  try {
+    const activeId = (currentConversationId && currentConversationId !== "new") ? currentConversationId : "";
+    const activeCount = (Array.isArray(messages) && activeId) ? messages.length : 0;
+    const url = new URL("/api/sync/heartbeat", window.location.origin);
+    if (activeId) url.searchParams.set("active_conv_id", activeId);
+    if (activeCount >= 0) url.searchParams.set("last_msg_count", activeCount);
+    if (lastClientConvHash) url.searchParams.set("conv_hash", lastClientConvHash);
+
+    const res = await fetch(url.toString(), {
+      headers: authHeaders(),
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      return;
+    }
+
+    const data = await res.json();
+    if (!data || !data.ok) return;
+
+    if (data.conv_hash) {
+      lastClientConvHash = data.conv_hash;
+    }
+
+    // 1. Conversations list updated from another browser or window
+    if (data.conversations_changed && Array.isArray(data.conversations)) {
+      conversations = data.conversations;
+      saveCachedConversations(conversations);
+      renderConversationsList();
+      renderProjectsTree();
+      updateProjectPills();
+    }
+
+    // 2. Active conversation messages updated in real-time from another browser
+    if (data.active_messages && Array.isArray(data.active_messages) && activeId && currentConversationId === activeId) {
+      const serverMsgs = data.active_messages;
+      const currentLen = (messages || []).length;
+      if (serverMsgs.length > currentLen && !busy) {
+        messages = serverMsgs;
+        saveCachedMessages(activeId, messages);
+        rebuildChatFromMessages();
+        scrollChatToBottom();
+        updateExportButtonVisibility();
+      } else if (serverMsgs.length !== currentLen && !busy) {
+        messages = serverMsgs;
+        saveCachedMessages(activeId, messages);
+        rebuildChatFromMessages();
+        scrollChatToBottom();
+        updateExportButtonVisibility();
+      }
+    }
+
+    // 3. Artifacts count updated in real-time
+    if (typeof data.artifacts_count === "number") {
+      updateArtifactsBadge(data.artifacts_count);
+    }
+
+    // 4. Usage updated in real-time
+    if (data.usage && typeof data.usage.tokens_used === "number") {
+      updateUsageDisplay(data.usage.tokens_used, 100000000);
+    }
+  } catch (err) {
+    // Network hiccup, silent ignore for background polling
+  } finally {
+    isSyncingLive = false;
+  }
+}
+
+function startLiveWorkspaceSync() {
+  if (liveSyncInterval) clearInterval(liveSyncInterval);
+  // Real-time 3-second heartbeat for ChatGPT/Claude-like instant multi-browser sync
+  liveSyncInterval = setInterval(() => {
+    if (currentUser && document.visibilityState === "visible") {
+      triggerLiveHeartbeatSync(false);
+    }
+  }, 3000);
+}
+
+function stopLiveWorkspaceSync() {
+  if (liveSyncInterval) {
+    clearInterval(liveSyncInterval);
+    liveSyncInterval = null;
+  }
+}
+
 let lastFocusSyncTime = 0;
 function handleWindowFocusSync() {
   const now = Date.now();
-  if (now - lastFocusSyncTime < 2500) return; // Debounce 2.5s
+  if (now - lastFocusSyncTime < 1500) return; // Debounce 1.5s
   lastFocusSyncTime = now;
   if (currentUser) {
-    loadConversations(false);
-    loadUserUsage();
-    loadArtifactsCount();
+    triggerLiveHeartbeatSync(true);
   }
 }
 
@@ -469,6 +562,20 @@ function hashString(str) {
   return Math.abs(hash).toString(36);
 }
 
+function getArtifactCanonicalKey(art) {
+  if (!art) return "";
+  if (art.key) return String(art.key).trim();
+  const conv = (art.conversation_id || "global").trim();
+  const rawFn = (art.filename || art.title || "document.md").trim();
+  const fn = rawFn.toLowerCase();
+  if (art.type === "code" || art.type === "html" || art.type === "chart") {
+    const snippet = (art.content || "").slice(0, 80).replace(/\s+/g, "");
+    const hash = snippet ? hashString(snippet) : "0";
+    return `${conv}:${fn}:${hash}`;
+  }
+  return `${conv}:${fn}`;
+}
+
 function getCachedArtifacts() {
   try {
     const key = getUserScopedKey("cortex_arts");
@@ -476,7 +583,29 @@ function getCachedArtifacts() {
     if ((!list || !list.length) && currentUser && currentUser.id) {
       list = JSON.parse(localStorage.getItem(`cortex_arts_${currentUser.id}`));
     }
-    return Array.isArray(list) ? list : [];
+    if (!Array.isArray(list)) return [];
+
+    const deletedKeys = new Set(getDeletedArtifactKeys());
+    const dedupedMap = new Map();
+    for (const a of list) {
+      if (!a) continue;
+      const canonKey = getArtifactCanonicalKey(a);
+      if (!canonKey) continue;
+      if (deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) continue;
+      if (!dedupedMap.has(canonKey)) {
+        dedupedMap.set(canonKey, { ...a, key: canonKey });
+      }
+    }
+    const cleanList = Array.from(dedupedMap.values());
+    if (cleanList.length !== list.length) {
+      try {
+        localStorage.setItem(key, JSON.stringify(cleanList));
+        if (currentUser && currentUser.id) {
+          localStorage.setItem(`cortex_arts_${currentUser.id}`, JSON.stringify(cleanList));
+        }
+      } catch {}
+    }
+    return cleanList;
   } catch {
     return [];
   }
@@ -485,15 +614,17 @@ function getCachedArtifacts() {
 function saveCachedArtifact(art) {
   if (!art || !art.content) return;
   try {
+    const canonKey = getArtifactCanonicalKey(art);
+    if (!canonKey) return;
+    const deletedKeys = new Set(getDeletedArtifactKeys());
+    if (deletedKeys.has(canonKey) || (art.id && deletedKeys.has(art.id))) return;
+
     let list = getCachedArtifacts();
-    const idx = list.findIndex(
-      (a) => (a.id && art.id && a.id === art.id) ||
-             (a.conversation_id && art.conversation_id && a.conversation_id === art.conversation_id && a.filename && art.filename && a.filename === art.filename)
-    );
+    const idx = list.findIndex((a) => getArtifactCanonicalKey(a) === canonKey);
     if (idx >= 0) {
-      list[idx] = { ...list[idx], ...art };
+      list[idx] = { ...list[idx], ...art, key: canonKey };
     } else {
-      list.unshift(art);
+      list.unshift({ ...art, key: canonKey });
     }
     saveCachedArtifactsList(list);
   } catch (e) {
@@ -503,12 +634,24 @@ function saveCachedArtifact(art) {
 
 function saveCachedArtifactsList(list) {
   try {
-    const payload = JSON.stringify(list || []);
+    const deletedKeys = new Set(getDeletedArtifactKeys());
+    const map = new Map();
+    for (const a of (list || [])) {
+      if (!a) continue;
+      const canonKey = getArtifactCanonicalKey(a);
+      if (!canonKey) continue;
+      if (deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) continue;
+      if (!map.has(canonKey)) {
+        map.set(canonKey, { ...a, key: canonKey });
+      }
+    }
+    const clean = Array.from(map.values());
+    const payload = JSON.stringify(clean);
     localStorage.setItem(getUserScopedKey("cortex_arts"), payload);
     if (currentUser && currentUser.id) {
       localStorage.setItem(`cortex_arts_${currentUser.id}`, payload);
     }
-    updateArtifactsBadge((list || []).length);
+    updateArtifactsBadge(clean.length);
   } catch (e) {
     console.warn("Failed to save artifacts list:", e);
   }
@@ -527,7 +670,7 @@ function harvestArtifactsFromAllCachedMessages() {
   const existingMap = new Map();
   existing.forEach((a) => {
     if (!a) return;
-    const k = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+    const k = getArtifactCanonicalKey(a);
     if (k && !deletedKeys.has(k) && (!a.id || !deletedKeys.has(a.id))) {
       existingMap.set(k, a);
     }
@@ -568,21 +711,22 @@ function harvestArtifactsFromAllCachedMessages() {
 
         const resolvedFn = filename || (artType === "html" ? "index.html" : artType === "chart" ? "chart.json" : `code_${blockIndex}.${ext || "txt"}`);
         const artId = `code-${c.id.slice(0, 8)}-${blockIndex}`;
-        const artKey = `${c.id}:${resolvedFn}`;
-        if (deletedKeys.has(artKey) || deletedKeys.has(artId)) continue;
+        const item = {
+          id: artId,
+          filename: resolvedFn,
+          title: resolvedFn,
+          conversation_id: c.id,
+          conversation_title: c.title || "Conversation",
+          type: artType,
+          content: codeText,
+          created_at: msg.created_at || c.created_at || new Date().toISOString(),
+        };
+        const canonKey = getArtifactCanonicalKey(item);
+        if (deletedKeys.has(canonKey) || deletedKeys.has(artId)) continue;
 
-        if (!existingMap.has(artKey) && !existingMap.has(artId)) {
-          const item = {
-            id: artId,
-            filename: resolvedFn,
-            title: resolvedFn,
-            conversation_id: c.id,
-            conversation_title: c.title || "Conversation",
-            type: artType,
-            content: codeText,
-            created_at: msg.created_at || c.created_at || new Date().toISOString(),
-          };
-          existingMap.set(artKey, item);
+        if (!existingMap.has(canonKey)) {
+          item.key = canonKey;
+          existingMap.set(canonKey, item);
           addedNew = true;
         }
       }
@@ -593,20 +737,21 @@ function harvestArtifactsFromAllCachedMessages() {
       if ((hasHeadings || content.length > 550) && !content.trim().startsWith("```")) {
         const docFn = extractDocumentFilename(content);
         const docId = `doc-${c.id.slice(0, 8)}`;
-        const docKey = `${c.id}:${docFn}`;
-        if (!deletedKeys.has(docKey) && !deletedKeys.has(docId)) {
-          if (!existingMap.has(docKey) && !existingMap.has(docId)) {
-            const docItem = {
-              id: docId,
-              filename: docFn,
-              title: docFn,
-              conversation_id: c.id,
-              conversation_title: c.title || "Conversation",
-              type: "markdown",
-              content: content,
-              created_at: msg.created_at || c.created_at || new Date().toISOString(),
-            };
-            existingMap.set(docKey, docItem);
+        const docItem = {
+          id: docId,
+          filename: docFn,
+          title: docFn,
+          conversation_id: c.id,
+          conversation_title: c.title || "Conversation",
+          type: "markdown",
+          content: content,
+          created_at: msg.created_at || c.created_at || new Date().toISOString(),
+        };
+        const canonKey = getArtifactCanonicalKey(docItem);
+        if (!deletedKeys.has(canonKey) && !deletedKeys.has(docId)) {
+          if (!existingMap.has(canonKey)) {
+            docItem.key = canonKey;
+            existingMap.set(canonKey, docItem);
             addedNew = true;
           }
         }
@@ -657,8 +802,8 @@ function deleteCachedArtifact(artKey) {
     const strKey = String(artKey).trim();
     let list = getCachedArtifacts();
     list = list.filter((a) => {
-      const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-      return a.id !== strKey && key !== strKey;
+      const canonKey = getArtifactCanonicalKey(a);
+      return a.id !== strKey && canonKey !== strKey && `${a.conversation_id}:${a.filename}` !== strKey;
     });
     saveCachedArtifactsList(list);
     addDeletedArtifactKey(strKey);
@@ -7776,6 +7921,7 @@ async function handleAuthSubmit(e) {
     if (typeof syncFullWorkspaceState === "function") {
       syncFullWorkspaceState(false);
     }
+    startLiveWorkspaceSync();
 
     // Fresh new chat screen on login / registration / entry
     startNewChat(true);
@@ -7850,6 +7996,7 @@ async function handleAuthSubmit(e) {
 }
 
 function signOut() {
+  stopLiveWorkspaceSync();
   // Immediate synchronous cleanup to eliminate cross-session data leakage
   try {
     if (abortController) abortController.abort();
@@ -7976,6 +8123,7 @@ async function checkAuth() {
       } else {
         startNewChat(true);
       }
+      startLiveWorkspaceSync();
 
       dismissSplash();
     } else {
@@ -8754,11 +8902,7 @@ async function loadArtifactsCount() {
     harvestArtifactsFromAllCachedMessages();
   } catch {}
   const deletedKeys = new Set(getDeletedArtifactKeys());
-  const cached = getCachedArtifacts().filter((a) => {
-    if (!a) return false;
-    const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-    return !deletedKeys.has(key) && (!a.id || !deletedKeys.has(a.id));
-  });
+  const cached = getCachedArtifacts();
   updateArtifactsBadge(cached.length);
   try {
     const res = await fetch("/api/artifacts", { headers: authHeaders() });
@@ -8768,19 +8912,19 @@ async function loadArtifactsCount() {
       const map = new Map();
       serverList.forEach((a) => {
         if (!a) return;
-        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
+        const canonKey = a.key || getArtifactCanonicalKey(a);
+        if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
-        map.set(key, a);
+        map.set(canonKey, { ...a, key: canonKey });
       });
       cached.forEach((a) => {
         if (!a) return;
-        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
+        const canonKey = a.key || getArtifactCanonicalKey(a);
+        if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
-        if (key && !map.has(key)) map.set(key, a);
+        if (!map.has(canonKey)) map.set(canonKey, { ...a, key: canonKey });
       });
       allUserArtifacts = Array.from(map.values());
       saveCachedArtifactsList(allUserArtifacts);
@@ -8828,11 +8972,7 @@ async function loadArtifacts() {
     harvestArtifactsFromAllCachedMessages();
   } catch {}
   const deletedKeys = new Set(getDeletedArtifactKeys());
-  const cached = getCachedArtifacts().filter((a) => {
-    if (!a) return false;
-    const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-    return !deletedKeys.has(key) && (!a.id || !deletedKeys.has(a.id));
-  });
+  const cached = getCachedArtifacts();
   if (cached.length > 0) {
     allUserArtifacts = cached;
     renderArtifactsList(allUserArtifacts);
@@ -8846,19 +8986,19 @@ async function loadArtifacts() {
       const map = new Map();
       serverList.forEach((a) => {
         if (!a) return;
-        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
+        const canonKey = a.key || getArtifactCanonicalKey(a);
+        if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
-        map.set(key, a);
+        map.set(canonKey, { ...a, key: canonKey });
       });
       cached.forEach((a) => {
         if (!a) return;
-        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
-        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
+        const canonKey = a.key || getArtifactCanonicalKey(a);
+        if (!canonKey || deletedKeys.has(canonKey) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
-        if (key && !map.has(key)) map.set(key, a);
+        if (!map.has(canonKey)) map.set(canonKey, { ...a, key: canonKey });
       });
       allUserArtifacts = Array.from(map.values());
       saveCachedArtifactsList(allUserArtifacts);

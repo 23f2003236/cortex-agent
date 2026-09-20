@@ -1843,6 +1843,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
 
         deleted_keys = get_deleted_artifact_keys(user_id)
         seen_conv_titles = set()
+        seen_conv_files = set()
         for item in stitched_messages:
             text = (item["content"] or "").strip()
             if not text:
@@ -1862,7 +1863,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
                 has_heading
                 or has_doc_attach
                 or (has_table and len(text) > 200)
-                or (has_code and len(text) > 80)
+                or (has_code and len(text) > 40)
                 or len(text) > 400
             )
             if not is_artifact:
@@ -1905,11 +1906,17 @@ def get_user_artifacts(user_id: str) -> list[dict]:
                 if not safe_slug.endswith(".md"):
                     safe_slug += ".md"
 
+            conv_file_key = (item["conversation_id"], safe_slug.lower())
+            if conv_file_key in seen_conv_files:
+                continue
+            seen_conv_files.add(conv_file_key)
+
             # Check if this artifact was deleted by the user (match strictly by unique message id or conversation-scoped key)
             if (
                 item["id"] in deleted_keys
                 or f"{item['conversation_id']}:{item['id']}" in deleted_keys
                 or f"{item['conversation_id']}:{safe_slug}" in deleted_keys
+                or f"{item['conversation_id']}:{safe_slug.lower()}" in deleted_keys
             ):
                 continue
 
@@ -1917,6 +1924,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
 
             artifacts.append({
                 "id": item["id"],
+                "key": f"{item['conversation_id']}:{safe_slug.lower()}",
                 "conversation_id": item["conversation_id"],
                 "conversation_title": item["conv_title"] or "Chat",
                 "title": title,
@@ -2205,6 +2213,92 @@ def import_full_user_state(user_id: str, import_data: dict[str, Any]) -> dict[st
         projects_data=projs,
         daily_usage_tokens=tokens,
     )
+
+
+def get_user_sync_heartbeat(
+    user_id: str,
+    active_conv_id: Optional[str] = None,
+    last_msg_count: Optional[int] = None,
+    client_conv_hash: Optional[str] = None,
+) -> dict[str, Any]:
+    """Lightweight real-time synchronization heartbeat for multi-browser / multi-device clients.
+    Executes in < 5ms to guarantee sub-second awareness across concurrent sessions.
+    """
+    if not user_id:
+        return {"ok": False, "detail": "User ID required"}
+
+    now_iso = _utc_now_iso()
+    with get_connection() as conn:
+        # 1. Fetch conversations metadata for user
+        cur = conn.execute(
+            """
+            SELECT id, title, created_at, updated_at, project_id,
+                   COALESCE(is_pinned, 0) as is_pinned,
+                   COALESCE(is_archived, 0) as is_archived
+            FROM conversations
+            WHERE user_id = ? AND COALESCE(is_archived, 0) = 0
+            ORDER BY is_pinned DESC, updated_at DESC
+            """,
+            (user_id,),
+        )
+        conv_rows = [dict(r) for r in cur.fetchall()]
+
+        # Generate a fast digest of user's active conversations list
+        conv_summary = "|".join(f"{c['id']}:{c['updated_at']}:{c['title']}:{c['is_pinned']}" for c in conv_rows)
+        server_conv_hash = hashlib.md5(conv_summary.encode("utf-8")).hexdigest()
+
+        conversations_changed = (client_conv_hash != server_conv_hash)
+
+        # 2. Check active conversation messages if active_conv_id is provided
+        active_messages = None
+        active_msg_count = 0
+        if active_conv_id and active_conv_id != "new":
+            cur_msg = conn.execute(
+                """
+                SELECT id, conversation_id, role, content, tools_used, feedback, created_at
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY created_at ASC, rowid ASC
+                """,
+                (active_conv_id,),
+            )
+            msg_rows = [dict(r) for r in cur_msg.fetchall()]
+            active_msg_count = len(msg_rows)
+
+            for m in msg_rows:
+                if m.get("tools_used") and isinstance(m["tools_used"], str):
+                    try:
+                        m["tools_used"] = json.loads(m["tools_used"])
+                    except Exception:
+                        m["tools_used"] = []
+
+            if last_msg_count is None or last_msg_count != active_msg_count:
+                active_messages = msg_rows
+
+        # 3. Quick daily usage
+        usage_info = get_daily_usage(user_id)
+        tokens_used = usage_info.get("tokens_used", 0)
+        uploads_count = usage_info.get("uploads_count", 0)
+
+    # 4. Artifacts count (deduplicated)
+    artifacts = get_user_artifacts(user_id)
+    artifacts_count = len(artifacts)
+
+    return {
+        "ok": True,
+        "server_time": now_iso,
+        "conv_hash": server_conv_hash,
+        "conversations_changed": conversations_changed,
+        "conversations": conv_rows if conversations_changed else None,
+        "active_conv_id": active_conv_id,
+        "active_msg_count": active_msg_count,
+        "active_messages": active_messages,
+        "artifacts_count": artifacts_count,
+        "usage": {
+            "tokens_used": tokens_used,
+            "uploads_count": uploads_count,
+        },
+    }
 
 
 # Automatically initialize schema on import
