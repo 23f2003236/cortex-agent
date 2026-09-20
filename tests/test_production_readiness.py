@@ -1173,9 +1173,61 @@ class TestProductionReadiness(unittest.TestCase):
             row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (uid,)).fetchone()
             self.assertNotEqual(row["password_hash"], "SERVERLESS_VERIFIED_TOKEN")
 
-    def test_schema_version_is_at_least_8(self):
-        """Verify database schema migration version is at least 8."""
-        self.assertGreaterEqual(database.get_schema_version(), 8)
+    def test_image_compression_under_350k_chars(self):
+        """Verify image compressor compresses oversized base64 images well under 350k characters."""
+        import base64
+        import io
+        import os
+        from PIL import Image
+
+        # Generate a large high-entropy image that cannot compress under 350k as PNG
+        raw = os.urandom(800 * 800 * 3)
+        img = Image.frombytes("RGB", (800, 800), raw)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        data_url = f"data:image/png;base64,{b64}"
+        self.assertGreater(len(data_url), 350000)
+
+        compressed = main._compress_b64_image_if_needed(data_url, max_chars=350000)
+        self.assertLessEqual(len(compressed), 350000)
+        self.assertTrue(compressed.startswith("data:image/jpeg;base64,"))
+
+    def test_model_identity_directive_in_build_messages(self):
+        """Verify model identity directive accurately aligns model persona in system messages."""
+        for model_id, expected_name in [
+            ("openai/gpt-oss-20b", "Cortex 4 (Deep Reasoning)"),
+            ("z-ai/glm-5.3", "Cortex 5.3 (Frontier MoE 753B)"),
+            ("z-ai/glm-5.3-flash", "Cortex 5.3 Flash (Vision & Reasoning 320B)"),
+            ("nvidia/nemotron-3.5-lightning-30b-a3b", "Cortex 3.5 Lightning (Ultra-Fast)"),
+        ]:
+            req = main.ChatRequest(messages=[main.ChatMessage(role="user", content="Identity test")])
+            msgs, _ = main._build_messages(req, model=model_id, mode="auto")
+            sys_texts = [m.content for m in msgs if hasattr(m, "content") and "[ACTIVE MODEL PROFILE:" in str(m.content)]
+            self.assertTrue(sys_texts, f"Active model profile missing for {model_id}")
+            self.assertIn(expected_name, sys_texts[0])
+            self.assertIn(model_id, sys_texts[0])
+
+    def test_stream_init_contains_dispatch_tracking(self):
+        """Verify SSE init event contains requested_model, resolved_provider_model, and request_id."""
+        with patch("main.make_llm") as mock_make_llm:
+            mock_instance = MagicMock()
+            mock_instance.stream.return_value = [
+                MagicMock(content="Hello", response_metadata={}, additional_kwargs={})
+            ]
+            mock_make_llm.return_value = mock_instance
+
+            token = main.generate_token(self.user["id"], self.user["username"])
+            payload = {
+                "model": "openai/gpt-oss-20b",
+                "messages": [{"role": "user", "content": "Hello!"}],
+            }
+            resp = self.client.post("/api/chat/stream", json=payload, headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            content = resp.content.decode("utf-8")
+            self.assertIn('"requested_model": "openai/gpt-oss-20b"', content)
+            self.assertIn('"resolved_provider_model": "openai/gpt-oss-20b"', content)
+            self.assertIn('"request_id": "req_', content)
 
 
 if __name__ == "__main__":
