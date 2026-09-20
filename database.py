@@ -17,7 +17,11 @@ from typing import Any, Optional
 logger = logging.getLogger("cortex.database")
 
 _DEFAULT_DB = Path(__file__).resolve().parent / "cortex.db"
-if (
+_CUSTOM_DB_PATH = os.environ.get("CORTEX_DB_PATH") or os.environ.get("PERSISTENT_STORAGE_PATH")
+
+if _CUSTOM_DB_PATH:
+    DB_PATH = Path(_CUSTOM_DB_PATH)
+elif (
     os.environ.get("VERCEL")
     or os.environ.get("VERCEL_ENV")
     or os.environ.get("VERCEL_REGION")
@@ -88,7 +92,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def backup_db(target_path: Optional[Path] = None) -> Path:
@@ -178,6 +182,43 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_user_created ON projects(user_id, created_at)")
+
+        # Migrate existing projects table for is_pinned, is_deleted, and deleted_at
+        proj_cols = [r["name"] for r in conn.execute("PRAGMA table_info(projects)").fetchall()]
+        if "is_pinned" not in proj_cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN is_pinned INTEGER DEFAULT 0")
+        if "is_deleted" not in proj_cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN is_deleted INTEGER DEFAULT 0")
+        if "deleted_at" not in proj_cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN deleted_at TEXT DEFAULT NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_user_pinned ON projects(user_id, is_pinned)")
+
+        # Create user_preferences table for cross-browser model/theme/mode persistence
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                model TEXT DEFAULT 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+                theme TEXT DEFAULT 'dark',
+                mode TEXT DEFAULT 'auto',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_prefs_user ON user_preferences(user_id)")
+
+        # Create deleted_conversations tombstone table so deleted chats are never resurrected across browsers
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_conversations (
+                conv_id TEXT NOT NULL,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                deleted_at TEXT NOT NULL,
+                PRIMARY KEY (conv_id, user_id)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_deleted_convs_user ON deleted_conversations(user_id)")
 
         # Migrate existing conversations table if user_id, is_pinned, custom_instructions, or project_id column is missing
         conv_cols = [r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()]
@@ -347,6 +388,11 @@ def init_db() -> None:
                 pass
             conn.execute(
                 "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (8, ?, 'Purge placeholder serverless hashes and obsolete test accounts for clean slate launch')",
+                (now_iso,),
+            )
+        if current_v < 9:
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (9, ?, 'Project pins in DB, user_preferences table, deleted_conversations tombstones, and soft-delete support')",
                 (now_iso,),
             )
 
@@ -1100,17 +1146,33 @@ def update_conversation_title(conv_id: str, title: str, user_id: Optional[str] =
 
 def delete_conversation(conv_id: str, user_id: Optional[str] = None) -> bool:
     with get_connection() as conn:
+        now = _utc_now_iso()
         if user_id:
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
             conn.execute(
                 "DELETE FROM conversations WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '')",
                 (conv_id, user_id),
             )
+            # Record tombstone so all connected browsers drop it from cache
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO deleted_conversations (conv_id, user_id, deleted_at) VALUES (?, ?, ?)",
+                    (conv_id, user_id, now),
+                )
+            except Exception:
+                pass
         else:
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
             conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         conn.commit()
         return True
+
+
+def get_deleted_conversation_ids(user_id: str) -> list[str]:
+    """Return list of deleted conversation IDs for the user."""
+    with get_connection() as conn:
+        cur = conn.execute("SELECT conv_id FROM deleted_conversations WHERE user_id = ? ORDER BY deleted_at DESC LIMIT 100", (user_id,))
+        return [r["conv_id"] for r in cur.fetchall()]
 
 
 def get_messages(conv_id: str, user_id: Optional[str] = None) -> list[dict[str, Any]]:
@@ -1515,8 +1577,8 @@ def create_project(
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO projects (id, name, description, system_prompt, user_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO projects (id, name, description, system_prompt, user_id, created_at, updated_at, is_pinned, is_deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
             """,
             (pid, name.strip(), description.strip(), system_prompt.strip(), user_id, now, now),
         )
@@ -1529,23 +1591,37 @@ def create_project(
         "user_id": user_id,
         "created_at": now,
         "updated_at": now,
+        "is_pinned": 0,
+        "is_deleted": 0,
     }
 
 
 def get_projects(user_id: str) -> list[dict[str, Any]]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, description, system_prompt, user_id, created_at, updated_at FROM projects WHERE user_id = ? ORDER BY created_at DESC",
+            """
+            SELECT id, name, description, system_prompt, user_id, created_at, updated_at,
+                   COALESCE(is_pinned, 0) AS is_pinned,
+                   COALESCE(is_deleted, 0) AS is_deleted
+            FROM projects
+            WHERE user_id = ? AND COALESCE(is_deleted, 0) = 0
+            ORDER BY COALESCE(is_pinned, 0) DESC, updated_at DESC
+            """,
             (user_id,),
         )
-        rows = cur.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(row) for row in cur.fetchall()]
 
 
 def get_project(project_id: str, user_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, description, system_prompt, user_id, created_at, updated_at FROM projects WHERE id = ? AND user_id = ?",
+            """
+            SELECT id, name, description, system_prompt, user_id, created_at, updated_at,
+                   COALESCE(is_pinned, 0) AS is_pinned,
+                   COALESCE(is_deleted, 0) AS is_deleted
+            FROM projects
+            WHERE id = ? AND user_id = ? AND COALESCE(is_deleted, 0) = 0
+            """,
             (project_id, user_id),
         )
         row = cur.fetchone()
@@ -1554,32 +1630,133 @@ def get_project(project_id: str, user_id: str) -> Optional[dict[str, Any]]:
 
 def update_project(
     project_id: str,
-    name: str,
-    description: str = "",
-    system_prompt: str = "",
-    user_id: str = "",
+    user_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> bool:
-    now = _utc_now_iso()
+    fields = []
+    values = []
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name.strip())
+    if description is not None:
+        fields.append("description = ?")
+        values.append(description.strip())
+    if system_prompt is not None:
+        fields.append("system_prompt = ?")
+        values.append(system_prompt.strip())
+    if not fields:
+        return False
+    fields.append("updated_at = ?")
+    values.append(_utc_now_iso())
+    values.extend([project_id, user_id])
     with get_connection() as conn:
         cur = conn.execute(
-            """
-            UPDATE projects
-            SET name = ?, description = ?, system_prompt = ?, updated_at = ?
-            WHERE id = ? AND user_id = ?
-            """,
-            (name.strip(), description.strip(), system_prompt.strip(), now, project_id, user_id),
+            f"UPDATE projects SET {', '.join(fields)} WHERE id = ? AND user_id = ? AND COALESCE(is_deleted, 0) = 0",
+            values,
         )
         conn.commit()
         return cur.rowcount > 0
 
 
-def delete_project(project_id: str, user_id: str) -> bool:
+def toggle_project_pin(project_id: str, user_id: str, is_pinned: Optional[bool] = None) -> Optional[int]:
+    """Toggle or set is_pinned state for a project."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT is_pinned FROM projects WHERE id = ? AND user_id = ? AND COALESCE(is_deleted, 0) = 0",
+            (project_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        current_pinned = int(row["is_pinned"] or 0)
+        new_pinned = int(is_pinned) if is_pinned is not None else (0 if current_pinned else 1)
+        now = _utc_now_iso()
+        conn.execute(
+            "UPDATE projects SET is_pinned = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (new_pinned, now, project_id, user_id),
+        )
+        conn.commit()
+        return new_pinned
+
+
+def delete_project(project_id: str, user_id: str, soft: bool = True) -> bool:
     with get_connection() as conn:
         # Unlink conversations first
         conn.execute("UPDATE conversations SET project_id = NULL WHERE project_id = ? AND user_id = ?", (project_id, user_id))
-        cur = conn.execute("DELETE FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id))
+        now = _utc_now_iso()
+        if soft:
+            cur = conn.execute(
+                "UPDATE projects SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (now, now, project_id, user_id),
+            )
+        else:
+            cur = conn.execute("DELETE FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id))
         conn.commit()
         return cur.rowcount > 0
+
+
+def get_user_preferences(user_id: str) -> dict[str, Any]:
+    """Retrieve persisted preferences (model, theme, mode) for an authenticated user."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT model, theme, mode, updated_at FROM user_preferences WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row:
+            return {
+                "user_id": user_id,
+                "model": row["model"] or "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+                "theme": row["theme"] or "dark",
+                "mode": row["mode"] or "auto",
+                "updated_at": row["updated_at"],
+            }
+        return {
+            "user_id": user_id,
+            "model": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+            "theme": "dark",
+            "mode": "auto",
+            "updated_at": _utc_now_iso(),
+        }
+
+
+def set_user_preferences(
+    user_id: str,
+    model: Optional[str] = None,
+    theme: Optional[str] = None,
+    mode: Optional[str] = None,
+) -> dict[str, Any]:
+    """Upsert persisted preferences for an authenticated user."""
+    now = _utc_now_iso()
+    with get_connection() as conn:
+        current = conn.execute(
+            "SELECT model, theme, mode FROM user_preferences WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        cur_model = (current["model"] if current else None) or "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+        cur_theme = (current["theme"] if current else None) or "dark"
+        cur_mode = (current["mode"] if current else None) or "auto"
+
+        new_model = model.strip() if (model is not None and model.strip()) else cur_model
+        new_theme = theme.strip() if (theme is not None and theme.strip()) else cur_theme
+        new_mode = mode.strip() if (mode is not None and mode.strip()) else cur_mode
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO user_preferences (user_id, model, theme, mode, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, new_model, new_theme, new_mode, now),
+        )
+        conn.commit()
+        return {
+            "user_id": user_id,
+            "model": new_model,
+            "theme": new_theme,
+            "mode": new_mode,
+            "updated_at": now,
+        }
 
 
 def set_conversation_project(conv_id: str, project_id: Optional[str], user_id: str) -> bool:
@@ -2262,6 +2439,7 @@ def get_user_sync_heartbeat(
     active_conv_id: Optional[str] = None,
     last_msg_count: Optional[int] = None,
     client_conv_hash: Optional[str] = None,
+    client_proj_hash: Optional[str] = None,
 ) -> dict[str, Any]:
     """Lightweight real-time synchronization heartbeat for multi-browser / multi-device clients.
     Executes in < 5ms to guarantee sub-second awareness across concurrent sessions.
@@ -2291,7 +2469,32 @@ def get_user_sync_heartbeat(
 
         conversations_changed = (client_conv_hash != server_conv_hash)
 
-        # 2. Check active conversation messages if active_conv_id is provided
+        # 2. Fetch active projects metadata for user (ChatGPT-style project sync)
+        cur_proj = conn.execute(
+            """
+            SELECT id, name, description, system_prompt, user_id,
+                   COALESCE(is_pinned, 0) as is_pinned,
+                   created_at, updated_at
+            FROM projects
+            WHERE user_id = ? AND COALESCE(is_deleted, 0) = 0
+            ORDER BY is_pinned DESC, created_at DESC
+            """,
+            (user_id,),
+        )
+        project_rows = [dict(r) for r in cur_proj.fetchall()]
+        proj_summary = "|".join(f"{p['id']}:{p['updated_at']}:{p['name']}:{p['is_pinned']}" for p in project_rows)
+        server_proj_hash = hashlib.md5(proj_summary.encode("utf-8")).hexdigest()
+
+        projects_changed = (client_proj_hash != server_proj_hash)
+
+        # 3. Fetch recent deleted conversation tombstones
+        cur_del = conn.execute(
+            "SELECT conv_id FROM deleted_conversations WHERE user_id = ? ORDER BY deleted_at DESC LIMIT 50",
+            (user_id,),
+        )
+        deleted_conv_ids = [r["conv_id"] for r in cur_del.fetchall()]
+
+        # 4. Check active conversation messages if active_conv_id is provided
         active_messages = None
         active_msg_count = 0
         if active_conv_id and active_conv_id != "new":
@@ -2317,12 +2520,12 @@ def get_user_sync_heartbeat(
             if last_msg_count is None or last_msg_count != active_msg_count:
                 active_messages = msg_rows
 
-        # 3. Quick daily usage
+        # 5. Quick daily usage
         usage_info = get_daily_usage(user_id)
         tokens_used = usage_info.get("tokens_used", 0)
         uploads_count = usage_info.get("uploads_count", 0)
 
-    # 4. Artifacts count (deduplicated)
+    # 6. Artifacts count (deduplicated)
     artifacts = get_user_artifacts(user_id)
     artifacts_count = len(artifacts)
 
@@ -2336,6 +2539,10 @@ def get_user_sync_heartbeat(
         "active_conv_id": active_conv_id,
         "active_msg_count": active_msg_count,
         "active_messages": active_messages,
+        "proj_hash": server_proj_hash,
+        "projects_changed": projects_changed,
+        "projects": project_rows if projects_changed else None,
+        "deleted_conv_ids": deleted_conv_ids,
         "artifacts_count": artifacts_count,
         "usage": {
             "tokens_used": tokens_used,

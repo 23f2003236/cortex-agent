@@ -3027,6 +3027,16 @@ class ConversationProjectPayload(BaseModel):
     project_id: Optional[str] = None
 
 
+class ProjectPinPayload(BaseModel):
+    is_pinned: Optional[bool] = None
+
+
+class UserPreferencesPayload(BaseModel):
+    model: Optional[str] = None
+    theme: Optional[str] = None
+    mode: Optional[str] = None
+
+
 @app.get("/api/projects")
 def list_projects_endpoint(current_user: dict = Depends(get_current_user)):
     """List all project workspaces belonging to the user."""
@@ -3084,6 +3094,40 @@ def delete_project_endpoint(project_id: str, current_user: dict = Depends(get_cu
     if not success:
         raise HTTPException(status_code=404, detail="Project not found.")
     return {"ok": True, "deleted_project_id": project_id}
+
+
+@app.patch("/api/projects/{project_id}/pin")
+def toggle_project_pin_endpoint(
+    project_id: str,
+    payload: Optional[ProjectPinPayload] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Toggle or set project pin state in the database."""
+    pin_val = payload.is_pinned if payload else None
+    result = database.toggle_project_pin(project_id, user_id=current_user["id"], is_pinned=pin_val)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return {"ok": True, "project_id": project_id, "is_pinned": result}
+
+
+@app.get("/api/user/preferences")
+def get_user_preferences_endpoint(current_user: dict = Depends(get_current_user)):
+    """Retrieve persisted preferences (model, theme, mode) for current authenticated user."""
+    return database.get_user_preferences(user_id=current_user["id"])
+
+
+@app.put("/api/user/preferences")
+def set_user_preferences_endpoint(
+    payload: UserPreferencesPayload,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update persisted preferences (model, theme, mode) for current authenticated user."""
+    return database.set_user_preferences(
+        user_id=current_user["id"],
+        model=payload.model,
+        theme=payload.theme,
+        mode=payload.mode,
+    )
 
 
 @app.patch("/api/conversations/{conv_id}/project")
@@ -3146,16 +3190,18 @@ def sync_heartbeat_endpoint(
     active_conv_id: Optional[str] = None,
     last_msg_count: Optional[int] = None,
     conv_hash: Optional[str] = None,
+    proj_hash: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
     """Lightweight real-time multi-browser / multi-tab synchronization heartbeat.
-    Returns changes across conversations, active chat messages, artifacts, and daily usage.
+    Returns changes across conversations, projects, active chat messages, artifacts, and daily usage.
     """
     return database.get_user_sync_heartbeat(
         user_id=current_user["id"],
         active_conv_id=active_conv_id,
         last_msg_count=last_msg_count,
         client_conv_hash=conv_hash,
+        client_proj_hash=proj_hash,
     )
 
 

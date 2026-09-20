@@ -211,6 +211,7 @@ const cortexSyncChannel = typeof BroadcastChannel !== "undefined" ? new Broadcas
 
 let liveSyncInterval = null;
 let lastClientConvHash = "";
+let lastClientProjHash = "";
 let isSyncingLive = false;
 
 function broadcastWorkspaceUpdate(type = "WORKSPACE_UPDATED", payload = {}) {
@@ -227,7 +228,7 @@ function broadcastWorkspaceUpdate(type = "WORKSPACE_UPDATED", payload = {}) {
 if (cortexSyncChannel) {
   cortexSyncChannel.onmessage = async (event) => {
     const { type } = event.data || {};
-    if (type === "WORKSPACE_UPDATED" || type === "CONVERSATION_UPDATED" || type === "USAGE_UPDATED") {
+    if (type === "WORKSPACE_UPDATED" || type === "CONVERSATION_UPDATED" || type === "USAGE_UPDATED" || type === "PROJECT_UPDATED") {
       if (currentUser) {
         await triggerLiveHeartbeatSync(true);
       }
@@ -248,6 +249,7 @@ async function triggerLiveHeartbeatSync(force = false) {
     if (activeId) url.searchParams.set("active_conv_id", activeId);
     if (activeCount >= 0) url.searchParams.set("last_msg_count", activeCount);
     if (lastClientConvHash) url.searchParams.set("conv_hash", lastClientConvHash);
+    if (lastClientProjHash) url.searchParams.set("proj_hash", lastClientProjHash);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -272,8 +274,45 @@ async function triggerLiveHeartbeatSync(force = false) {
     if (data.conv_hash) {
       lastClientConvHash = data.conv_hash;
     }
+    if (data.proj_hash) {
+      lastClientProjHash = data.proj_hash;
+    }
 
-    // 1. Conversations list updated from another browser or window (3-way merge: authoritative server + local cached + current active)
+    // 1. Projects updated from another browser or window (Authoritative Server Truth)
+    if (data.projects_changed && Array.isArray(data.projects)) {
+      userProjects = data.projects;
+      try {
+        localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+      } catch {}
+      renderProjectPills();
+      renderProjectsTree();
+    }
+
+    // 2. Deleted conversations tombstones synced cross-browser
+    if (Array.isArray(data.deleted_conv_ids) && data.deleted_conv_ids.length > 0) {
+      const delSet = getDeletedConvIds();
+      let hadNewTombstones = false;
+      for (const did of data.deleted_conv_ids) {
+        if (!delSet.has(did)) {
+          delSet.add(did);
+          hadNewTombstones = true;
+        }
+      }
+      if (hadNewTombstones) {
+        saveDeletedConvIds(delSet);
+        if (Array.isArray(conversations)) {
+          conversations = conversations.filter((c) => !delSet.has(c.id));
+          saveCachedConversations();
+          renderConversationsList();
+          renderProjectsTree();
+        }
+        if (currentConversationId && delSet.has(currentConversationId)) {
+          startNewChat(true);
+        }
+      }
+    }
+
+    // 3. Conversations list updated from another browser or window (3-way merge: authoritative server + local cached + current active)
     if (data.conversations_changed && Array.isArray(data.conversations)) {
       const serverConvs = data.conversations;
       const cached = getCachedConversations();
@@ -311,7 +350,7 @@ async function triggerLiveHeartbeatSync(force = false) {
       updateProjectPills();
     }
 
-    // 2. Active conversation messages updated in real-time from another browser
+    // 4. Active conversation messages updated in real-time from another browser
     if (data.active_messages && Array.isArray(data.active_messages) && activeId && currentConversationId === activeId) {
       const serverMsgs = data.active_messages;
       const currentLen = (messages || []).length;
@@ -340,12 +379,12 @@ async function triggerLiveHeartbeatSync(force = false) {
       }
     }
 
-    // 3. Artifacts count updated in real-time
+    // 5. Artifacts count updated in real-time
     if (typeof data.artifacts_count === "number") {
       updateArtifactsBadge(data.artifacts_count);
     }
 
-    // 4. Usage updated in real-time
+    // 6. Usage updated in real-time
     if (data.usage && typeof data.usage.tokens_used === "number") {
       updateUsageDisplay(data.usage.tokens_used, 100000000);
     }
@@ -3151,10 +3190,22 @@ async function loadProjects() {
     if (res.status === 401) return;
     if (res.ok) {
       userProjects = await res.json();
+      try {
+        localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+      } catch {}
       renderProjectPills();
+      renderProjectsTree();
     }
   } catch (err) {
-    console.error("Failed to load projects:", err);
+    console.error("Failed to load projects from server:", err);
+    try {
+      const cached = JSON.parse(localStorage.getItem(getUserScopedKey("cortex_projects")));
+      if (Array.isArray(cached) && (!userProjects || !userProjects.length)) {
+        userProjects = cached;
+        renderProjectPills();
+        renderProjectsTree();
+      }
+    } catch {}
   }
 }
 
@@ -3176,20 +3227,50 @@ function savePinnedProjectIds(set) {
 }
 
 function isProjectPinned(projectId) {
+  const proj = (userProjects || []).find((p) => p.id === projectId);
+  if (proj && typeof proj.is_pinned !== "undefined") {
+    return Boolean(proj.is_pinned);
+  }
   return getPinnedProjectIds().has(projectId);
 }
 
-function togglePinProject(projectId) {
-  const pinned = getPinnedProjectIds();
-  if (pinned.has(projectId)) {
-    pinned.delete(projectId);
-    showToast("Project unpinned.");
+async function togglePinProject(projectId) {
+  const proj = (userProjects || []).find((p) => p.id === projectId);
+  const currentlyPinned = isProjectPinned(projectId);
+  const targetPinned = !currentlyPinned;
+
+  // Optimistic UI update
+  if (proj) proj.is_pinned = targetPinned ? 1 : 0;
+  const pinnedSet = getPinnedProjectIds();
+  if (targetPinned) {
+    pinnedSet.add(projectId);
   } else {
-    pinned.add(projectId);
-    showToast("Project pinned.");
+    pinnedSet.delete(projectId);
   }
-  savePinnedProjectIds(pinned);
+  savePinnedProjectIds(pinnedSet);
   renderProjectsTree();
+
+  try {
+    const res = await fetch(`/api/projects/${projectId}/pin`, {
+      method: "PATCH",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ is_pinned: targetPinned }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (proj && typeof data.is_pinned !== "undefined") {
+        proj.is_pinned = data.is_pinned ? 1 : 0;
+      }
+      try {
+        localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+      } catch {}
+      showToast(targetPinned ? "Project pinned." : "Project unpinned.");
+    }
+  } catch (err) {
+    console.error("Failed to update project pin on server:", err);
+  }
+  renderProjectsTree();
+  broadcastWorkspaceUpdate("PROJECT_UPDATED", { projectId, is_pinned: targetPinned });
 }
 
 let activeContextMenuProjectId = null;
@@ -3283,9 +3364,13 @@ async function submitRenameProjectModal() {
     const updated = await res.json();
     const idx = userProjects.findIndex((p) => p.id === projectToRenameId);
     if (idx !== -1) userProjects[idx] = updated;
+    try {
+      localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+    } catch {}
     closeRenameProjectModal();
     renderProjectsTree();
     showToast("Project renamed.");
+    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: projectToRenameId });
   } catch (err) {
     console.error("Rename project error:", err);
     showToast(err.message || "Failed to rename project.");
@@ -3326,6 +3411,9 @@ async function submitDeleteProjectModal() {
     });
     if (!res.ok) throw new Error("Failed to delete project");
     userProjects = userProjects.filter((p) => p.id !== projectToDeleteId);
+    try {
+      localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+    } catch {}
     if (currentProjectId === projectToDeleteId) {
       currentProjectId = "";
     }
@@ -3333,6 +3421,7 @@ async function submitDeleteProjectModal() {
     renderProjectsTree();
     loadConversations(false);
     showToast("Project deleted.");
+    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: projectToDeleteId });
   } catch (err) {
     console.error("Delete project error:", err);
     showToast(err.message || "Failed to delete project.");
@@ -3600,9 +3689,13 @@ async function saveProjectFromModal() {
       userProjects.push(created);
       currentProjectId = created.id;
     }
+    try {
+      localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+    } catch {}
     renderProjectsTree();
     closeProjectModal();
     loadConversations(false);
+    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: currentProjectId });
   } catch (err) {
     console.error("Save project error:", err);
     showToast(err.message || "Failed to save project.");
@@ -3613,19 +3706,24 @@ async function deleteProjectFromModal() {
   if (!editingProjectId) return;
   if (!confirm("Are you sure you want to delete this project? Conversations inside it will not be deleted, but unassigned.")) return;
 
+  const deletedId = editingProjectId;
   try {
     const res = await fetch(`/api/projects/${editingProjectId}`, {
       method: "DELETE",
       headers: authHeaders(),
     });
     if (!res.ok) throw new Error("Failed to delete project");
-    userProjects = userProjects.filter((p) => p.id !== editingProjectId);
-    if (currentProjectId === editingProjectId) {
+    userProjects = userProjects.filter((p) => p.id !== deletedId);
+    try {
+      localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
+    } catch {}
+    if (currentProjectId === deletedId) {
       currentProjectId = "";
     }
     renderProjectsTree();
     closeProjectModal();
     loadConversations(false);
+    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: deletedId });
   } catch (err) {
     console.error("Delete project error:", err);
     showToast(err.message || "Failed to delete project.");
@@ -6593,7 +6691,7 @@ function initModeSelector() {
 
   if (!btn || !menu) return;
 
-  function updateUi(mode) {
+  function updateUi(mode, saveToServer = true) {
     currentMode = mode;
     localStorage.setItem("cortex_mode", mode);
     const def = MODE_DEFS[mode] || MODE_DEFS.auto;
@@ -6606,12 +6704,16 @@ function initModeSelector() {
       const checkEl = opt.querySelector(".mode-option-check");
       if (checkEl) checkEl.style.display = isMatch ? "inline" : "none";
     });
+
+    if (saveToServer && currentUser) {
+      saveUserPreferencesToServer({ mode });
+    }
   }
 
   window.setResponseMode = updateUi;
 
   // Initialize from saved setting or default "auto"
-  updateUi(currentMode);
+  updateUi(currentMode, false);
 
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -6625,7 +6727,7 @@ function initModeSelector() {
     opt.addEventListener("click", (e) => {
       e.stopPropagation();
       const mode = opt.getAttribute("data-mode");
-      if (mode) updateUi(mode);
+      if (mode) updateUi(mode, true);
       menu.style.display = "none";
       if (wrap) wrap.classList.remove("is-open");
       btn.setAttribute("aria-expanded", "false");
@@ -6695,6 +6797,9 @@ if (modelSelect) {
   modelSelect.addEventListener("change", () => {
     localStorage.setItem("cortex_model", modelSelect.value);
     applyModelSpecificModes(modelSelect.value);
+    if (currentUser) {
+      saveUserPreferencesToServer({ model: modelSelect.value });
+    }
   });
 }
 
@@ -6721,6 +6826,81 @@ async function loadHealth() {
     /* ignore health failure */
   }
 }
+
+// ---------------- User Preferences (Authoritative DB Truth & Cross-Browser Sync) ----------------
+
+let _prefsSaveTimeout = null;
+
+async function saveUserPreferencesToServer(newPrefs) {
+  if (!currentUser) return;
+  if (!newPrefs || typeof newPrefs !== "object") return;
+
+  // Cache immediately in localStorage for instant local responsiveness
+  if (newPrefs.model) localStorage.setItem("cortex_model", newPrefs.model);
+  if (newPrefs.mode) localStorage.setItem("cortex_response_mode", newPrefs.mode);
+  if (newPrefs.theme) localStorage.setItem("cortex_theme", newPrefs.theme);
+
+  // Debounce API calls to prevent spamming during rapid UI changes
+  if (_prefsSaveTimeout) clearTimeout(_prefsSaveTimeout);
+  _prefsSaveTimeout = setTimeout(async () => {
+    try {
+      await fetch("/api/user/preferences", {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        credentials: "same-origin",
+        body: JSON.stringify(newPrefs),
+      });
+    } catch (err) {
+      console.warn("Failed to persist user preferences to server:", err);
+    }
+  }, 300);
+}
+
+async function loadUserPreferences() {
+  if (!currentUser) return null;
+  try {
+    const res = await fetch("/api/user/preferences", {
+      headers: authHeaders(),
+      credentials: "same-origin",
+    });
+    if (!res.ok) return null;
+    const prefs = await res.json();
+    if (prefs) {
+      if (prefs.model) {
+        localStorage.setItem("cortex_model", prefs.model);
+        if (modelSelect) {
+          modelSelect.value = prefs.model;
+          applyModelSpecificModes(prefs.model);
+        }
+      }
+      if (prefs.mode) {
+        localStorage.setItem("cortex_response_mode", prefs.mode);
+        if (typeof window.setResponseMode === "function") {
+          window.setResponseMode(prefs.mode, false);
+        }
+      }
+      if (prefs.theme) {
+        localStorage.setItem("cortex_theme", prefs.theme);
+        if (typeof window.setTheme === "function") {
+          window.setTheme(prefs.theme, false);
+        }
+      }
+    }
+    return prefs;
+  } catch (err) {
+    console.warn("Failed to load user preferences from server:", err);
+    return null;
+  }
+}
+
+window.setTheme = function (theme, saveToServer = true) {
+  if (!theme) return;
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("cortex_theme", theme);
+  if (saveToServer && currentUser) {
+    saveUserPreferencesToServer({ theme });
+  }
+};
 
 // ---------------- Export Conversation to Markdown (.md) ----------------
 
@@ -7957,6 +8137,8 @@ async function executeResetAndLogin(identifier, password, rememberMe = true) {
     closeAuthModal();
     showToast("Password updated successfully! Welcome back.");
     showChatApp();
+    await loadUserPreferences();
+    loadHealth();
     await loadProjects();
     await loadConversations(false);
     loadUserMemories();
@@ -8064,6 +8246,8 @@ async function handleAuthSubmit(e) {
 
     closeAuthModal();
     showChatApp();
+    await loadUserPreferences();
+    loadHealth();
     await loadProjects();
     await loadConversations(false);
     loadUserMemories();
@@ -8240,6 +8424,7 @@ async function checkAuth() {
       migrateSessionDataToUser(currentUser);
       showChatApp();
       updateDynamicGreeting();
+      await loadUserPreferences();
       loadHealth();
 
       // Check if explicit conversation was requested in URL (?c=...) or active conversation in localStorage
@@ -8500,8 +8685,11 @@ async function handleGuestTestDrive() {
     closeAuthModal();
     showChatApp();
     startNewChat();
+    await loadUserPreferences();
+    loadHealth();
     await loadProjects();
     await loadConversations(false);
+    startLiveWorkspaceSync();
   } catch (err) {
     console.error("Guest drive error:", err);
     if (authErrorAlert) {
