@@ -1842,7 +1842,7 @@ def get_user_artifacts(user_id: str) -> list[dict]:
         stitched_messages.reverse()
 
         deleted_keys = get_deleted_artifact_keys(user_id)
-        seen_titles = set()
+        seen_conv_titles = set()
         for item in stitched_messages:
             text = (item["content"] or "").strip()
             if not text:
@@ -1865,9 +1865,10 @@ def get_user_artifacts(user_id: str) -> list[dict]:
                 continue
 
             title = extract_document_title(text, item["conv_title"])
-            if title in seen_titles:
+            conv_title_key = (item["conversation_id"], title.strip().lower())
+            if conv_title_key in seen_conv_titles:
                 continue
-            seen_titles.add(title)
+            seen_conv_titles.add(conv_title_key)
 
             # Generate safe slug without leading/trailing underscores or emojis
             clean_title_ascii = re.sub(r"[^\w\s-]", "", title).strip()
@@ -1877,11 +1878,10 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             if not safe_slug.endswith(".md"):
                 safe_slug += ".md"
 
-            # Check if this artifact was deleted by the user
+            # Check if this artifact was deleted by the user (match strictly by unique message id or conversation-scoped key)
             if (
                 item["id"] in deleted_keys
-                or safe_slug in deleted_keys
-                or title in deleted_keys
+                or f"{item['conversation_id']}:{item['id']}" in deleted_keys
                 or f"{item['conversation_id']}:{safe_slug}" in deleted_keys
             ):
                 continue
@@ -1906,6 +1906,10 @@ def mark_artifact_deleted(user_id: str, artifact_key: str) -> bool:
     """Mark an artifact as deleted by user (persists across serverless restarts)."""
     if not user_id or not artifact_key:
         return False
+    key_str = str(artifact_key).strip()
+    generic_bad = {"document", "document.md", "document_md", "markdown", "untitled", "chat"}
+    if key_str.lower() in generic_bad:
+        return False
     with get_connection() as conn:
         conn.execute(
             """
@@ -1919,14 +1923,14 @@ def mark_artifact_deleted(user_id: str, artifact_key: str) -> bool:
         )
         conn.execute(
             "INSERT OR IGNORE INTO deleted_artifacts (user_id, artifact_key, created_at) VALUES (?, ?, ?)",
-            (user_id, str(artifact_key).strip(), _utc_now_iso()),
+            (user_id, key_str, _utc_now_iso()),
         )
         conn.commit()
     return True
 
 
 def get_deleted_artifact_keys(user_id: str) -> set[str]:
-    """Retrieve all deleted artifact keys for a user."""
+    """Retrieve all deleted artifact keys for a user, filtering out generic legacy slugs."""
     if not user_id:
         return set()
     with get_connection() as conn:
@@ -1941,7 +1945,9 @@ def get_deleted_artifact_keys(user_id: str) -> set[str]:
             """
         )
         rows = conn.execute("SELECT artifact_key FROM deleted_artifacts WHERE user_id = ?", (user_id,)).fetchall()
-        return {r["artifact_key"] for r in rows}
+        keys = {r["artifact_key"] for r in rows}
+        generic_bad = {"document", "document.md", "document_md", "markdown", "untitled", "chat"}
+        return {k for k in keys if k.lower().strip() not in generic_bad}
 
 
 # ---------------- Local-First Full Workspace State Synchronization & Persistence ----------------

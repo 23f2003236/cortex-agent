@@ -483,7 +483,10 @@ function saveCachedArtifact(art) {
   if (!art || !art.content) return;
   try {
     let list = getCachedArtifacts();
-    const idx = list.findIndex((a) => (a.filename && a.filename === art.filename) || (a.id && a.id === art.id));
+    const idx = list.findIndex(
+      (a) => (a.id && art.id && a.id === art.id) ||
+             (a.conversation_id && art.conversation_id && a.conversation_id === art.conversation_id && a.filename && art.filename && a.filename === art.filename)
+    );
     if (idx >= 0) {
       list[idx] = { ...list[idx], ...art };
     } else {
@@ -510,7 +513,13 @@ function saveCachedArtifactsList(list) {
 
 function getDeletedArtifactKeys() {
   try {
-    return JSON.parse(localStorage.getItem(getUserScopedKey("cortex_deleted_artifacts"))) || [];
+    const raw = JSON.parse(localStorage.getItem(getUserScopedKey("cortex_deleted_artifacts"))) || [];
+    const genericBadKeys = new Set(["document", "document.md", "document_md", "markdown", "untitled", "chat"]);
+    const cleaned = (Array.isArray(raw) ? raw : []).filter((k) => k && !genericBadKeys.has(String(k).trim().toLowerCase()));
+    if (cleaned.length !== (Array.isArray(raw) ? raw.length : 0)) {
+      localStorage.setItem(getUserScopedKey("cortex_deleted_artifacts"), JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return [];
   }
@@ -519,8 +528,11 @@ function getDeletedArtifactKeys() {
 function addDeletedArtifactKey(key) {
   if (!key) return;
   try {
-    const list = getDeletedArtifactKeys();
     const strKey = String(key).trim();
+    const genericBadKeys = new Set(["document", "document.md", "document_md", "markdown", "untitled", "chat"]);
+    if (genericBadKeys.has(strKey.toLowerCase())) return;
+
+    const list = getDeletedArtifactKeys();
     if (!list.includes(strKey)) {
       list.push(strKey);
       localStorage.setItem(getUserScopedKey("cortex_deleted_artifacts"), JSON.stringify(list));
@@ -536,8 +548,8 @@ function deleteCachedArtifact(artKey) {
     const strKey = String(artKey).trim();
     let list = getCachedArtifacts();
     list = list.filter((a) => {
-      const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-      return a.id !== strKey && a.filename !== strKey && a.title !== strKey && slug !== strKey;
+      const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+      return a.id !== strKey && key !== strKey;
     });
     saveCachedArtifactsList(list);
     addDeletedArtifactKey(strKey);
@@ -3680,8 +3692,10 @@ function promptRenameActiveChat() {
 }
 
 async function switchConversation(id) {
-  if (busy || id === currentConversationId) return;
+  if (busy) return;
+  if (id === currentConversationId && messages.length > 0) return;
   hideArtifactsView();
+  closeMobileSidebar();
 
   currentConversationId = id;
   localStorage.setItem("cortex_active_conv", id);
@@ -3702,14 +3716,21 @@ async function switchConversation(id) {
     messages = cachedMsgs;
     rebuildChatFromMessages();
   } else {
-    chatArea.innerHTML = "";
+    clearChatDom();
     messages = [];
+    chatEl.innerHTML = `
+      <div class="message-loading-state" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:320px; padding:60px 20px; color:var(--muted); font-size:14px;">
+        <div class="tool-spinner" style="width:28px; height:28px; border-width:2.5px;"></div>
+        <span>Loading conversation…</span>
+      </div>`;
   }
   renderConversationsList();
   renderProjectsTree();
 
   try {
     const res = await fetch(`/api/conversations/${id}`, { headers: authHeaders() });
+    if (currentConversationId !== id) return;
+
     if (res.status === 401) {
       const meRes = await fetch("/api/auth/me", { headers: authHeaders() }).catch(() => null);
       if (!meRes || !meRes.ok) {
@@ -3720,6 +3741,8 @@ async function switchConversation(id) {
     }
     if (res.ok) {
       const data = await res.json();
+      if (currentConversationId !== id) return;
+
       if (data.conversation && data.conversation.title) {
         chatTitleHeader.textContent = data.conversation.title;
       }
@@ -3727,10 +3750,20 @@ async function switchConversation(id) {
         messages = data.messages;
         saveCachedMessages(id, messages);
         rebuildChatFromMessages();
+      } else {
+        messages = [];
+        showEmptyState();
+      }
+    } else {
+      if (messages.length === 0) {
+        showEmptyState();
       }
     }
   } catch (err) {
     console.error("Failed to switch conversation:", err);
+    if (currentConversationId === id && messages.length === 0) {
+      showEmptyState();
+    }
   }
 }
 
@@ -8409,9 +8442,8 @@ async function loadArtifactsCount() {
   const deletedKeys = new Set(getDeletedArtifactKeys());
   const cached = getCachedArtifacts().filter((a) => {
     if (!a) return false;
-    const key = a.id || a.filename;
-    const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    return !deletedKeys.has(key) && !deletedKeys.has(a.id) && !deletedKeys.has(a.filename) && !deletedKeys.has(a.title) && !deletedKeys.has(slug);
+    const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+    return !deletedKeys.has(key) && (!a.id || !deletedKeys.has(a.id));
   });
   updateArtifactsBadge(cached.length);
   try {
@@ -8422,18 +8454,16 @@ async function loadArtifactsCount() {
       const map = new Map();
       serverList.forEach((a) => {
         if (!a) return;
-        const key = a.id || a.filename;
-        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
         map.set(key, a);
       });
       cached.forEach((a) => {
         if (!a) return;
-        const key = a.id || a.filename;
-        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
         if (key && !map.has(key)) map.set(key, a);
@@ -8483,9 +8513,8 @@ async function loadArtifacts() {
   const deletedKeys = new Set(getDeletedArtifactKeys());
   const cached = getCachedArtifacts().filter((a) => {
     if (!a) return false;
-    const key = a.id || a.filename;
-    const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    return !deletedKeys.has(key) && !deletedKeys.has(a.id) && !deletedKeys.has(a.filename) && !deletedKeys.has(a.title) && !deletedKeys.has(slug);
+    const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+    return !deletedKeys.has(key) && (!a.id || !deletedKeys.has(a.id));
   });
   if (cached.length > 0) {
     allUserArtifacts = cached;
@@ -8500,18 +8529,16 @@ async function loadArtifacts() {
       const map = new Map();
       serverList.forEach((a) => {
         if (!a) return;
-        const key = a.id || a.filename;
-        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
         map.set(key, a);
       });
       cached.forEach((a) => {
         if (!a) return;
-        const key = a.id || a.filename;
-        const slug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-        if (deletedKeys.has(key) || deletedKeys.has(a.id) || deletedKeys.has(a.filename) || deletedKeys.has(a.title) || deletedKeys.has(slug)) {
+        const key = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+        if (deletedKeys.has(key) || (a.id && deletedKeys.has(a.id))) {
           return;
         }
         if (key && !map.has(key)) map.set(key, a);
@@ -8544,6 +8571,7 @@ function renderArtifactsList(items) {
   items.forEach((art) => {
     const card = document.createElement("div");
     card.className = "artifact-card";
+    card.style.cursor = "pointer";
 
     const cleanContent = (art.content || "").replace(/```[a-z]*\n?/g, "").trim();
     const snippet = cleanContent.slice(0, 140) || "Markdown artifact document content";
@@ -8579,7 +8607,25 @@ function renderArtifactsList(items) {
 
     // Preview in right split panel via existing openArtifactPanel
     const prevBtn = card.querySelector(".artifact-btn-preview");
-    prevBtn.addEventListener("click", () => {
+    prevBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideArtifactsView();
+      if (art.conversation_id && art.conversation_id !== currentConversationId) {
+        switchConversation(art.conversation_id);
+      }
+      openArtifactPanel({
+        filename: art.filename,
+        content: art.content,
+        type: "markdown"
+      });
+    });
+
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".artifact-btn-download") || e.target.closest(".artifact-btn-delete")) return;
+      hideArtifactsView();
+      if (art.conversation_id && art.conversation_id !== currentConversationId) {
+        switchConversation(art.conversation_id);
+      }
       openArtifactPanel({
         filename: art.filename,
         content: art.content,
@@ -8589,7 +8635,7 @@ function renderArtifactsList(items) {
 
     // Download document
     const dlBtn = card.querySelector(".artifact-btn-download");
-    dlBtn.addEventListener("click", (e) => {
+    dlBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
       downloadTextFile(art.filename, art.content, "text/markdown;charset=utf-8");
     });
@@ -8601,19 +8647,16 @@ function renderArtifactsList(items) {
       if (!confirm("Are you sure you want to delete this artifact?")) {
         return;
       }
-      const artKey = art.id || art.filename;
-      const slug = (art.filename || art.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-      deleteCachedArtifact(artKey);
-      if (slug) addDeletedArtifactKey(slug);
+      const artKey = art.id || (art.conversation_id ? `${art.conversation_id}:${art.filename}` : art.filename);
+      deleteCachedArtifact(art.id || artKey);
       allUserArtifacts = allUserArtifacts.filter((a) => {
-        const aKey = a.id || a.filename;
-        const aSlug = (a.filename || a.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-        return aKey !== artKey && aSlug !== slug && aKey !== slug;
+        const aKey = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+        return aKey !== artKey && (art.id ? a.id !== art.id : true);
       });
       renderArtifactsList(allUserArtifacts);
       updateArtifactsBadge(allUserArtifacts.length);
       try {
-        await fetch("/api/artifacts/" + encodeURIComponent(artKey), {
+        await fetch("/api/artifacts/" + encodeURIComponent(art.id || artKey), {
           method: "DELETE",
           headers: authHeaders()
         });
