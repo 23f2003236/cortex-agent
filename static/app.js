@@ -5550,7 +5550,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       if (shell.thoughtTimerBadge) {
         shell.thoughtTimerBadge.textContent = `Thought for ${totalDuration}s`;
       }
-      if (shell.thoughtBox && (toolSteps.length > 0 || (shell.thoughtContent && shell.thoughtContent.textContent.trim())) && cleanFullText) {
+      if (shell.thoughtBox) {
         shell.thoughtBox.classList.remove("open");
       }
 
@@ -5578,7 +5578,9 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       }
 
       // Hide live spinner
-      shell.liveBadge.style.display = "none";
+      if (shell.liveBadge) {
+        shell.liveBadge.style.display = "none";
+      }
 
       const hasReply = Boolean(cleanFullText);
       const displayText = hasReply
@@ -5890,6 +5892,9 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           if (isNearBottom()) scrollToBottom();
         } else if (payload.type === "token") {
           fullText += payload.text;
+          if (shell.liveBadge && shell.liveBadge.style.display !== "none") {
+            shell.liveText.textContent = "Generating response…";
+          }
           renderStreamedText(shell.bubbleEl, fullText, false);
           if (isNearBottom()) scrollToBottom();
         } else if (payload.type === "replace_text") {
@@ -5952,10 +5957,15 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           }
           loadArtifactsCount();
           finishSuccess();
+          try { await reader.cancel(); } catch {}
+          break;
         } else if (payload.type === "error") {
           finishError(payload.detail || "Something went wrong.");
+          try { await reader.cancel(); } catch {}
+          break;
         }
       }
+      if (settled) break;
     }
 
     finishSuccess();
@@ -5966,6 +5976,8 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     } else {
       finishError(error.message || "Connection lost.");
     }
+  } finally {
+    setGeneratingState(false);
   }
 }
 
@@ -6018,12 +6030,18 @@ form.addEventListener("submit", (event) => {
 });
 
 sendBtn.addEventListener("click", (event) => {
-  if (busy) {
+  if (busy || sendBtn.classList.contains("is-generating")) {
     event.preventDefault();
+    event.stopPropagation();
     try {
       if (abortController) abortController.abort();
     } catch {}
     setGeneratingState(false);
+    document.querySelectorAll(".tool-live-badge").forEach((el) => {
+      el.style.display = "none";
+    });
+    const activeThoughtBox = chatEl.querySelector(".thought-box.open");
+    if (activeThoughtBox) activeThoughtBox.classList.remove("open");
   }
 });
 
