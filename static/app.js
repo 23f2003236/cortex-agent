@@ -381,9 +381,6 @@ function getCachedConversations() {
     if ((!list || !list.length) && currentUser && currentUser.id) {
       list = JSON.parse(localStorage.getItem(`cortex_convs_${currentUser.id}`));
     }
-    if ((!list || !list.length) && currentUser && !currentUser.is_guest) {
-      list = JSON.parse(localStorage.getItem("cortex_convs_guest"));
-    }
     return Array.isArray(list) ? list : [];
   } catch {
     return [];
@@ -463,15 +460,21 @@ function saveCachedMessages(convId, msgs) {
   }
 }
 
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < (str || "").length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 function getCachedArtifacts() {
   try {
     const key = getUserScopedKey("cortex_arts");
     let list = JSON.parse(localStorage.getItem(key));
     if ((!list || !list.length) && currentUser && currentUser.id) {
       list = JSON.parse(localStorage.getItem(`cortex_arts_${currentUser.id}`));
-    }
-    if ((!list || !list.length) && currentUser && !currentUser.is_guest) {
-      list = JSON.parse(localStorage.getItem("cortex_arts_guest"));
     }
     return Array.isArray(list) ? list : [];
   } catch {
@@ -508,6 +511,112 @@ function saveCachedArtifactsList(list) {
     updateArtifactsBadge((list || []).length);
   } catch (e) {
     console.warn("Failed to save artifacts list:", e);
+  }
+}
+
+function harvestArtifactsFromAllCachedMessages() {
+  if (!currentUser) return;
+  const deletedKeys = new Set(getDeletedArtifactKeys());
+  const convs = getCachedConversations();
+  const allConvs = [...convs];
+  if (currentConversationId && !allConvs.some((c) => c.id === currentConversationId)) {
+    allConvs.push({ id: currentConversationId, title: chatTitleHeader?.textContent || "Chat" });
+  }
+
+  const existing = getCachedArtifacts();
+  const existingMap = new Map();
+  existing.forEach((a) => {
+    if (!a) return;
+    const k = a.id || (a.conversation_id ? `${a.conversation_id}:${a.filename}` : a.filename);
+    if (k && !deletedKeys.has(k) && (!a.id || !deletedKeys.has(a.id))) {
+      existingMap.set(k, a);
+    }
+  });
+
+  let addedNew = false;
+
+  for (const c of allConvs) {
+    if (!c || !c.id) continue;
+    let msgs = getCachedMessages(c.id);
+    if ((!msgs || msgs.length === 0) && c.id === currentConversationId) {
+      msgs = messages;
+    }
+    if (!Array.isArray(msgs)) continue;
+
+    for (const msg of msgs) {
+      if (msg.role !== "assistant" || !msg.content) continue;
+      const content = msg.content;
+
+      // Extract all code blocks: ```lang ... ```
+      const codeBlockRegex = /```([a-zA-Z0-9_\-:\.]+)?\s*\n([\s\S]*?)```/g;
+      let match;
+      let blockIndex = 0;
+      while ((match = codeBlockRegex.exec(content)) !== null) {
+        blockIndex++;
+        const rawLang = (match[1] || "").trim();
+        const codeText = match[2];
+        if (!codeText || codeText.trim().length < 35) continue;
+
+        const { lang, filename, ext } = parseLangAndFilename(rawLang, codeText);
+        const artType = (lang === "html" || rawLang.includes(":app") || rawLang.includes(":preview"))
+          ? "html"
+          : (lang === "chart" || lang === "chartjs" || lang === "json:chart")
+          ? "chart"
+          : (lang === "markdown" || lang === "md")
+          ? "markdown"
+          : "code";
+
+        const resolvedFn = filename || (artType === "html" ? "index.html" : artType === "chart" ? "chart.json" : `code_${blockIndex}.${ext || "txt"}`);
+        const artId = `code-${c.id.slice(0, 8)}-${blockIndex}`;
+        const artKey = `${c.id}:${resolvedFn}`;
+        if (deletedKeys.has(artKey) || deletedKeys.has(artId)) continue;
+
+        if (!existingMap.has(artKey) && !existingMap.has(artId)) {
+          const item = {
+            id: artId,
+            filename: resolvedFn,
+            title: resolvedFn,
+            conversation_id: c.id,
+            conversation_title: c.title || "Conversation",
+            type: artType,
+            content: codeText,
+            created_at: msg.created_at || c.created_at || new Date().toISOString(),
+          };
+          existingMap.set(artKey, item);
+          addedNew = true;
+        }
+      }
+
+      // Check if message is a substantive markdown document
+      const textWithoutCode = content.replace(/```[\s\S]*?```/g, "");
+      const hasHeadings = /^#{1,3}\s+\S+/m.test(textWithoutCode);
+      if ((hasHeadings || content.length > 550) && !content.trim().startsWith("```")) {
+        const docFn = extractDocumentFilename(content);
+        const docId = `doc-${c.id.slice(0, 8)}`;
+        const docKey = `${c.id}:${docFn}`;
+        if (!deletedKeys.has(docKey) && !deletedKeys.has(docId)) {
+          if (!existingMap.has(docKey) && !existingMap.has(docId)) {
+            const docItem = {
+              id: docId,
+              filename: docFn,
+              title: docFn,
+              conversation_id: c.id,
+              conversation_title: c.title || "Conversation",
+              type: "markdown",
+              content: content,
+              created_at: msg.created_at || c.created_at || new Date().toISOString(),
+            };
+            existingMap.set(docKey, docItem);
+            addedNew = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (addedNew) {
+    const combined = Array.from(existingMap.values());
+    saveCachedArtifactsList(combined);
   }
 }
 
@@ -660,6 +769,7 @@ let conversations = [];
 let messages = []; // { id, role, content, tools_used }
 let busy = false;
 let abortController = null;
+let activeStreamReader = null;
 let attachedFile = null; // { filename, size, text, truncated }
 let artifactIdCounter = 0;
 const artifactRegistry = new Map();
@@ -1150,6 +1260,16 @@ customRenderer.code = function (arg1, arg2) {
   // 2. Detect Chart.js blocks
   if (lang === "chart" || lang === "json:chart" || lang === "chartjs" || lang === "chart.js") {
     const chartId = "chart-" + Math.random().toString(36).slice(2, 9);
+    saveCachedArtifact({
+      id: chartId,
+      filename: "chart.json",
+      title: "Interactive Chart",
+      conversation_id: currentConversationId,
+      conv_title: (chatTitleHeader ? chatTitleHeader.textContent : "") || "Conversation",
+      type: "chart",
+      content: text,
+      created_at: new Date().toISOString(),
+    });
     return `
       <div class="chart-container" data-chart-id="${chartId}">
         <div class="chart-header">
@@ -1253,6 +1373,22 @@ customRenderer.code = function (arg1, arg2) {
   }
 
   // 4. Standard Code Block with Download and Copy buttons
+  if (text.trim().length >= 35) {
+    const safeLangName = (lang || "code").toLowerCase();
+    const cleanFn = filename || (safeLangName === "python" ? "script.py" : safeLangName === "html" ? "index.html" : (safeLangName === "javascript" || safeLangName === "js") ? "script.js" : `snippet.${ext || "txt"}`);
+    const artId = `code-${cleanFn.replace(/[^a-zA-Z0-9_-]/g, "_")}-${hashString(text.slice(0, 100))}`;
+    saveCachedArtifact({
+      id: artId,
+      filename: cleanFn,
+      title: cleanFn,
+      conversation_id: currentConversationId,
+      conv_title: (chatTitleHeader ? chatTitleHeader.textContent : "") || "Conversation",
+      type: (safeLangName === "html" || safeLangName === "svg") ? "html" : "code",
+      content: text,
+      created_at: new Date().toISOString(),
+    });
+  }
+
   const validLang = lang && hljs.getLanguage(lang) ? lang : null;
   let highlighted = "";
   try {
@@ -3696,6 +3832,12 @@ async function switchConversation(id) {
     try {
       if (abortController) abortController.abort();
     } catch {}
+    try {
+      if (activeStreamReader) {
+        activeStreamReader.cancel().catch(() => {});
+        activeStreamReader = null;
+      }
+    } catch {}
     setGeneratingState(false);
   }
   if (id === currentConversationId && messages.length > 0) return;
@@ -3752,22 +3894,43 @@ async function switchConversation(id) {
         chatTitleHeader.textContent = data.conversation.title;
       }
       if (Array.isArray(data.messages) && data.messages.length > 0) {
-        messages = data.messages;
+        if (cachedMsgs.length > data.messages.length) {
+          const sIds = new Set(data.messages.map((m) => m.id).filter(Boolean));
+          const unsynced = cachedMsgs.filter((m) => m.id && !sIds.has(m.id));
+          messages = [...data.messages, ...unsynced];
+        } else {
+          messages = data.messages;
+        }
         saveCachedMessages(id, messages);
         rebuildChatFromMessages();
+      } else if (cachedMsgs.length > 0) {
+        // Server returned empty/unsynced, but local cache has messages: PRESERVE THEM!
+        messages = cachedMsgs;
+        rebuildChatFromMessages();
+        if (typeof syncFullWorkspaceState === "function") {
+          syncFullWorkspaceState(false);
+        }
       } else {
         messages = [];
         showEmptyState();
       }
     } else {
-      if (messages.length === 0) {
+      if (cachedMsgs.length > 0) {
+        messages = cachedMsgs;
+        rebuildChatFromMessages();
+      } else if (messages.length === 0) {
         showEmptyState();
       }
     }
   } catch (err) {
     console.error("Failed to switch conversation:", err);
-    if (currentConversationId === id && messages.length === 0) {
-      showEmptyState();
+    if (currentConversationId === id) {
+      if (cachedMsgs.length > 0) {
+        messages = cachedMsgs;
+        rebuildChatFromMessages();
+      } else if (messages.length === 0) {
+        showEmptyState();
+      }
     }
   }
 }
@@ -3942,9 +4105,45 @@ function startNewChat(force = false) {
     try {
       if (abortController) abortController.abort();
     } catch {}
+    try {
+      if (activeStreamReader) {
+        activeStreamReader.cancel().catch(() => {});
+        activeStreamReader = null;
+      }
+    } catch {}
     setGeneratingState(false);
   }
   hideArtifactsView();
+
+  // Eagerly preserve currently active conversation and messages before wiping!
+  if (currentConversationId && Array.isArray(messages) && messages.length > 0) {
+    saveCachedMessages(currentConversationId, messages);
+    const convIdx = conversations.findIndex((c) => c.id === currentConversationId);
+    if (convIdx >= 0) {
+      conversations[convIdx].updated_at = new Date().toISOString();
+      if (!conversations[convIdx].title || conversations[convIdx].title === "New Chat") {
+        const firstUser = messages.find((m) => m.role === "user");
+        if (firstUser && firstUser.content) {
+          conversations[convIdx].title = firstUser.content.slice(0, 36);
+        }
+      }
+    } else {
+      const firstUser = messages.find((m) => m.role === "user");
+      const title = firstUser ? firstUser.content.slice(0, 36) : "Chat";
+      conversations.unshift({
+        id: currentConversationId,
+        title: title,
+        project_id: currentProjectId || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    saveCachedConversations();
+    if (typeof syncFullWorkspaceState === "function") {
+      syncFullWorkspaceState(false);
+    }
+  }
+
   currentConversationId = null;
   localStorage.setItem("cortex_active_conv", "new");
   try {
@@ -5074,6 +5273,16 @@ function renderStreamedText(bubbleEl, fullText, done, options = {}) {
         const docId = "doc-" + docIdCounter;
         const filename = extractDocumentFilename(checkText);
         docRegistry.set(docId, { filename, text: checkText });
+        saveCachedArtifact({
+          id: docId,
+          filename: filename || "document.md",
+          title: filename || "Document",
+          conversation_id: currentConversationId,
+          conv_title: (chatTitleHeader ? chatTitleHeader.textContent : "") || "Conversation",
+          type: "markdown",
+          content: checkText,
+          created_at: new Date().toISOString(),
+        });
         const sizeStr = formatBytes(new Blob([checkText]).size);
 
         let docRenderedHtml = rendered;
@@ -5476,6 +5685,7 @@ function setGeneratingState(isGenerating) {
 
 async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) {
   const shell = addAssistantMessageShell();
+  let activeConvId = currentConversationId;
   let fullText = "";
   let toolsUsed = [];
   const toolSteps = [];
@@ -5628,9 +5838,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
         });
       }
 
-      if (currentConversationId) {
-        saveCachedMessages(currentConversationId, messages);
-        const conv = conversations.find((c) => c.id === currentConversationId);
+      const saveTargetConvId = activeConvId || currentConversationId;
+      if (saveTargetConvId) {
+        saveCachedMessages(saveTargetConvId, messages);
+        const conv = conversations.find((c) => c.id === saveTargetConvId);
         if (conv) {
           conv.updated_at = new Date().toISOString();
         }
@@ -5773,6 +5984,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     }
 
     const reader = response.body.getReader();
+    activeStreamReader = reader;
     const decoder = new TextDecoder();
     let buffer = "";
 
@@ -5798,8 +6010,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
         }
 
         if (payload.type === "init") {
+          activeConvId = payload.conversation_id;
           currentConversationId = payload.conversation_id;
           localStorage.setItem("cortex_active_conv", payload.conversation_id);
+          saveCachedMessages(activeConvId, messages);
           try {
             const url = new URL(window.location);
             url.searchParams.set("c", payload.conversation_id);
@@ -5977,6 +6191,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       finishError(error.message || "Connection lost.");
     }
   } finally {
+    activeStreamReader = null;
     setGeneratingState(false);
   }
 }
@@ -6001,6 +6216,9 @@ async function sendUserMessage(text, options = {}) {
   if (messages.length === 0) clearChatDom();
 
   messages.push({ role: "user", content: messageContent });
+  if (currentConversationId) {
+    saveCachedMessages(currentConversationId, messages);
+  }
   const userMsgIndex = messages.length - 1;
   addUserMessage(messageContent, userMsgIndex, currentAttached);
   updateExportButtonVisibility();
@@ -6029,12 +6247,18 @@ form.addEventListener("submit", (event) => {
   handleFormSubmit();
 });
 
-sendBtn.addEventListener("click", (event) => {
+sendBtn.addEventListener("click", async (event) => {
   if (busy || sendBtn.classList.contains("is-generating")) {
     event.preventDefault();
     event.stopPropagation();
     try {
       if (abortController) abortController.abort();
+    } catch {}
+    try {
+      if (activeStreamReader) {
+        await activeStreamReader.cancel().catch(() => {});
+        activeStreamReader = null;
+      }
     } catch {}
     setGeneratingState(false);
     document.querySelectorAll(".tool-live-badge").forEach((el) => {
@@ -7626,13 +7850,44 @@ async function handleAuthSubmit(e) {
 }
 
 function signOut() {
-  showSplashTransition("Signing out securely...", 1800, () => {
-    try {
-      if (abortController) abortController.abort();
-    } catch {}
-    setGeneratingState(false);
-    busy = false;
+  // Immediate synchronous cleanup to eliminate cross-session data leakage
+  try {
+    if (abortController) abortController.abort();
+  } catch {}
+  try {
+    if (activeStreamReader) {
+      activeStreamReader.cancel().catch(() => {});
+      activeStreamReader = null;
+    }
+  } catch {}
+  setGeneratingState(false);
+  busy = false;
+  clearChatDom();
+  messages = [];
+  allUserArtifacts = [];
+  currentConversationId = null;
+  currentUser = null;
+  conversations = [];
+  userMemories = [];
+  updateMemoryBadges();
+  userProjects = [];
+  currentProjectId = "";
+  localStorage.removeItem("cortex_auth_token");
+  localStorage.setItem("cortex_active_conv", "new");
+  localStorage.removeItem("cortex_username");
+  try {
+    const url = new URL(window.location);
+    url.searchParams.delete("c");
+    window.history.replaceState({}, "", url.pathname + (url.hash || ""));
+  } catch {}
+  if (chatTitleHeader) chatTitleHeader.textContent = "New Chat";
+  if (conversationsListEl) conversationsListEl.innerHTML = "";
+  if (projectsListContainer) {
+    projectsListContainer.innerHTML = '<button class="project-pill active" data-project-id="" type="button">All Chats</button>';
+  }
+  updateArtifactsBadge(0);
 
+  showSplashTransition("Signing out securely...", 1200, () => {
     try {
       fetch("/api/auth/logout", {
         method: "POST",
@@ -7640,9 +7895,6 @@ function signOut() {
         credentials: "same-origin",
       }).catch(() => {});
     } catch {}
-    localStorage.removeItem("cortex_auth_token");
-    localStorage.setItem("cortex_active_conv", "new");
-    localStorage.removeItem("cortex_username");
     const overlay = document.getElementById("tourOverlay") || tourOverlay;
     const card = document.getElementById("tourCard") || tourCard;
     if (overlay) overlay.style.display = "none";
@@ -7651,20 +7903,7 @@ function signOut() {
     if (celToast) celToast.style.display = "none";
     const confetti = document.getElementById("confettiCanvas") || confettiCanvas;
     if (confetti) confetti.style.display = "none";
-    currentUser = null;
-    conversations = [];
-    messages = [];
-    userMemories = [];
-    updateMemoryBadges();
-    userProjects = [];
-    currentProjectId = "";
-    if (projectsListContainer) {
-      projectsListContainer.innerHTML = '<button class="project-pill active" data-project-id="" type="button">All Chats</button>';
-    }
-    currentConversationId = null;
-    if (chatTitleHeader) chatTitleHeader.textContent = "New Chat";
     startNewChat(true);
-    if (conversationsListEl) conversationsListEl.innerHTML = "";
     showLandingPage();
     showToast("Signed out successfully.");
   });
@@ -7705,7 +7944,7 @@ async function checkAuth() {
       updateDynamicGreeting();
       loadHealth();
 
-      // Check if explicit conversation was requested in URL (?c=...)
+      // Check if explicit conversation was requested in URL (?c=...) or active conversation in localStorage
       let targetConvId = null;
       try {
         const urlParams = new URLSearchParams(window.location.search);
@@ -7713,8 +7952,18 @@ async function checkAuth() {
         if (qC && qC !== "new") targetConvId = qC;
       } catch {}
 
+      if (!targetConvId) {
+        const activeStored = localStorage.getItem("cortex_active_conv");
+        if (activeStored && activeStored !== "new") {
+          targetConvId = activeStored;
+        }
+      }
+
       await loadProjects();
       await loadConversations(false);
+      try {
+        harvestArtifactsFromAllCachedMessages();
+      } catch {}
       loadUserMemories();
       loadArtifactsCount();
       loadUserUsage();
@@ -8501,6 +8750,9 @@ let allUserArtifacts = [];
 
 async function loadArtifactsCount() {
   if (!currentUser) return;
+  try {
+    harvestArtifactsFromAllCachedMessages();
+  } catch {}
   const deletedKeys = new Set(getDeletedArtifactKeys());
   const cached = getCachedArtifacts().filter((a) => {
     if (!a) return false;
@@ -8572,6 +8824,9 @@ function hideArtifactsView() {
 
 async function loadArtifacts() {
   if (!currentUser) return;
+  try {
+    harvestArtifactsFromAllCachedMessages();
+  } catch {}
   const deletedKeys = new Set(getDeletedArtifactKeys());
   const cached = getCachedArtifacts().filter((a) => {
     if (!a) return false;
@@ -8641,9 +8896,14 @@ function renderArtifactsList(items) {
       ? new Date(art.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
       : "Recently";
 
+    let icon = "📄";
+    if (art.type === "html" || (art.filename && art.filename.endsWith(".html"))) icon = "🌐";
+    else if (art.type === "chart" || (art.filename && art.filename.includes("chart"))) icon = "📊";
+    else if (art.type === "code" || (art.filename && /\.(py|js|ts|jsx|tsx|sql|css|sh|json|cpp|c|java|rs|go)$/i.test(art.filename))) icon = "💻";
+
     card.innerHTML = `
       <div class="artifact-card-header">
-        <div class="artifact-card-icon">📄</div>
+        <div class="artifact-card-icon">${icon}</div>
         <div class="artifact-card-meta">
           <h3 class="artifact-card-title" title="${escapeHtml(art.filename)}">${escapeHtml(art.filename)}</h3>
           <div class="artifact-card-chat" title="${escapeHtml(art.conversation_title || "Conversation")}">${escapeHtml(art.conversation_title || "Conversation")}</div>
@@ -8678,7 +8938,7 @@ function renderArtifactsList(items) {
       openArtifactPanel({
         filename: art.filename,
         content: art.content,
-        type: "markdown"
+        type: art.type || "markdown"
       });
     });
 
@@ -8691,15 +8951,16 @@ function renderArtifactsList(items) {
       openArtifactPanel({
         filename: art.filename,
         content: art.content,
-        type: "markdown"
+        type: art.type || "markdown"
       });
     });
 
-    // Download document
+    // Download document or code
     const dlBtn = card.querySelector(".artifact-btn-download");
     dlBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
-      downloadTextFile(art.filename, art.content, "text/markdown;charset=utf-8");
+      const mime = art.type === "html" ? "text/html;charset=utf-8" : (art.type === "code" ? "text/plain;charset=utf-8" : "text/markdown;charset=utf-8");
+      downloadTextFile(art.filename, art.content, mime);
     });
 
     // Delete document with prompt confirmation

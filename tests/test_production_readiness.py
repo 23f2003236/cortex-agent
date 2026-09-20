@@ -1333,6 +1333,37 @@ class TestProductionReadiness(unittest.TestCase):
             content = resp.content.decode("utf-8")
             self.assertIn("This is comprehensive reasoning that answers the prompt completely.", content)
 
+    def test_artifact_detection_expansion_and_persistence(self):
+        """Verify code blocks in Python/JS/HTML are properly detected as artifacts with correct extensions."""
+        conv = database.create_conversation("Deep Learning Neural Networks", user_id=self.user["id"])
+        code_text = (
+            "Here is a complete deep learning training script in PyTorch:\n\n"
+            "```python\n"
+            "import torch\n"
+            "import torch.nn as nn\n\n"
+            "class SimpleMLP(nn.Module):\n"
+            "    def __init__(self):\n"
+            "        super().__init__()\n"
+            "        self.linear = nn.Linear(784, 10)\n\n"
+            "    def forward(self, x):\n"
+            "        return self.linear(x)\n"
+            "```\n\n"
+            "This model trains using standard SGD optimization."
+        )
+        database.add_message(conv["id"], role="assistant", content=code_text, user_id=self.user["id"])
+
+        artifacts = database.get_user_artifacts(self.user["id"])
+        self.assertTrue(len(artifacts) >= 1)
+        found_art = next((a for a in artifacts if a["conversation_id"] == conv["id"]), None)
+        self.assertIsNotNone(found_art)
+        self.assertTrue(found_art["filename"].endswith(".py") or found_art["filename"].endswith(".md"))
+
+        token = main.generate_token(self.user["id"], self.user["username"])
+        resp = self.client.get("/api/artifacts", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data.get("total", 0) >= 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

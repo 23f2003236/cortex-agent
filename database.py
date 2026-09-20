@@ -1852,14 +1852,18 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             has_heading = bool(re.search(r"^#{1,3}\s+\S+", text_without_code, re.MULTILINE))
             has_doc_attach = "[Attached Document:" in text or "[Structured Tabular Data:" in text
             has_table = "| --- |" in text or "|:---:|" in text
-            has_code = "```python" in text or "```javascript" in text or "```html" in text or "```sql" in text
+            code_match = re.search(r"```([a-zA-Z0-9_\-:\.]+)?\s*\n([\s\S]*?)```", text)
+            has_code = bool(
+                re.search(r"```(?:python|py|javascript|js|typescript|ts|html|css|sql|json|sh|bash|c|cpp|java|chart)\b", text, re.IGNORECASE)
+                or (code_match and len(code_match.group(2).strip()) > 35)
+            )
 
             is_artifact = (
                 has_heading
                 or has_doc_attach
-                or (has_table and len(text) > 300)
-                or (has_code and len(text) > 400)
-                or len(text) > 600
+                or (has_table and len(text) > 200)
+                or (has_code and len(text) > 80)
+                or len(text) > 400
             )
             if not is_artifact:
                 continue
@@ -1875,8 +1879,31 @@ def get_user_artifacts(user_id: str) -> list[dict]:
             safe_slug = re.sub(r"[-\s]+", "_", clean_title_ascii.lower()).strip("_")
             if not safe_slug or len(safe_slug) < 3:
                 safe_slug = "document"
-            if not safe_slug.endswith(".md"):
-                safe_slug += ".md"
+
+            if code_match and len(code_match.group(2).strip()) > 40:
+                raw_l = (code_match.group(1) or "").lower().strip()
+                if "python" in raw_l or raw_l == "py":
+                    def_ext = ".py"
+                elif "javascript" in raw_l or raw_l == "js":
+                    def_ext = ".js"
+                elif "typescript" in raw_l or raw_l == "ts":
+                    def_ext = ".ts"
+                elif "html" in raw_l:
+                    def_ext = ".html"
+                elif "css" in raw_l:
+                    def_ext = ".css"
+                elif "sql" in raw_l:
+                    def_ext = ".sql"
+                elif "json" in raw_l:
+                    def_ext = ".json"
+                elif "sh" in raw_l or "bash" in raw_l:
+                    def_ext = ".sh"
+                else:
+                    def_ext = ".md"
+                safe_slug = re.sub(r"\.[a-zA-Z0-9]+$", "", safe_slug) + def_ext
+            else:
+                if not safe_slug.endswith(".md"):
+                    safe_slug += ".md"
 
             # Check if this artifact was deleted by the user (match strictly by unique message id or conversation-scoped key)
             if (
