@@ -206,234 +206,19 @@ function isConvPinned(c) {
   return c.is_pinned === 1 || c.is_pinned === true || c.is_pinned === "1" || c.is_pinned === "true";
 }
 
-// ---------------- Real-Time Cross-Browser & Cross-Tab Live Synchronization ----------------
-const cortexSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("cortex_workspace_channel") : null;
-
-let liveSyncInterval = null;
-let lastClientConvHash = "";
-let lastClientProjHash = "";
-let isSyncingLive = false;
-
-function broadcastWorkspaceUpdate(type = "WORKSPACE_UPDATED", payload = {}) {
-  if (cortexSyncChannel) {
-    try {
-      cortexSyncChannel.postMessage({ type, payload, timestamp: Date.now() });
-    } catch {}
-  }
-  try {
-    triggerLiveHeartbeatSync(true);
-  } catch {}
-}
-
-if (cortexSyncChannel) {
-  cortexSyncChannel.onmessage = async (event) => {
-    const { type } = event.data || {};
-    if (type === "WORKSPACE_UPDATED" || type === "CONVERSATION_UPDATED" || type === "USAGE_UPDATED" || type === "PROJECT_UPDATED") {
-      if (currentUser) {
-        await triggerLiveHeartbeatSync(true);
-      }
-    }
-  };
-}
-
-async function triggerLiveHeartbeatSync(force = false) {
-  if (!currentUser || isSyncingLive) return;
-  // If this tab is actively streaming assistant response, don't interrupt active local generation
-  if (busy && !force) return;
-
-  isSyncingLive = true;
-  try {
-    const activeId = (currentConversationId && currentConversationId !== "new") ? currentConversationId : "";
-    const activeCount = (Array.isArray(messages) && activeId) ? messages.length : 0;
-    const url = new URL("/api/sync/heartbeat", window.location.origin);
-    if (activeId) url.searchParams.set("active_conv_id", activeId);
-    if (activeCount >= 0) url.searchParams.set("last_msg_count", activeCount);
-    if (lastClientConvHash) url.searchParams.set("conv_hash", lastClientConvHash);
-    if (lastClientProjHash) url.searchParams.set("proj_hash", lastClientProjHash);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    let res;
-    try {
-      res = await fetch(url.toString(), {
-        headers: authHeaders(),
-        cache: "no-store",
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!res || !res.ok) {
-      return;
-    }
-
-    const data = await res.json();
-    if (!data || !data.ok) return;
-
-    if (data.conv_hash) {
-      lastClientConvHash = data.conv_hash;
-    }
-    if (data.proj_hash) {
-      lastClientProjHash = data.proj_hash;
-    }
-
-    // 1. Projects updated from another browser or window (Authoritative Server Truth)
-    if (data.projects_changed && Array.isArray(data.projects)) {
-      userProjects = data.projects;
-      try {
-        localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
-      } catch {}
-      renderProjectPills();
-      renderProjectsTree();
-    }
-
-    // 2. Deleted conversations tombstones synced cross-browser
-    if (Array.isArray(data.deleted_conv_ids) && data.deleted_conv_ids.length > 0) {
-      const delSet = getDeletedConvIds();
-      let hadNewTombstones = false;
-      for (const did of data.deleted_conv_ids) {
-        if (!delSet.has(did)) {
-          delSet.add(did);
-          hadNewTombstones = true;
-        }
-      }
-      if (hadNewTombstones) {
-        saveDeletedConvIds(delSet);
-        if (Array.isArray(conversations)) {
-          conversations = conversations.filter((c) => !delSet.has(c.id));
-          saveCachedConversations();
-          renderConversationsList();
-          renderProjectsTree();
-        }
-        if (currentConversationId && delSet.has(currentConversationId)) {
-          startNewChat(true);
-        }
-      }
-    }
-
-    // 3. Conversations list updated from another browser or window (3-way merge: authoritative server + local cached + current active)
-    if (data.conversations_changed && Array.isArray(data.conversations)) {
-      const serverConvs = data.conversations;
-      const cached = getCachedConversations();
-      const archivedSet = getCachedArchivedIds();
-      const deletedSet = getDeletedConvIds();
-      const map = new Map();
-
-      // Authoritative server conversations
-      for (const sc of serverConvs) {
-        if (sc && sc.id && !archivedSet.has(sc.id) && !deletedSet.has(sc.id)) {
-          map.set(sc.id, sc);
-        }
-      }
-
-      // Preserve local client conversations that haven't synced yet
-      for (const cc of cached) {
-        if (cc && cc.id && !archivedSet.has(cc.id) && !deletedSet.has(cc.id) && !map.has(cc.id)) {
-          map.set(cc.id, cc);
-        }
-      }
-
-      // Preserve active in-memory conversation
-      if (currentConversationId && currentConversationId !== "new") {
-        const curConv = (conversations || []).find((c) => c.id === currentConversationId);
-        if (curConv && !map.has(currentConversationId)) {
-          map.set(currentConversationId, curConv);
-        }
-      }
-
-      conversations = Array.from(map.values());
-      sortConversationsList();
-      saveCachedConversations();
-      renderConversationsList();
-      renderProjectsTree();
-      updateProjectPills();
-    }
-
-    // 4. Active conversation messages updated in real-time from another browser
-    if (data.active_messages && Array.isArray(data.active_messages) && activeId && currentConversationId === activeId) {
-      const serverMsgs = data.active_messages;
-      const currentLen = (messages || []).length;
-      let hasChanges = false;
-      if (serverMsgs.length > currentLen) {
-        hasChanges = true;
-      } else if (serverMsgs.length === currentLen && serverMsgs.length > 0) {
-        const lastServer = serverMsgs[serverMsgs.length - 1];
-        const lastLocal = messages[messages.length - 1];
-        if (lastServer && lastLocal && (lastServer.content !== lastLocal.content || lastServer.feedback !== lastLocal.feedback || lastServer.id !== lastLocal.id)) {
-          hasChanges = true;
-        }
-      }
-
-      // Safe Local-First Rule: NEVER overwrite confirmed local messages with fewer messages (e.g. serverless lag or empty DB)
-      if (hasChanges && !busy && serverMsgs.length >= currentLen) {
-        messages = serverMsgs;
-        saveCachedMessages(activeId, messages);
-        try {
-          rebuildChatFromMessages();
-        } catch (rbErr) {
-          console.error("Error rebuilding chat from heartbeat sync:", rbErr);
-        }
-        scrollToBottom(false);
-        updateExportButtonVisibility();
-      }
-    }
-
-    // 5. Artifacts count updated in real-time
-    if (typeof data.artifacts_count === "number") {
-      updateArtifactsBadge(data.artifacts_count);
-    }
-
-    // 6. Usage updated in real-time
-    if (data.usage && typeof data.usage.tokens_used === "number") {
-      updateUsageDisplay(data.usage.tokens_used, 100000000);
-    }
-  } catch (err) {
-    // Network hiccup or abort timeout, silent ignore for background polling
-  } finally {
-    isSyncingLive = false;
-  }
+function broadcastWorkspaceUpdate() {
+  // Deterministic single-browser architecture: direct user-action driven updates
 }
 
 function startLiveWorkspaceSync() {
-  if (liveSyncInterval) clearInterval(liveSyncInterval);
-  // Real-time 3-second heartbeat for ChatGPT/Claude-like instant multi-browser sync
-  liveSyncInterval = setInterval(() => {
-    if (currentUser && document.visibilityState === "visible") {
-      triggerLiveHeartbeatSync(false);
-    }
-  }, 3000);
+  // No background polling loops needed in single-browser mode
 }
 
 function stopLiveWorkspaceSync() {
-  if (liveSyncInterval) {
-    clearInterval(liveSyncInterval);
-    liveSyncInterval = null;
-  }
+  // No background polling loops to stop
 }
 
-let lastFocusSyncTime = 0;
-function handleWindowFocusSync() {
-  const now = Date.now();
-  if (now - lastFocusSyncTime < 1500) return; // Debounce 1.5s
-  lastFocusSyncTime = now;
-  if (currentUser) {
-    triggerLiveHeartbeatSync(true);
-  }
-}
-
-if (typeof window !== "undefined") {
-  window.addEventListener("focus", handleWindowFocusSync);
-  if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        handleWindowFocusSync();
-      }
-    });
-  }
-}
-
-// ---------------- Client-Side Hybrid Storage & Caching ----------------
+// ---------------- Client-Side Storage & Caching ----------------
 function getUserIdentifier() {
   if (currentUser && currentUser.username && !currentUser.is_guest) {
     return currentUser.username.toLowerCase().trim();
@@ -454,71 +239,7 @@ function getUserScopedKey(prefix) {
 }
 
 function migrateSessionDataToUser(user) {
-  if (!user) return;
-  const userKey = (user.username && !user.is_guest) ? user.username.toLowerCase().trim() : (user.id || "guest");
-  if (userKey === "guest") return;
-
-  // 1. Conversations migration
-  try {
-    let targetConvs = JSON.parse(localStorage.getItem(`cortex_convs_${userKey}`)) || [];
-    if (!targetConvs.length && user.id) {
-      targetConvs = JSON.parse(localStorage.getItem(`cortex_convs_${user.id}`)) || [];
-    }
-    const seenIds = new Set(targetConvs.map((c) => c.id));
-    const guestConvs = JSON.parse(localStorage.getItem("cortex_convs_guest")) || [];
-    for (const gc of guestConvs) {
-      if (gc && gc.id && !seenIds.has(gc.id)) {
-        targetConvs.push(gc);
-        seenIds.add(gc.id);
-      }
-    }
-    localStorage.setItem(`cortex_convs_${userKey}`, JSON.stringify(targetConvs));
-    if (user.id) localStorage.setItem(`cortex_convs_${user.id}`, JSON.stringify(targetConvs));
-  } catch (e) {
-    console.warn("Migration convs error:", e);
-  }
-
-  // 2. Artifacts migration
-  try {
-    let targetArts = JSON.parse(localStorage.getItem(`cortex_arts_${userKey}`)) || [];
-    if (!targetArts.length && user.id) {
-      targetArts = JSON.parse(localStorage.getItem(`cortex_arts_${user.id}`)) || [];
-    }
-    const seenArtKeys = new Set(targetArts.map((a) => a.id || a.filename));
-    const guestArts = JSON.parse(localStorage.getItem("cortex_arts_guest")) || [];
-    for (const ga of guestArts) {
-      const k = ga.id || ga.filename;
-      if (k && !seenArtKeys.has(k)) {
-        targetArts.push(ga);
-        seenArtKeys.add(k);
-      }
-    }
-    localStorage.setItem(`cortex_arts_${userKey}`, JSON.stringify(targetArts));
-    if (user.id) localStorage.setItem(`cortex_arts_${user.id}`, JSON.stringify(targetArts));
-  } catch (e) {
-    console.warn("Migration arts error:", e);
-  }
-
-  // 3. Memories migration
-  try {
-    let targetMems = JSON.parse(localStorage.getItem(`cortex_memories_${userKey}`)) || [];
-    if (!targetMems.length && user.id) {
-      targetMems = JSON.parse(localStorage.getItem(`cortex_memories_${user.id}`)) || [];
-    }
-    const seenContents = new Set(targetMems.map((m) => (m.content || "").toLowerCase().trim()));
-    const guestMems = JSON.parse(localStorage.getItem("cortex_memories_guest")) || [];
-    for (const gm of guestMems) {
-      const ct = (gm.content || "").toLowerCase().trim();
-      if (ct && !seenContents.has(ct)) {
-        targetMems.push(gm);
-        seenContents.add(ct);
-      }
-    }
-    localStorage.setItem(`cortex_memories_${userKey}`, JSON.stringify(targetMems));
-    if (user.id) localStorage.setItem(`cortex_memories_${user.id}`, JSON.stringify(targetMems));
-  } catch (e) {
-    console.warn("Migration mems error:", e);
-  }
+  // Clean slate: registered user accounts never inherit stale session data
 }
 
 function showSplashTransition(statusText, durationMs = 1800, onComplete) {
@@ -3270,7 +2991,6 @@ async function togglePinProject(projectId) {
     console.error("Failed to update project pin on server:", err);
   }
   renderProjectsTree();
-  broadcastWorkspaceUpdate("PROJECT_UPDATED", { projectId, is_pinned: targetPinned });
 }
 
 let activeContextMenuProjectId = null;
@@ -3370,7 +3090,6 @@ async function submitRenameProjectModal() {
     closeRenameProjectModal();
     renderProjectsTree();
     showToast("Project renamed.");
-    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: projectToRenameId });
   } catch (err) {
     console.error("Rename project error:", err);
     showToast(err.message || "Failed to rename project.");
@@ -3404,24 +3123,29 @@ function closeDeleteProjectModal() {
 
 async function submitDeleteProjectModal() {
   if (!projectToDeleteId) return;
+  const deletedId = projectToDeleteId;
   try {
-    const res = await fetch(`/api/projects/${projectToDeleteId}`, {
+    const res = await fetch(`/api/projects/${deletedId}`, {
       method: "DELETE",
       headers: authHeaders(),
     });
     if (!res.ok) throw new Error("Failed to delete project");
-    userProjects = userProjects.filter((p) => p.id !== projectToDeleteId);
+    userProjects = userProjects.filter((p) => p.id !== deletedId);
     try {
       localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
     } catch {}
-    if (currentProjectId === projectToDeleteId) {
+    if (currentProjectId === deletedId) {
       currentProjectId = "";
+    }
+    for (const c of (conversations || [])) {
+      if (c && c.project_id === deletedId) {
+        c.project_id = null;
+      }
     }
     closeDeleteProjectModal();
     renderProjectsTree();
-    loadConversations(false);
+    renderConversationsList();
     showToast("Project deleted.");
-    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: projectToDeleteId });
   } catch (err) {
     console.error("Delete project error:", err);
     showToast(err.message || "Failed to delete project.");
@@ -3456,15 +3180,15 @@ function renderProjectsTree() {
 
   // Sort projects: pinned first, then by name
   const sortedProjects = [...userProjects].sort((a, b) => {
-    const aPinned = pinnedSet.has(a.id) ? 1 : 0;
-    const bPinned = pinnedSet.has(b.id) ? 1 : 0;
+    const aPinned = (pinnedSet.has(a.id) || a.is_pinned) ? 1 : 0;
+    const bPinned = (pinnedSet.has(b.id) || b.is_pinned) ? 1 : 0;
     if (aPinned !== bPinned) return bPinned - aPinned;
     return (a.name || "").localeCompare(b.name || "");
   });
 
   sortedProjects.forEach((proj) => {
     const isCurrentActive = currentProjectId === proj.id;
-    const isPinned = pinnedSet.has(proj.id);
+    const isPinned = pinnedSet.has(proj.id) || Boolean(proj.is_pinned);
     const isExpanded = expandedSet.has(proj.id) || isCurrentActive;
 
     const itemWrap = document.createElement("div");
@@ -3563,13 +3287,15 @@ function renderProjectsTree() {
         projConvs.forEach((c) => {
           const chatItem = document.createElement("div");
           const isChatActive = currentConversationId === c.id;
-          chatItem.className = `project-nested-chat-item ${isChatActive ? "active" : ""}`;
+          const isPinned = isConvPinned(c);
+          chatItem.className = `project-nested-chat-item ${isChatActive ? "active" : ""} ${isPinned ? "pinned" : ""}`;
           chatItem.title = c.title || "Untitled Chat";
           chatItem.innerHTML = `
             <svg class="nested-chat-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
             <span class="nested-chat-title">${escapeHtml(c.title || "Untitled Chat")}</span>
+            ${isPinned ? '<span class="nested-pin-badge" style="font-size:10px; margin-left:auto; opacity:0.8;">📌</span>' : ""}
           `;
           chatItem.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -3688,6 +3414,9 @@ async function saveProjectFromModal() {
       const created = await res.json();
       userProjects.push(created);
       currentProjectId = created.id;
+      const expandedSet = getExpandedProjectIds();
+      expandedSet.add(created.id);
+      setExpandedProjectIds(expandedSet);
     }
     try {
       localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
@@ -3695,7 +3424,6 @@ async function saveProjectFromModal() {
     renderProjectsTree();
     closeProjectModal();
     loadConversations(false);
-    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: currentProjectId });
   } catch (err) {
     console.error("Save project error:", err);
     showToast(err.message || "Failed to save project.");
@@ -3708,7 +3436,7 @@ async function deleteProjectFromModal() {
 
   const deletedId = editingProjectId;
   try {
-    const res = await fetch(`/api/projects/${editingProjectId}`, {
+    const res = await fetch(`/api/projects/${deletedId}`, {
       method: "DELETE",
       headers: authHeaders(),
     });
@@ -3720,10 +3448,14 @@ async function deleteProjectFromModal() {
     if (currentProjectId === deletedId) {
       currentProjectId = "";
     }
+    for (const c of (conversations || [])) {
+      if (c && c.project_id === deletedId) {
+        c.project_id = null;
+      }
+    }
     renderProjectsTree();
     closeProjectModal();
-    loadConversations(false);
-    broadcastWorkspaceUpdate("PROJECT_UPDATED", { project_id: deletedId });
+    renderConversationsList();
   } catch (err) {
     console.error("Delete project error:", err);
     showToast(err.message || "Failed to delete project.");
@@ -3751,7 +3483,7 @@ projectContextMenu?.addEventListener("click", (e) => {
     openProjectModal(projId);
   } else if (action === "home") {
     selectProject(projId);
-    startNewChat();
+    startNewChat(false, true);
   } else if (action === "pin") {
     togglePinProject(projId);
   } else if (action === "delete") {
@@ -3801,19 +3533,6 @@ if (projectsHeaderToggle && sidebarProjectsSection) {
 
 async function loadConversations(autoSelectLatest = false) {
   if (!currentUser) return;
-  const cached = getCachedConversations();
-  const archivedSet = getCachedArchivedIds();
-  const deletedSet = getDeletedConvIds();
-
-  if (cached && cached.length > 0) {
-    const activeCached = cached.filter((c) => !archivedSet.has(c.id) && !deletedSet.has(c.id));
-    if (!conversations || conversations.length === 0) {
-      conversations = activeCached;
-      sortConversationsList();
-      renderConversationsList();
-      renderProjectsTree();
-    }
-  }
 
   try {
     const url = "/api/conversations";
@@ -3828,16 +3547,7 @@ async function loadConversations(autoSelectLatest = false) {
     }
     if (res && res.ok) {
       const serverConvs = await res.json();
-      let merged = Array.isArray(serverConvs) ? [...serverConvs] : [];
-      const seen = new Set(merged.map((c) => c.id));
-      for (const c of cached) {
-        if (!seen.has(c.id) && !archivedSet.has(c.id) && !deletedSet.has(c.id)) {
-          merged.push(c);
-          seen.add(c.id);
-        }
-      }
-      merged = merged.filter((c) => c && c.id && !archivedSet.has(c.id) && !deletedSet.has(c.id));
-      conversations = merged;
+      conversations = Array.isArray(serverConvs) ? serverConvs : [];
       sortConversationsList();
       saveCachedConversations();
       renderConversationsList();
@@ -3862,10 +3572,20 @@ async function loadConversations(autoSelectLatest = false) {
     }
   } catch (err) {
     console.error("Failed to load conversations:", err);
+    if (!conversations || conversations.length === 0) {
+      const cached = getCachedConversations();
+      if (Array.isArray(cached) && cached.length > 0) {
+        conversations = cached;
+        sortConversationsList();
+        renderConversationsList();
+        renderProjectsTree();
+      }
+    }
   }
 }
 
 function renderConversationsList() {
+  if (!conversationsListEl) return;
   conversationsListEl.innerHTML = "";
 
   const query = (sidebarSearchInput ? sidebarSearchInput.value : "").trim().toLowerCase();
@@ -3876,9 +3596,9 @@ function renderConversationsList() {
   const filtered = conversations.filter((c) => {
     if (!c || !c.id) return false;
     if (!query) {
-      // In ChatGPT, project chats stay neatly organized inside their project folder.
-      // Root conversations list displays general / unassigned chats.
-      return !c.project_id;
+      // Pinned chats always appear in the top Pinned section for quick access!
+      // Unpinned project chats stay neatly inside their project folder.
+      return isConvPinned(c) || !c.project_id;
     }
     return (c.title || "").toLowerCase().includes(query);
   });
@@ -3987,8 +3707,8 @@ async function togglePinConversation(id) {
   conv.is_pinned = newStatus ? 1 : 0;
   sortConversationsList();
   renderConversationsList();
+  renderProjectsTree();
   saveCachedConversations();
-  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
 
   try {
     const res = await fetch(`/api/conversations/${id}/pin`, {
@@ -4006,8 +3726,8 @@ async function togglePinConversation(id) {
         conv.is_pinned = data.is_pinned ? 1 : 0;
         sortConversationsList();
         renderConversationsList();
+        renderProjectsTree();
         saveCachedConversations();
-        broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
       }
     }
   } catch (err) {
@@ -4189,7 +3909,7 @@ async function renameConversation(id, newTitle) {
   }
   saveCachedConversations();
   renderConversationsList();
-  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
+  renderProjectsTree();
   showToast("Chat renamed.");
 
   try {
@@ -4273,6 +3993,15 @@ async function switchConversation(id) {
       }
       return;
     }
+    if (res.status === 404) {
+      localStorage.removeItem("cortex_active_conv");
+      conversations = conversations.filter((c) => c.id !== id);
+      saveCachedConversations();
+      renderConversationsList();
+      renderProjectsTree();
+      startNewChat(true);
+      return;
+    }
     if (res.ok) {
       const data = await res.json();
       if (currentConversationId !== id) return;
@@ -4328,16 +4057,15 @@ async function deleteConversation(id) {
   saveDeletedConvId(id);
   conversations = conversations.filter((c) => c.id !== id);
   saveCachedConversations();
-  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
   try {
     localStorage.removeItem(`cortex_msgs_${id}`);
   } catch {}
   if (currentConversationId === id) {
     localStorage.removeItem("cortex_active_conv");
     startNewChat();
-  } else {
-    renderConversationsList();
   }
+  renderConversationsList();
+  renderProjectsTree();
   showToast("Chat deleted.");
 
   try {
@@ -4361,15 +4089,14 @@ async function archiveConversation(id, isArchived = true) {
   }
   saveCachedArchivedIds(archivedSet);
   saveCachedConversations();
-  broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: id });
 
   if (isArchived) {
     if (currentConversationId === id) {
       localStorage.removeItem("cortex_active_conv");
       startNewChat();
-    } else {
-      renderConversationsList();
     }
+    renderConversationsList();
+    renderProjectsTree();
     showToast("Chat archived.");
   }
 
@@ -6300,12 +6027,6 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       if (toolsUsed.includes("remember")) {
         loadUserMemories();
       }
-      // Indestructible persistence: sync turn & usage to cloud
-      if (typeof syncFullWorkspaceState === "function") {
-        syncFullWorkspaceState(false);
-      }
-      broadcastWorkspaceUpdate("CONVERSATION_UPDATED", { convId: currentConversationId });
-      broadcastWorkspaceUpdate("USAGE_UPDATED");
     } catch (err) {
       console.error("Error in finishSuccess:", err);
     } finally {
@@ -6436,8 +6157,14 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
               updated_at: new Date().toISOString(),
             });
           }
+          if (currentProjectId) {
+            const expandedSet = getExpandedProjectIds();
+            expandedSet.add(currentProjectId);
+            setExpandedProjectIds(expandedSet);
+          }
           saveCachedConversations();
           renderConversationsList();
+          renderProjectsTree();
         } else if (payload.type === "tool_start") {
           shell.liveBadge.style.display = "inline-flex";
           let activeMsg = `Running ${payload.label || payload.name}…`;
