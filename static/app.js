@@ -6692,7 +6692,16 @@ async function loadHealth() {
       const savedModel = localStorage.getItem("cortex_model");
       const currentVal = savedModel || modelSelect.value;
       modelSelect.innerHTML = modelsList
-        .map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`)
+        .map((m) => {
+          let specLabel = "";
+          if (m.context_window || m.max_output_tokens) {
+            const ctxStr = m.context_window >= 1000000 ? `${Math.round(m.context_window / 1000000)}M` : `${Math.round(m.context_window / 1024)}K`;
+            const outStr = m.max_output_tokens >= 100000 ? `${Math.round(m.max_output_tokens / 1000)}K` : `${Math.round(m.max_output_tokens / 1024)}K`;
+            specLabel = ` (${ctxStr} ctx • ${outStr} out)`;
+          }
+          const title = m.description ? `${m.name} - ${m.description}` : m.name;
+          return `<option value="${m.id}" title="${escapeHtml(title)}">${escapeHtml(m.name)}${specLabel}</option>`;
+        })
         .join("");
       if (currentVal && modelsList.some((m) => m.id === currentVal)) {
         modelSelect.value = currentVal;

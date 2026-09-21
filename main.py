@@ -195,15 +195,23 @@ if not ALLOWED_ORIGINS:
 
 MAX_UPLOAD_SIZE = 25 * 1024 * 1024  # 25 MB for document/file uploads
 MAX_REQUEST_SIZE = 2 * 1024 * 1024   # 2 MB for standard JSON endpoints
+MAX_CHAT_REQUEST_SIZE = 10 * 1024 * 1024  # 10 MB for deep context chat payloads (up to 4M chars)
 
 
 class RequestBodyLimitMiddleware:
     """Enforce strict payload size limits across all HTTP requests to prevent DoS."""
 
-    def __init__(self, app, max_upload_size: int = MAX_UPLOAD_SIZE, max_request_size: int = MAX_REQUEST_SIZE):
+    def __init__(
+        self,
+        app,
+        max_upload_size: int = MAX_UPLOAD_SIZE,
+        max_request_size: int = MAX_REQUEST_SIZE,
+        max_chat_size: int = MAX_CHAT_REQUEST_SIZE,
+    ):
         self.app = app
         self.max_upload_size = max_upload_size
         self.max_request_size = max_request_size
+        self.max_chat_size = max_chat_size
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -211,7 +219,12 @@ class RequestBodyLimitMiddleware:
             return
 
         path = scope.get("path", "")
-        max_size = self.max_upload_size if path.startswith("/api/upload") else self.max_request_size
+        if path.startswith("/api/upload"):
+            max_size = self.max_upload_size
+        elif path.startswith("/api/chat"):
+            max_size = self.max_chat_size
+        else:
+            max_size = self.max_request_size
 
         headers = dict(scope.get("headers", []))
         cl_header = headers.get(b"content-length")
@@ -1372,24 +1385,86 @@ TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 MAX_TOOL_ROUNDS = 5
 
 AVAILABLE_MODELS = [
-    {"id": "nvidia/nemotron-3-super-120b-a12b", "name": "Cortex 5 (Super Agent)"},
-    {"id": "nvidia/nemotron-3-ultra-550b-a55b", "name": "Cortex 5 Ultra (Master Agent)"},
-    {"id": "openai/gpt-oss-20b", "name": "Cortex 4 (Deep Reasoning)"},
-    {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "name": "Cortex 4 Omni (Vision & Reasoning)"},
-    {"id": "nvidia/nemotron-3.5-lightning-30b-a3b", "name": "Cortex 3.5 Lightning (Ultra-Fast)"},
-    {"id": "z-ai/glm-5.3", "name": "Cortex 5.3 (Frontier MoE 753B)"},
-    {"id": "z-ai/glm-5.3-flash", "name": "Cortex 5.3 Flash (Vision & Reasoning 320B)"},
+    {
+        "id": "nvidia/nemotron-3-super-120b-a12b",
+        "name": "Cortex 5 (Super Agent)",
+        "provider": "nvidia",
+        "context_window": 131072,        # 128K context window
+        "max_output_tokens": 65536,       # 64K verified output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "Flagship 120B MoE reasoning agent with 128K context and 64K completion headroom.",
+        "badge": "Flagship",
+    },
+    {
+        "id": "nvidia/nemotron-3-ultra-550b-a55b",
+        "name": "Cortex 5 Ultra (Master Agent)",
+        "provider": "nvidia",
+        "context_window": 131072,        # 128K context window
+        "max_output_tokens": 65536,       # 64K verified output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "Massive 550B frontier model for complex synthesis, enterprise architecture & deep code.",
+        "badge": "Ultra 550B",
+    },
+    {
+        "id": "openai/gpt-oss-20b",
+        "name": "Cortex 4 (Deep Reasoning)",
+        "provider": "openai",
+        "context_window": 131072,        # 128K context window
+        "max_output_tokens": 32768,       # 32K output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "Specialized open-weights reasoning engine with step-by-step logic and mathematical analysis.",
+        "badge": "Reasoning",
+    },
+    {
+        "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        "name": "Cortex 4 Omni (Vision & Reasoning)",
+        "provider": "nvidia",
+        "context_window": 131072,        # 128K context window
+        "max_output_tokens": 32768,       # 32K output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "Multimodal visual reasoning model for document OCR, chart comprehension & diagrams.",
+        "badge": "Vision",
+    },
+    {
+        "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "name": "Cortex 3.5 Lightning (Ultra-Fast)",
+        "provider": "nvidia",
+        "context_window": 131072,        # 128K context window
+        "max_output_tokens": 16384,       # 16K output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "Sub-second TTFT lightning model for rapid prototyping, instant Q&A, and quick iterations.",
+        "badge": "Fast",
+    },
+    {
+        "id": "z-ai/glm-5.3",
+        "name": "Cortex 5.3 (Frontier MoE 753B)",
+        "provider": "z-ai",
+        "context_window": 1000000,       # 1,000,000 (1M) context window
+        "max_output_tokens": 128000,      # 128,000 (128K) max output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "Ultra-long 1,000,000 token context window with massive 128K output generation.",
+        "badge": "1M Context / 128K Out",
+    },
+    {
+        "id": "z-ai/glm-5.3-flash",
+        "name": "Cortex 5.3 Flash (Vision & Reasoning 320B)",
+        "provider": "z-ai",
+        "context_window": 1000000,       # 1,000,000 (1M) context window
+        "max_output_tokens": 128000,      # 128,000 (128K) max output tokens
+        "supports_streaming": True,
+        "supports_tools": True,
+        "description": "High-throughput 1M context multimodal model with 128K output token ceiling.",
+        "badge": "1M Context / 128K Out",
+    },
 ]
 
-MODEL_TOKEN_LIMITS = {
-    "nvidia/nemotron-3-super-120b-a12b": 32768,            # Cortex 5 (Super Agent)
-    "nvidia/nemotron-3-ultra-550b-a55b": 32768,            # Cortex 5 Ultra (Master Agent)
-    "openai/gpt-oss-20b": 16384,                            # Cortex 4 (Deep Reasoning)
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": 16384, # Cortex 4 Omni (Vision & Reasoning)
-    "nvidia/nemotron-3.5-lightning-30b-a3b": 16384,         # Cortex 3.5 Lightning (Ultra-Fast)
-    "z-ai/glm-5.3": 32768,                                  # Cortex 5.3 (Frontier MoE 753B)
-    "z-ai/glm-5.3-flash": 32768,                            # Cortex 5.3 Flash (Vision & Reasoning 320B)
-}
+MODEL_TOKEN_LIMITS = {m["id"]: m["max_output_tokens"] for m in AVAILABLE_MODELS}
 
 MODEL_ALIASES = {
     "z-ai/glm-5-3": "z-ai/glm-5.3",
@@ -1409,37 +1484,57 @@ def get_model_profile(model_id: Optional[str]) -> dict:
     for m in AVAILABLE_MODELS:
         if m["id"] == resolved:
             return m
-    return {"id": resolved, "name": resolved}
+    return {
+        "id": resolved,
+        "name": resolved,
+        "provider": "nvidia",
+        "context_window": 131072,
+        "max_output_tokens": 16384,
+        "supports_streaming": True,
+        "supports_tools": True,
+    }
 
 
 def get_model_max_tokens(model_id: str) -> int:
-    resolved_id = normalize_model_id(model_id)
-    return MODEL_TOKEN_LIMITS.get(resolved_id, MAX_OUTPUT_TOKENS)
+    profile = get_model_profile(model_id)
+    return profile.get("max_output_tokens", MAX_OUTPUT_TOKENS)
 
 
-def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> int:
-    """Dynamically determine maximum token budget based on model limits, query intent, and mode.
-    Super Agent, Ultra Agent & GLM 5.3 models have unrestricted 32k+ output headroom across all modes.
-    Cortex 4 models have 16k+ output headroom."""
+def get_model_context_window(model_id: str) -> int:
+    profile = get_model_profile(model_id)
+    return profile.get("context_window", 131072)
+
+
+def estimate_response_tokens(
+    model_id: str,
+    prompt: str,
+    mode: str = "auto",
+    user_requested_output: Optional[int] = None,
+) -> int:
+    """Determine effective maximum output token headroom based on model limits,
+    user requested output, mode, and query intent.
+    Sensible defaults:
+      - Normal chat: 16K (16,384 tokens)
+      - Detailed answer / code implementation: 32K (32,768 tokens)
+      - Document generation / complete project / long report: 64K (65,536 tokens)
+      - Maximum: 128K (128,000 tokens) where supported by model
+    Guarantees backend never sends max_tokens above model's supported limit.
+    """
     m_id = normalize_model_id(model_id)
     model_max = get_model_max_tokens(m_id)
+
+    # 1. User/client explicit requested output:
+    if user_requested_output and isinstance(user_requested_output, int) and user_requested_output > 0:
+        return min(user_requested_output, model_max)
 
     mode_str = (mode or "").lower()
     if mode_str == "fast":
         clean_q = (prompt or "").strip()
         if len(clean_q.split()) <= 6:
-            return 1024
-        return min(model_max, 8192)
+            return min(model_max, 4096)
+        return min(model_max, 16384)
 
-    # Super Agent, Ultra Agent & GLM 5.3: Full 32k+ response headroom across auto & thinking modes
-    if m_id in ("nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b", "z-ai/glm-5.3", "z-ai/glm-5.3-flash"):
-        return 32768
-
-    # Cortex 4 models: Full 16k+ output headroom
-    if m_id in ("openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"):
-        return 16384
-
-    # Strip attachment blocks (documents, images, tables, webpages) to evaluate user query intent:
+    # Clean query intent text
     clean_query = re.sub(
         r"\[Attached (?:Document|Spreadsheet|Word Document|Image|SVG Vector|Webpage)[^\]]*\][\s\S]*?(?:\`\`\`|\)|$)",
         "",
@@ -1449,26 +1544,46 @@ def estimate_response_tokens(model_id: str, prompt: str, mode: str = "auto") -> 
     eval_prompt = clean_query if clean_query else (prompt or "").strip()
     lower = eval_prompt.lower()
 
-    # Exhaustive technical requests, masterclasses, or deep architecture:
-    exhaustive_keywords = [
-        "masterclass", "complete guide", "from scratch", "comprehensive",
-        "in-depth", "deep dive", "step-by-step", "full implementation",
-        "all chapters", "detailed breakdown", "entire architecture",
-        "write complete", "detailed analysis", "complete roadmap"
+    # 2. Maximum token requests (up to 128K where supported):
+    max_keywords = [
+        "128k", "maximum output", "max tokens", "entire codebase", "complete repository",
+        "write the entire", "generate complete app", "complete software",
+        "full project code", "entire documentation", "exhaustive book"
     ]
-    if any(k in lower for k in exhaustive_keywords) or ((mode or "").lower() == "thinking" and len(lower) > 300):
-        return min(model_max, 16384)
+    if any(k in lower for k in max_keywords):
+        return min(model_max, 128000)
 
-    # Casual greetings or trivial queries:
+    # 3. Document generation / Long report / Complete implementation (64K):
+    doc_gen_keywords = [
+        "long report", "comprehensive report", "research paper", "whitepaper",
+        "complete guide", "masterclass", "step-by-step implementation",
+        "production grade", "complete project", "full implementation",
+        "generate document", "detailed specification", "architecture document",
+        "all algorithms", "complete common code", "complete code", "full code",
+        "detailed knowledge", "all chapters", "detailed breakdown", "from scratch"
+    ]
+    if any(k in lower for k in doc_gen_keywords) or (mode_str == "thinking" and len(lower) > 300):
+        return min(model_max, 65536)
+
+    # 4. Detailed answer / code implementation / technical explanation (32K):
+    detailed_keywords = [
+        "explain", "detail", "detailed", "code", "python", "script",
+        "algorithm", "function", "class", "how to", "architecture",
+        "compare", "difference between", "tutorial", "solve", "debug"
+    ]
+    if any(k in lower for k in detailed_keywords) or mode_str == "thinking":
+        return min(model_max, 32768)
+
+    # 5. Casual greetings or trivial queries:
     casual_keywords = [
-        "hi", "hello", "hey", "who is", "what is", "kaisa hai", "kaise ho",
-        "good morning", "good evening", "namaste"
+        "hi", "hello", "hey", "who are you", "kaisa hai", "kaise ho",
+        "good morning", "good evening", "namaste", "thanks", "thank you"
     ]
-    if len(lower.split()) <= 6 and any(k in lower for k in casual_keywords):
-        return min(model_max, 1024)
+    if len(lower.split()) <= 4 and any(k in lower for k in casual_keywords):
+        return min(model_max, 4096)
 
-    # Standard general-purpose response budget:
-    return min(model_max, 8192)
+    # 6. Normal chat default: 16K:
+    return min(model_max, 16384)
 
 
 # ---------------------------------------------------------------------------
@@ -1497,7 +1612,7 @@ def make_llm(
         base_url=NVIDIA_BASE_URL,
         temperature=0.2 if not streaming else 0.35,
         max_tokens=effective_max,
-        timeout=60 if streaming else 120,
+        timeout=120 if streaming else 180,
         max_retries=2 if streaming else 5,
         streaming=streaming,
     )
@@ -1596,7 +1711,7 @@ def run_tool_rounds_streaming(
     effective_tools = tools_subset if tools_subset is not None else TOOLS
     tools_by_name = {t.name: t for t in effective_tools}
     effective_rounds = max_rounds or MAX_TOOL_ROUNDS
-    budget_limit = turn_budget if turn_budget is not None else 300000
+    budget_limit = turn_budget if turn_budget is not None else database.DAILY_TOKEN_LIMIT
     tools_used: list[str] = []
     accumulated_tool_tokens = 0
     # Keep enough capacity for the user-facing synthesis after tool selection.
@@ -1920,7 +2035,7 @@ ALLOWED_MODES = {"auto", "fast", "thinking"}
 class ChatMessage(BaseModel):
     id: Optional[str] = None
     role: str = Field(pattern="^(user|assistant)$")
-    content: str = Field(min_length=1, max_length=500_000)
+    content: str = Field(min_length=1, max_length=2_000_000)
     tools_used: Optional[list[str]] = None
 
 
@@ -1929,6 +2044,8 @@ class ChatRequest(BaseModel):
     project_id: Optional[str] = None
     model: Optional[str] = None
     mode: Optional[str] = "auto"
+    max_output_tokens: Optional[int] = None
+    max_tokens: Optional[int] = None
     messages: list[ChatMessage] = Field(default_factory=list, min_length=1, max_length=100)
     client_memories: Optional[list[dict[str, Any]]] = None
     client_tokens_used: Optional[int] = None
@@ -1938,20 +2055,13 @@ class ChatRequest(BaseModel):
     def validate_total_message_length(cls, messages: list[ChatMessage]) -> list[ChatMessage]:
         total_chars = sum(len(m.content) for m in messages)
         has_image = any("(Visual Image Base64:" in m.content or "data:image/" in m.content for m in messages)
-        if has_image:
-            # Multimodal vision payloads (screenshots/diagrams) safely permit up to 2,000,000 characters
-            if total_chars > 2_000_000:
-                raise ValueError(
-                    f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > 2,000,000 characters). "
-                    "Please shorten your prompt or start a new conversation thread."
-                )
-        else:
-            # Pure text prompts enforce strict 250,000 character context ceiling
-            if total_chars > 250_000:
-                raise ValueError(
-                    f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > 250,000 characters). "
-                    "Please shorten your prompt or start a new conversation thread."
-                )
+        # Deep context architecture: supports up to 4,000,000 characters (~1M context window)
+        max_allowed_chars = 4_000_000 if has_image else 2_500_000
+        if total_chars > max_allowed_chars:
+            raise ValueError(
+                f"Total conversation context exceeds the maximum allowed size ({total_chars:,} > {max_allowed_chars:,} characters). "
+                "Please shorten your prompt or start a new conversation thread."
+            )
         return messages
 
 
@@ -2611,9 +2721,33 @@ def _build_messages(
 
     is_fast_mode = (mode or "").lower() == "fast"
 
-    # Expanded deep context window: 400,000 chars (~100k tokens) for Auto/Thinking, 120,000 chars for Fast mode
-    max_history_chars = 120000 if is_fast_mode else 400000
-    max_history_turns = 30 if is_fast_mode else 80
+    resolved_model = normalize_model_id(model or request.model or MODEL_NAME)
+    model_profile = get_model_profile(resolved_model)
+    context_window = model_profile.get("context_window", 131072)
+
+    # Calculate effective output reservation for this turn
+    requested_output = getattr(request, "max_output_tokens", None) or getattr(request, "max_tokens", None)
+    effective_max_output = estimate_response_tokens(
+        resolved_model, last.content, mode=mode, user_requested_output=requested_output
+    )
+
+    # Estimate tokens for the active user prompt (CRITICAL: NEVER truncate latest user prompt)
+    last_user_chars = len(last.content or "")
+    estimated_last_user_tokens = max(1, last_user_chars // 4)
+
+    # Reserve budget for system prompt, model identity, user memories/directives, and tool overhead
+    system_reserve_tokens = 4000
+
+    # Calculate available headroom for conversation history:
+    # context_window - (system_reserve + current_user_message + effective_max_output)
+    available_history_tokens = max(1000, context_window - (system_reserve_tokens + estimated_last_user_tokens + effective_max_output))
+    max_history_chars = available_history_tokens * 4
+
+    if is_fast_mode:
+        max_history_chars = min(120000, max_history_chars)
+        max_history_turns = 30
+    else:
+        max_history_turns = 100
 
     trimmed_history = history[-max_history_turns:] if len(history) > max_history_turns else history
 
@@ -2631,7 +2765,6 @@ def _build_messages(
     messages = [SystemMessage(content=active_sys_prompt)]
 
     # Model identity & role alignment directive:
-    resolved_model = normalize_model_id(model or request.model or MODEL_NAME)
     model_profile = get_model_profile(resolved_model)
     model_display_name = model_profile.get("name", "Cortex Agent")
     identity_directive = (
@@ -3382,7 +3515,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             usage_info = database.get_daily_usage(current_user["id"])
             current_used = usage_info.get("tokens_used", 0)
             current_reserved = usage_info.get("reserved_tokens", 0)
-            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else 300000))
+            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else database.DAILY_TOKEN_LIMIT))
             remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
 
             # Determine whether tools should be executed early to account for tool rounds in quota reservation
@@ -3406,12 +3539,15 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             image_token_cost = 800 if has_image_b64 else 0
             # 3) Minimum viable turn threshold (input context + image + minimum response tokens)
             # Dynamic response budget based on selected model and query intent
-            raw_requested_budget = estimate_response_tokens(effective_model, raw_content, mode=mode)
+            user_requested_output = getattr(request, "max_output_tokens", None) or getattr(request, "max_tokens", None)
+            raw_requested_budget = estimate_response_tokens(
+                effective_model, raw_content, mode=mode, user_requested_output=user_requested_output
+            )
             if current_user.get("is_guest"):
                 budget_tokens = min(raw_requested_budget, remaining_allowance, 25000)
             else:
-                budget_tokens = raw_requested_budget
-            reservation_estimate = min(budget_tokens, 4000)
+                budget_tokens = min(raw_requested_budget, remaining_allowance) if remaining_allowance > 0 else raw_requested_budget
+            reservation_estimate = min(budget_tokens, 8000)
             estimated_tokens = estimated_input_tokens + image_token_cost + reservation_estimate
 
             yield event({
@@ -3842,7 +3978,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             if is_free_model:
                 consumed_tokens = 0
             # Per-turn safety ceiling: guarantees a single file/photo query never drains excessive tokens
-            turn_ceiling = max(1500, min(budget_tokens + 2500, 8192))
+            turn_ceiling = max(1500, budget_tokens + 4000)
             consumed_tokens = min(consumed_tokens, turn_ceiling)
 
             if quota_reserved:

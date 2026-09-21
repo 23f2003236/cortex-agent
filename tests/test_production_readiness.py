@@ -284,8 +284,8 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertEqual(main.normalize_model_id("z-ai/glm-5-3-flash"), "z-ai/glm-5.3-flash")
 
         # Verify token headroom
-        self.assertEqual(main.MODEL_TOKEN_LIMITS["z-ai/glm-5.3"], 32768)
-        self.assertEqual(main.MODEL_TOKEN_LIMITS["z-ai/glm-5.3-flash"], 32768)
+        self.assertEqual(main.MODEL_TOKEN_LIMITS["z-ai/glm-5.3"], 128000)
+        self.assertEqual(main.MODEL_TOKEN_LIMITS["z-ai/glm-5.3-flash"], 128000)
 
         # Verify presence in AVAILABLE_MODELS
         available_ids = [m["id"] for m in main.AVAILABLE_MODELS]
@@ -293,6 +293,63 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertIn("z-ai/glm-5.3-flash", available_ids)
         self.assertNotIn("nvidia/nemotron-3.5-content-safety", available_ids)
         self.assertNotIn("nvidia/nemotron-3-embed-1b", available_ids)
+
+    def test_model_registry_specs_and_capacity(self):
+        """Verify model-specific context windows, max output tokens, and Claude-like token estimation."""
+        # 1. Verify every model in AVAILABLE_MODELS defines all required fields
+        required_keys = {"context_window", "max_output_tokens", "provider", "supports_streaming", "supports_tools"}
+        for m in main.AVAILABLE_MODELS:
+            for k in required_keys:
+                self.assertIn(k, m, f"Model {m['id']} is missing required field '{k}'")
+            self.assertGreater(m["context_window"], 0)
+            self.assertGreater(m["max_output_tokens"], 0)
+            self.assertIsInstance(m["supports_streaming"], bool)
+            self.assertIsInstance(m["supports_tools"], bool)
+
+        # 2. Check specific model limits
+        glm_profile = main.get_model_profile("z-ai/glm-5.3")
+        self.assertEqual(glm_profile["context_window"], 1000000)
+        self.assertEqual(glm_profile["max_output_tokens"], 128000)
+
+        super_profile = main.get_model_profile("nvidia/nemotron-3-super-120b-a12b")
+        self.assertEqual(super_profile["context_window"], 131072)
+        self.assertEqual(super_profile["max_output_tokens"], 65536)
+
+        # 3. Verify Claude-like response token estimation
+        # Normal chat -> 16K
+        normal_budget = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "What is the capital of France?")
+        self.assertEqual(normal_budget, 16384)
+
+        # Detailed answer / code -> 32K
+        code_budget = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Write a python script to implement quicksort")
+        self.assertEqual(code_budget, 32768)
+
+        # Long report / complete implementation -> 64K
+        report_budget = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Write a comprehensive report and full implementation for an ML system")
+        self.assertEqual(report_budget, 65536)
+
+        # Maximum output request -> 128K (on GLM) or clamped to model max (on Nemotron)
+        max_budget_glm = main.estimate_response_tokens("z-ai/glm-5.3", "Write the entire codebase with maximum output tokens 128k")
+        self.assertEqual(max_budget_glm, 128000)
+
+        max_budget_nemotron = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Write the entire codebase with maximum output tokens 128k")
+        self.assertEqual(max_budget_nemotron, 65536)
+
+        # 4. Explicit user_requested_output enforcement: min(user_requested, model_max)
+        clamped_user = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Hello", user_requested_output=100000)
+        self.assertEqual(clamped_user, 65536)
+
+        within_user = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Hello", user_requested_output=2048)
+        self.assertEqual(within_user, 2048)
+
+        # 5. Public /api/models endpoint exposes context_window and max_output_tokens
+        resp = self.client.get("/api/models")
+        self.assertEqual(resp.status_code, 200)
+        models_data = resp.json()["models"]
+        for m in models_data:
+            self.assertIn("context_window", m)
+            self.assertIn("max_output_tokens", m)
+            self.assertIn("provider", m)
 
     # ---------------- 8. Project Ownership Isolation ----------------
 
@@ -357,9 +414,9 @@ class TestProductionReadiness(unittest.TestCase):
     # ---------------- 13. Message Context Character Limit (422) ----------------
 
     def test_message_context_character_limit_422(self):
-        """Verify conversations exceeding 250,000 total characters are rejected with 422."""
+        """Verify conversations exceeding total context character limits are rejected with 422."""
         token = main.generate_token(self.user["id"], self.user["username"])
-        huge_message = {"role": "user", "content": "A" * 260_000}
+        huge_message = {"role": "user", "content": "A" * 2_600_000}
         payload = {
             "model": "nvidia/nemotron-3-super-120b-a12b",
             "messages": [huge_message],
