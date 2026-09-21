@@ -6695,8 +6695,14 @@ async function loadHealth() {
         .map((m) => {
           let specLabel = "";
           if (m.context_window || m.max_output_tokens) {
-            const ctxStr = m.context_window >= 1000000 ? `${Math.round(m.context_window / 1000000)}M` : `${Math.round(m.context_window / 1024)}K`;
-            const outStr = m.max_output_tokens >= 100000 ? `${Math.round(m.max_output_tokens / 1000)}K` : `${Math.round(m.max_output_tokens / 1024)}K`;
+            const fmt = (n) => {
+              if (!n) return "";
+              if (n >= 1000000) return `${Math.round(n / 1000000)}M`;
+              if (n % 1024 === 0) return `${Math.round(n / 1024)}K`;
+              return `${Math.round(n / 1000)}K`;
+            };
+            const ctxStr = fmt(m.context_window);
+            const outStr = fmt(m.max_output_tokens);
             specLabel = ` (${ctxStr} ctx • ${outStr} out)`;
           }
           const title = m.description ? `${m.name} - ${m.description}` : m.name;

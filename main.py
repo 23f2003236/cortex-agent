@@ -1389,78 +1389,92 @@ AVAILABLE_MODELS = [
         "id": "nvidia/nemotron-3-super-120b-a12b",
         "name": "Cortex 5 (Super Agent)",
         "provider": "nvidia",
-        "context_window": 131072,        # 128K context window
-        "max_output_tokens": 65536,       # 64K verified output tokens
+        "native_context_window": 1000000,      # 1M architectural context
+        "context_window": 1000000,             # 1M context window
+        "provider_max_output_tokens": 32768,   # 32K verified hosted endpoint limit
+        "max_output_tokens": 32768,            # 32K output tokens
         "supports_streaming": True,
         "supports_tools": True,
-        "description": "Flagship 120B MoE reasoning agent with 128K context and 64K completion headroom.",
-        "badge": "Flagship",
+        "description": "Flagship 120B MoE reasoning agent with 1M context window and 32K output ceiling.",
+        "badge": "1M Context • 32K Output",
     },
     {
         "id": "nvidia/nemotron-3-ultra-550b-a55b",
         "name": "Cortex 5 Ultra (Master Agent)",
         "provider": "nvidia",
-        "context_window": 131072,        # 128K context window
-        "max_output_tokens": 65536,       # 64K verified output tokens
+        "native_context_window": 1000000,      # 1M architectural context
+        "context_window": 1000000,             # 1M context window
+        "provider_max_output_tokens": 32768,   # 32K verified hosted endpoint limit
+        "max_output_tokens": 32768,            # 32K output tokens
         "supports_streaming": True,
         "supports_tools": True,
-        "description": "Massive 550B frontier model for complex synthesis, enterprise architecture & deep code.",
-        "badge": "Ultra 550B",
+        "description": "Massive 550B frontier model with 1M context for complex synthesis & enterprise code.",
+        "badge": "1M Context • 32K Output",
     },
     {
         "id": "openai/gpt-oss-20b",
         "name": "Cortex 4 (Deep Reasoning)",
         "provider": "openai",
-        "context_window": 131072,        # 128K context window
-        "max_output_tokens": 32768,       # 32K output tokens
+        "native_context_window": 131072,       # 128K context window
+        "context_window": 131072,              # 128K context window
+        "provider_max_output_tokens": 131072,  # 128K output tokens
+        "max_output_tokens": 131072,           # 128K output tokens
         "supports_streaming": True,
         "supports_tools": True,
-        "description": "Specialized open-weights reasoning engine with step-by-step logic and mathematical analysis.",
-        "badge": "Reasoning",
+        "description": "Specialized open-weights reasoning engine with 128K context and massive 128K output headroom.",
+        "badge": "128K Context • 128K Output",
     },
     {
         "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
         "name": "Cortex 4 Omni (Vision & Reasoning)",
         "provider": "nvidia",
-        "context_window": 131072,        # 128K context window
-        "max_output_tokens": 32768,       # 32K output tokens
+        "native_context_window": 256000,       # 256K native context
+        "context_window": 256000,              # 256K context window
+        "provider_max_output_tokens": 32768,   # 32K output tokens (16K reasoning budget)
+        "max_output_tokens": 32768,            # 32K output tokens
         "supports_streaming": True,
         "supports_tools": True,
-        "description": "Multimodal visual reasoning model for document OCR, chart comprehension & diagrams.",
-        "badge": "Vision",
+        "description": "Multimodal visual reasoning model with 256K context for document OCR, chart & diagrams.",
+        "badge": "256K Context • 32K Output",
     },
     {
         "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
         "name": "Cortex 3.5 Lightning (Ultra-Fast)",
         "provider": "nvidia",
-        "context_window": 131072,        # 128K context window
-        "max_output_tokens": 16384,       # 16K output tokens
+        "native_context_window": 1000000,      # 1M architectural context
+        "context_window": 262144,              # 262K hosted NIM serving context
+        "provider_max_output_tokens": 16384,   # 16K output tokens
+        "max_output_tokens": 16384,            # 16K output tokens
         "supports_streaming": True,
         "supports_tools": True,
-        "description": "Sub-second TTFT lightning model for rapid prototyping, instant Q&A, and quick iterations.",
-        "badge": "Fast",
+        "description": "Sub-second TTFT lightning model with 262K context for rapid prototyping & instant Q&A.",
+        "badge": "262K Context • 16K Output",
     },
     {
         "id": "z-ai/glm-5.3",
         "name": "Cortex 5.3 (Frontier MoE 753B)",
         "provider": "z-ai",
-        "context_window": 1000000,       # 1,000,000 (1M) context window
-        "max_output_tokens": 128000,      # 128,000 (128K) max output tokens
+        "native_context_window": 1000000,      # 1,000,000 (1M) context window
+        "context_window": 1000000,             # 1,000,000 (1M) context window
+        "provider_max_output_tokens": 128000,  # 128,000 (128K) max output tokens
+        "max_output_tokens": 128000,           # 128,000 (128K) max output tokens
         "supports_streaming": True,
         "supports_tools": True,
         "description": "Ultra-long 1,000,000 token context window with massive 128K output generation.",
-        "badge": "1M Context / 128K Out",
+        "badge": "1M Context • 128K Output",
     },
     {
         "id": "z-ai/glm-5.3-flash",
         "name": "Cortex 5.3 Flash (Vision & Reasoning 320B)",
         "provider": "z-ai",
-        "context_window": 1000000,       # 1,000,000 (1M) context window
-        "max_output_tokens": 128000,      # 128,000 (128K) max output tokens
+        "native_context_window": 1000000,      # 1,000,000 (1M) context window
+        "context_window": 1000000,             # 1,000,000 (1M) context window
+        "provider_max_output_tokens": 128000,  # 128,000 (128K) max output tokens
+        "max_output_tokens": 128000,           # 128,000 (128K) max output tokens
         "supports_streaming": True,
         "supports_tools": True,
         "description": "High-throughput 1M context multimodal model with 128K output token ceiling.",
-        "badge": "1M Context / 128K Out",
+        "badge": "1M Context • 128K Output",
     },
 ]
 
@@ -1488,7 +1502,9 @@ def get_model_profile(model_id: Optional[str]) -> dict:
         "id": resolved,
         "name": resolved,
         "provider": "nvidia",
+        "native_context_window": 131072,
         "context_window": 131072,
+        "provider_max_output_tokens": 16384,
         "max_output_tokens": 16384,
         "supports_streaming": True,
         "supports_tools": True,
@@ -1500,9 +1516,19 @@ def get_model_max_tokens(model_id: str) -> int:
     return profile.get("max_output_tokens", MAX_OUTPUT_TOKENS)
 
 
+def get_model_provider_max_tokens(model_id: str) -> int:
+    profile = get_model_profile(model_id)
+    return profile.get("provider_max_output_tokens", profile.get("max_output_tokens", MAX_OUTPUT_TOKENS))
+
+
 def get_model_context_window(model_id: str) -> int:
     profile = get_model_profile(model_id)
     return profile.get("context_window", 131072)
+
+
+def get_model_native_context_window(model_id: str) -> int:
+    profile = get_model_profile(model_id)
+    return profile.get("native_context_window", profile.get("context_window", 131072))
 
 
 def estimate_response_tokens(
@@ -3668,9 +3694,16 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                 synthesis_messages.append(SystemMessage(content=directive_content))
 
             # Calculate synthesis budget: ensure synthesis has sufficient allowance to deliver
-            # a full, high-quality response bounded by the user's actual remaining daily quota
+            # a full, high-quality response bounded by:
+            # 1) Model's provider max output tokens
+            # 2) Context window headroom (context_window - prompt_tokens_including_tool_results)
+            # 3) User's actual remaining daily quota
+            total_prompt_chars = sum(len(str(getattr(m, "content", ""))) for m in synthesis_messages)
+            estimated_prompt_tokens = max(1, total_prompt_chars // 4)
+            model_ctx = get_model_context_window(effective_model)
+            context_headroom = max(500, model_ctx - estimated_prompt_tokens - 1000)
             available_for_synthesis = max(200, remaining_allowance - (estimated_input_tokens + image_token_cost))
-            synthesis_budget = max(200, min(budget_tokens, available_for_synthesis))
+            synthesis_budget = max(200, min(budget_tokens, available_for_synthesis, context_headroom))
             accumulated_reasoning = ""
             active_stream_model = effective_model
             max_attempts = 3
@@ -3971,7 +4004,8 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
 
             if synthesis_tokens is None:
                 context_tok = min(total_input_chars // 4, 3000)
-                synthesis_tokens = max(1, context_tok + len(full_text) // 4)
+                gen_text_len = len(full_text) + len(accumulated_reasoning)
+                synthesis_tokens = max(1, context_tok + gen_text_len // 4)
 
             # Web search (duckduckgo, fetch_webpage) and tool execution tokens are free compute - do not charge user quota for tool tokens
             consumed_tokens = synthesis_tokens + image_token_cost
