@@ -988,16 +988,29 @@ def create_conversation(
     with get_connection() as conn:
         valid_project_id = None
         if project_id and user_id:
-            chk = conn.execute("SELECT id FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id)).fetchone()
+            chk = conn.execute("SELECT id, user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
             if chk:
-                valid_project_id = project_id
+                if str(chk["user_id"]) == str(user_id):
+                    valid_project_id = project_id
+                else:
+                    valid_project_id = None
+            else:
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO projects (id, name, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (project_id, "Project", user_id, now, now),
+                    )
+                    valid_project_id = project_id
+                except Exception:
+                    valid_project_id = None
         conn.execute(
             """
             INSERT INTO conversations (id, title, created_at, updated_at, user_id, project_id)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            project_id = COALESCE(excluded.project_id, conversations.project_id)
             """,
             (cid, title, now, now, user_id, valid_project_id),
         )

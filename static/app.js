@@ -2904,29 +2904,59 @@ function isNearBottom() {
 
 // ---------------- Project Workspaces ----------------
 
+function getCachedProjects() {
+  try {
+    const raw = localStorage.getItem(getUserScopedKey("cortex_projects"));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedProjects(projs) {
+  try {
+    localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(projs || []));
+  } catch {}
+}
+
 async function loadProjects() {
   if (!currentUser) return;
+  // Instantly hydrate from local cache so projects NEVER disappear on load/refresh!
+  const cachedProjs = getCachedProjects();
+  if (Array.isArray(cachedProjs) && cachedProjs.length > 0) {
+    userProjects = cachedProjs;
+    renderProjectPills();
+    renderProjectsTree();
+  }
+
   try {
     const res = await fetch("/api/projects", { headers: authHeaders() });
     if (res.status === 401) return;
     if (res.ok) {
-      userProjects = await res.json();
-      try {
-        localStorage.setItem(getUserScopedKey("cortex_projects"), JSON.stringify(userProjects));
-      } catch {}
+      const serverProjs = await res.json();
+      const serverList = Array.isArray(serverProjs) ? serverProjs : [];
+      const seen = new Set(serverList.map((p) => p.id));
+      const merged = [...serverList];
+      // Keep any local project that wasn't found on the server (e.g. fresh serverless container)
+      for (const p of cachedProjs) {
+        if (p && p.id && !seen.has(p.id)) {
+          merged.push(p);
+          seen.add(p.id);
+        }
+      }
+      userProjects = merged;
+      saveCachedProjects(userProjects);
       renderProjectPills();
       renderProjectsTree();
     }
   } catch (err) {
     console.error("Failed to load projects from server:", err);
-    try {
-      const cached = JSON.parse(localStorage.getItem(getUserScopedKey("cortex_projects")));
-      if (Array.isArray(cached) && (!userProjects || !userProjects.length)) {
-        userProjects = cached;
-        renderProjectPills();
-        renderProjectsTree();
-      }
-    } catch {}
+    if (!userProjects || !userProjects.length) {
+      userProjects = cachedProjs;
+      renderProjectPills();
+      renderProjectsTree();
+    }
   }
 }
 
@@ -3278,9 +3308,9 @@ function renderProjectsTree() {
       const nestedContainer = document.createElement("div");
       nestedContainer.className = "project-nested-chats";
 
-      // STRICT filtering: Only chats explicitly assigned to this project!
+      // Robust filtering: Match chats assigned to this project
       const projConvs = (conversations || []).filter(
-        (c) => c && c.project_id === proj.id
+        (c) => c && String(c.project_id || "").trim() === String(proj.id || "").trim()
       );
 
       if (projConvs.length > 0) {
@@ -3534,6 +3564,20 @@ if (projectsHeaderToggle && sidebarProjectsSection) {
 async function loadConversations(autoSelectLatest = false) {
   if (!currentUser) return;
 
+  const cached = getCachedConversations();
+  const deletedSet = getDeletedConvIds();
+
+  // Instantly populate from local cache so chats NEVER disappear while waiting for network!
+  if (Array.isArray(cached) && cached.length > 0) {
+    const activeCached = cached.filter((c) => c && c.id && !deletedSet.has(c.id));
+    if (!conversations || conversations.length === 0) {
+      conversations = activeCached;
+      sortConversationsList();
+      renderConversationsList();
+      renderProjectsTree();
+    }
+  }
+
   try {
     const url = "/api/conversations";
     let res = await fetch(url, { headers: authHeaders() });
@@ -3547,7 +3591,26 @@ async function loadConversations(autoSelectLatest = false) {
     }
     if (res && res.ok) {
       const serverConvs = await res.json();
-      conversations = Array.isArray(serverConvs) ? serverConvs : [];
+      const serverList = Array.isArray(serverConvs) ? serverConvs : [];
+      const merged = serverList.filter((c) => c && c.id && !deletedSet.has(c.id));
+      const seen = new Set(merged.map((c) => c.id));
+
+      // Merge local cache: keep all user-created chats even if cloud database had a serverless restart!
+      for (const c of (cached || [])) {
+        if (!c || !c.id || deletedSet.has(c.id)) continue;
+        if (!seen.has(c.id)) {
+          merged.push(c);
+          seen.add(c.id);
+        } else {
+          // If local has project_id but server returned null, retain the local project_id!
+          const idx = merged.findIndex((m) => m.id === c.id);
+          if (idx !== -1 && !merged[idx].project_id && c.project_id) {
+            merged[idx].project_id = c.project_id;
+          }
+        }
+      }
+
+      conversations = merged;
       sortConversationsList();
       saveCachedConversations();
       renderConversationsList();
@@ -3573,9 +3636,8 @@ async function loadConversations(autoSelectLatest = false) {
   } catch (err) {
     console.error("Failed to load conversations:", err);
     if (!conversations || conversations.length === 0) {
-      const cached = getCachedConversations();
       if (Array.isArray(cached) && cached.length > 0) {
-        conversations = cached;
+        conversations = cached.filter((c) => c && c.id && !deletedSet.has(c.id));
         sortConversationsList();
         renderConversationsList();
         renderProjectsTree();
@@ -3596,20 +3658,21 @@ function renderConversationsList() {
   const filtered = conversations.filter((c) => {
     if (!c || !c.id) return false;
     if (!query) {
-      // Pinned chats always appear in the top Pinned section for quick access!
-      // Unpinned project chats stay neatly inside their project folder.
-      return isConvPinned(c) || !c.project_id;
+      // Pinned chats always appear in the top Pinned section for instant access!
+      if (isConvPinned(c)) return true;
+      // If chat belongs to an existing project, it stays nested inside that project folder:
+      const hasParentProj = c.project_id && Array.isArray(userProjects) && userProjects.some((p) => String(p.id).trim() === String(c.project_id).trim());
+      return !hasParentProj;
     }
     return (c.title || "").toLowerCase().includes(query);
   });
 
-  if (!conversations.length) {
-    conversationsListEl.innerHTML = `<div class="sidebar-empty-note">No chats yet</div>`;
-    return;
-  }
-
   if (!filtered.length) {
-    conversationsListEl.innerHTML = `<div class="sidebar-empty-note">No chats match "${escapeHtml(query)}"</div>`;
+    if (query) {
+      conversationsListEl.innerHTML = `<div class="sidebar-empty-note">No chats match "${escapeHtml(query)}"</div>`;
+    } else if (!userProjects || !userProjects.length) {
+      conversationsListEl.innerHTML = `<div class="sidebar-empty-note">No chats yet</div>`;
+    }
     return;
   }
 
@@ -3994,6 +4057,14 @@ async function switchConversation(id) {
       return;
     }
     if (res.status === 404) {
+      if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
+        messages = cachedMsgs;
+        rebuildChatFromMessages();
+        if (typeof syncFullWorkspaceState === "function") {
+          syncFullWorkspaceState(false);
+        }
+        return;
+      }
       localStorage.removeItem("cortex_active_conv");
       conversations = conversations.filter((c) => c.id !== id);
       saveCachedConversations();
@@ -5860,6 +5931,23 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     }
   }, 200);
 
+  let streamWatchdog = null;
+  const kickWatchdog = () => {
+    if (streamWatchdog) {
+      clearTimeout(streamWatchdog);
+      streamWatchdog = null;
+    }
+    if (fullText.trim().length > 0) {
+      streamWatchdog = setTimeout(() => {
+        if (!settled) {
+          console.warn("Stream inactivity watchdog: 8s silence, auto-concluding stream.");
+          try { if (activeStreamReader) activeStreamReader.cancel(); } catch {}
+          finishSuccess();
+        }
+      }, 8000);
+    }
+  };
+
   abortController = new AbortController();
   setGeneratingState(true);
 
@@ -5867,6 +5955,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     if (settled) return;
     settled = true;
     clearInterval(thoughtTimer);
+    if (streamWatchdog) {
+      clearTimeout(streamWatchdog);
+      streamWatchdog = null;
+    }
 
     try {
       const cleanFullText = fullText
@@ -5963,8 +6055,13 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
         const conv = conversations.find((c) => c.id === saveTargetConvId);
         if (conv) {
           conv.updated_at = new Date().toISOString();
+          if (currentProjectId && !conv.project_id) {
+            conv.project_id = currentProjectId;
+          }
         }
         saveCachedConversations();
+        renderConversationsList();
+        renderProjectsTree();
       }
 
       if (toolSteps.length > 0) {
@@ -6041,6 +6138,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
     }
     settled = true;
     clearInterval(thoughtTimer);
+    if (streamWatchdog) {
+      clearTimeout(streamWatchdog);
+      streamWatchdog = null;
+    }
     try {
       shell.row.remove();
       const targetUserIndex = (typeof retryUserIndex === "number" && retryUserIndex >= 0 && retryUserIndex < messages.length && messages[retryUserIndex]?.role === "user")
@@ -6216,6 +6317,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
             shell.liveText.textContent = "Generating response…";
           }
         } else if (payload.type === "thought") {
+          kickWatchdog();
           if (shell.thoughtBox) {
             shell.thoughtBox.style.display = "block";
             shell.thoughtBox.classList.add("open");
@@ -6227,6 +6329,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           shell.liveText.textContent = "Deep reasoning & thinking…";
           if (isNearBottom()) scrollToBottom();
         } else if (payload.type === "token") {
+          kickWatchdog();
           fullText += payload.text;
           if (shell.liveBadge && shell.liveBadge.style.display !== "none") {
             shell.liveText.textContent = "Generating response…";
@@ -6234,6 +6337,7 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
           renderStreamedText(shell.bubbleEl, fullText, false);
           if (isNearBottom()) scrollToBottom();
         } else if (payload.type === "replace_text") {
+          kickWatchdog();
           fullText = payload.text;
           renderStreamedText(shell.bubbleEl, fullText, false);
           if (isNearBottom()) scrollToBottom();
@@ -6313,6 +6417,10 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
       finishError(error.message || "Connection lost.");
     }
   } finally {
+    if (streamWatchdog) {
+      clearTimeout(streamWatchdog);
+      streamWatchdog = null;
+    }
     activeStreamReader = null;
     setGeneratingState(false);
   }

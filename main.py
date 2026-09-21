@@ -1497,8 +1497,8 @@ def make_llm(
         base_url=NVIDIA_BASE_URL,
         temperature=0.2 if not streaming else 0.35,
         max_tokens=effective_max,
-        timeout=120,
-        max_retries=5,
+        timeout=60 if streaming else 120,
+        max_retries=2 if streaming else 5,
         streaming=streaming,
     )
 
@@ -3270,10 +3270,17 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
         if request.project_id:
             proj = database.get_project(request.project_id, user_id=current_user["id"])
             if not proj:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Project workspace not found or does not belong to your account.",
-                )
+                with database.get_connection() as _conn:
+                    other_chk = _conn.execute("SELECT id, user_id FROM projects WHERE id = ?", (request.project_id,)).fetchone()
+                    if other_chk and str(other_chk["user_id"]) != str(current_user["id"]):
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Project workspace not found or does not belong to your account.",
+                        )
+                try:
+                    database.create_project(name="Project", user_id=current_user["id"], project_id=request.project_id)
+                except Exception:
+                    pass
 
         if not conv_id:
             title = generate_smart_title(raw_content)
