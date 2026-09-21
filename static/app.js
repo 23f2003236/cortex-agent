@@ -343,6 +343,26 @@ function saveDeletedConvId(id) {
   }
 }
 
+function sanitizeMessageTurns(msgs) {
+  if (!Array.isArray(msgs)) return [];
+  const seenIds = new Set();
+  return msgs
+    .filter((m) => m != null && m.content)
+    .map((m, idx) => {
+      let id = m.id;
+      if (!id || seenIds.has(id)) {
+        id = `msg-${m.role || "turn"}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+      }
+      seenIds.add(id);
+      return {
+        ...m,
+        id,
+        role: m.role || "user",
+        created_at: m.created_at || new Date().toISOString(),
+      };
+    });
+}
+
 function getCachedMessages(convId) {
   if (!convId) return [];
   try {
@@ -360,7 +380,7 @@ function getCachedMessages(convId) {
         } catch {}
       }
     }
-    return Array.isArray(data) ? data.filter(m => m != null && m.content) : [];
+    return sanitizeMessageTurns(data);
   } catch {
     return [];
   }
@@ -368,9 +388,10 @@ function getCachedMessages(convId) {
 
 function saveCachedMessages(convId, msgs) {
   if (!convId || !Array.isArray(msgs)) return;
+  const sanitized = sanitizeMessageTurns(msgs);
   const userKey = getUserScopedKey(`cortex_msgs_${convId}`);
   try {
-    localStorage.setItem(userKey, JSON.stringify(msgs));
+    localStorage.setItem(userKey, JSON.stringify(sanitized));
   } catch (e) {
     if (e.name === "QuotaExceededError") {
       // LRU eviction: remove oldest non-active conversation caches to make room
@@ -3997,6 +4018,29 @@ function promptRenameActiveChat() {
   openRenameChatModal(currentConversationId, currentTitle);
 }
 
+function mergeConversationMessages(serverMsgs, cachedMsgs) {
+  if (!Array.isArray(serverMsgs) || serverMsgs.length === 0) return sanitizeMessageTurns(cachedMsgs || []);
+  if (!Array.isArray(cachedMsgs) || cachedMsgs.length === 0) return sanitizeMessageTurns(serverMsgs || []);
+
+  const sIds = new Set(serverMsgs.map((m) => m.id).filter(Boolean));
+  const sContentMap = new Set(
+    serverMsgs.map((m) => `${m.role || "user"}:${(m.content || "").trim().slice(0, 100)}`)
+  );
+
+  const unsynced = cachedMsgs.filter((m) => {
+    if (!m || !m.content) return false;
+    if (m.id && sIds.has(m.id)) return false;
+    const key = `${m.role || "user"}:${(m.content || "").trim().slice(0, 100)}`;
+    if (sContentMap.has(key)) return false;
+    return true;
+  });
+
+  if (unsynced.length === 0) {
+    return sanitizeMessageTurns(serverMsgs);
+  }
+  return sanitizeMessageTurns([...serverMsgs, ...unsynced]);
+}
+
 async function switchConversation(id) {
   if (busy) {
     try {
@@ -4081,13 +4125,7 @@ async function switchConversation(id) {
         chatTitleHeader.textContent = data.conversation.title;
       }
       if (Array.isArray(data.messages) && data.messages.length > 0) {
-        if (cachedMsgs.length > data.messages.length) {
-          const sIds = new Set(data.messages.map((m) => m.id).filter(Boolean));
-          const unsynced = cachedMsgs.filter((m) => m.id && !sIds.has(m.id));
-          messages = [...data.messages, ...unsynced];
-        } else {
-          messages = data.messages;
-        }
+        messages = mergeConversationMessages(data.messages, cachedMsgs);
         saveCachedMessages(id, messages);
         rebuildChatFromMessages();
       } else if (cachedMsgs.length > 0) {
@@ -5876,6 +5914,7 @@ function setGeneratingState(isGenerating) {
 async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) {
   const shell = addAssistantMessageShell();
   let activeConvId = currentConversationId;
+  let currentAssistantMsgId = null;
   let fullText = "";
   let toolsUsed = [];
   const toolSteps = [];
@@ -6040,12 +6079,15 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
         documentText: fullDocText,
       });
       if (hasReply) {
+        const finalAsstId = currentAssistantMsgId || shell.row.dataset.messageId || `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        shell.row.dataset.messageId = finalAsstId;
         messages.push({
-          id: shell.row.dataset.messageId || undefined,
+          id: finalAsstId,
           role: "assistant",
           content: cleanFullText,
           tools_used: toolsUsed,
           feedback: 0,
+          created_at: new Date().toISOString(),
         });
       }
 
@@ -6237,9 +6279,11 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
             const userRows = chatEl.querySelectorAll(".message-row.user");
             const lastUserRow = userRows[userRows.length - 1];
             if (lastUserRow) lastUserRow.dataset.messageId = payload.user_message_id;
-            const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-            if (lastUserMsg) {
-              lastUserMsg.id = payload.user_message_id;
+            const targetUserMsg = (typeof retryUserIndex === "number" && messages[retryUserIndex]?.role === "user")
+              ? messages[retryUserIndex]
+              : [...messages].reverse().find((m) => m.role === "user");
+            if (targetUserMsg) {
+              targetUserMsg.id = payload.user_message_id;
               saveCachedMessages(activeConvId, messages);
             }
           }
@@ -6379,13 +6423,14 @@ async function streamAssistantReply(historyForRequest, { retryUserIndex } = {}) 
             const userRows = chatEl.querySelectorAll(".message-row.user");
             const lastUserRow = userRows[userRows.length - 1];
             if (lastUserRow) lastUserRow.dataset.messageId = payload.user_message_id;
-            const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-            if (lastUserMsg) lastUserMsg.id = payload.user_message_id;
+            const targetUserMsg = (typeof retryUserIndex === "number" && messages[retryUserIndex]?.role === "user")
+              ? messages[retryUserIndex]
+              : [...messages].reverse().find((m) => m.role === "user");
+            if (targetUserMsg) targetUserMsg.id = payload.user_message_id;
           }
           if (payload.assistant_message_id) {
+            currentAssistantMsgId = payload.assistant_message_id;
             shell.row.dataset.messageId = payload.assistant_message_id;
-            const lastAsstMsg = [...messages].reverse().find((m) => m.role === "assistant");
-            if (lastAsstMsg) lastAsstMsg.id = payload.assistant_message_id;
           }
           if (payload.usage) {
             const serverUsed = payload.usage.tokens_used ?? payload.usage.daily_tokens ?? 0;

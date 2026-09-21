@@ -1195,7 +1195,7 @@ def get_messages(conv_id: str, user_id: Optional[str] = None) -> list[dict[str, 
             if not chk:
                 return []
         cursor = conn.execute(
-            "SELECT id, conversation_id, role, content, tools_used, feedback, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+            "SELECT id, conversation_id, role, content, tools_used, feedback, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC",
             (conv_id,),
         )
         results = []
@@ -2319,6 +2319,22 @@ def sync_full_user_state(
                         (tools_json, feedback, existing_msg["id"]),
                     )
                     continue
+
+                # Check if this ID is already assigned to a DIFFERENT message
+                existing_id_msg = conn.execute(
+                    "SELECT id, role, content FROM messages WHERE id = ?",
+                    (mid,),
+                ).fetchone()
+                if existing_id_msg:
+                    if existing_id_msg["role"] == role and existing_id_msg["content"] == content:
+                        conn.execute(
+                            "UPDATE messages SET tools_used = COALESCE(?, tools_used), feedback = ? WHERE id = ?",
+                            (tools_json, feedback, mid),
+                        )
+                        continue
+                    else:
+                        # Collision with a different turn! Allocate fresh UUID so we never overwrite an existing message turn
+                        mid = str(uuid.uuid4())
 
                 conn.execute(
                     """

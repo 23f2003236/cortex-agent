@@ -562,6 +562,59 @@ class TestMultiBrowserSync(unittest.TestCase):
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0]["title"], "Quantum Mechanics")
 
+    def test_multi_turn_message_ordering_and_no_overwrite(self):
+        """Verify that multiple consecutive question/answer turns retain their exact order and pairing across syncs."""
+        conv = database.create_conversation("ML Study Session", user_id=self.user1["id"])
+        conv_id = conv["id"]
+
+        q1 = "Explain all ML algorithms"
+        a1 = "Machine learning algorithms include supervised (regression, classification), unsupervised (clustering), and RL."
+        q2 = "Give complete common code for any Ml kaggle project"
+        a2 = "import pandas as pd\nimport numpy as np\nfrom sklearn.model_selection import train_test_split\n# Complete Kaggle pipeline"
+
+        # Turn 1
+        m_q1 = database.add_message(conv_id, role="user", content=q1, user_id=self.user1["id"])
+        m_a1 = database.add_message(conv_id, role="assistant", content=a1, user_id=self.user1["id"])
+
+        # Turn 2
+        m_q2 = database.add_message(conv_id, role="user", content=q2, user_id=self.user1["id"])
+        m_a2 = database.add_message(conv_id, role="assistant", content=a2, user_id=self.user1["id"])
+
+        # Verify initial sequence
+        msgs = database.get_messages(conv_id)
+        self.assertEqual(len(msgs), 4)
+        self.assertEqual(msgs[0]["role"], "user")
+        self.assertEqual(msgs[0]["content"], q1)
+        self.assertEqual(msgs[1]["role"], "assistant")
+        self.assertEqual(msgs[1]["content"], a1)
+        self.assertEqual(msgs[2]["role"], "user")
+        self.assertEqual(msgs[2]["content"], q2)
+        self.assertEqual(msgs[3]["role"], "assistant")
+        self.assertEqual(msgs[3]["content"], a2)
+
+        # Now simulate client workspace sync with potentially colliding IDs (the exact edge case that caused bug)
+        sync_res = database.sync_full_user_state(
+            user_id=self.user1["id"],
+            conversations_data=[{"id": conv_id, "title": "ML Study Session"}],
+            messages_data=[
+                {"id": m_q1["id"], "conversation_id": conv_id, "role": "user", "content": q1},
+                {"id": m_a2["id"], "conversation_id": conv_id, "role": "assistant", "content": a1}, # ID collision scenario
+                {"id": m_q2["id"], "conversation_id": conv_id, "role": "user", "content": q2},
+                {"id": m_a2["id"], "conversation_id": conv_id, "role": "assistant", "content": a2},
+            ]
+        )
+        self.assertTrue(sync_res["ok"])
+
+        # Re-fetch messages from database
+        msgs_after = database.get_messages(conv_id)
+        self.assertEqual(len(msgs_after), 4)
+        # Turn 1 pairing MUST be intact
+        self.assertEqual(msgs_after[0]["content"], q1)
+        self.assertEqual(msgs_after[1]["content"], a1)
+        # Turn 2 pairing MUST be intact
+        self.assertEqual(msgs_after[2]["content"], q2)
+        self.assertEqual(msgs_after[3]["content"], a2)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
