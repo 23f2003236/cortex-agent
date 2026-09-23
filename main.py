@@ -157,7 +157,7 @@ SYSTEM_PROMPT = os.getenv(
     "- STRICT CHART POLICY (CRITICAL): NEVER generate an interactive chart (```chart) or visual widget UNLESS the user EXPLICITLY requests one in their prompt (e.g. 'chart banao', 'plot chart', 'create a bar chart', 'visualize in graph', 'generate chart'). For general questions, explanations, comparisons, roadmaps, or tutorials, DO NOT generate any unsolicited charts or visual widgets. Use clean markdown tables, bullet points, or code blocks instead.\n"
     "- ACCURATE CHARTS WHEN REQUESTED: When the user EXPLICITLY asks for a chart, the chart must be strictly accurate, quantitatively factual, and professionally labeled. Never output fake, random, or low-effort placeholder data. Format as ```chart with strictly valid JSON (balanced brackets, double quotes, no trailing commas) matching the Chart.js config structure (type, data: { labels: [...], datasets: [{ label: '...', data: [...] }] }, options).\n"
     "- CODE BLOCKS & ARTIFACTS: Programming code examples (HTML, CSS, JS, Python, SQL) MUST use standard markdown code blocks (e.g. ```html, ```css, ```python). Only format code as a dedicated downloadable artifact (e.g. ```html:app or ```python:filename=script.py) when the user explicitly requests to build an interactive web app or generate a standalone file. For standard code explanations, use regular code fences.\n"
-    "- COMPLETENESS & PACING: Budget your explanations to deliver comprehensive conceptual depth, clean architecture breakdowns, and focused code snippets that reach a definitive conclusion. NEVER dump endless multi-thousand-line source code files that cause responses to hit token limits or cut off mid-sentence.\n"
+    "- CLAUDE-GRADE EXHAUSTIVE DEPTH & CODE COMPLETENESS: Deliver deeply thorough, comprehensive, and authoritative explanations like Claude 3.5 Sonnet / Opus and GPT-4o. For concepts, architecture, and technology explanations (e.g. FastAPI, ML, Distributed Systems, Python, Frameworks, APIs), do NOT give shallow or brief 2-paragraph summaries. Dive deep into the mental model, internal architecture, lifecycle, core mechanics, comparison tables, and best practices. When providing code, always write COMPLETE, self-contained, working, and fully commented code examples with all necessary imports, type annotations, schemas, route handlers, error handling, and test cases. Never truncate functions, omit critical logic, or stop mid-definition.\n"
     "- MATHEMATICS & CHEMICAL EQUATIONS: Format display math and chemical reactions on their own lines using $$...$$ (outside blockquotes, never prefix with >) and inline math with $...$ (never \\( or \\[). For chemical reactions and formulas, use KaTeX mhchem syntax like $$\\ce{N2(g) + 3H2(g) <=> 2NH3(g)}$$ or standard reaction arrows (\\rightarrow, \\rightleftharpoons).\n\n"
     "4. ATTACHED DOCUMENTS & SCANNED PDF POLICY:\n"
     "- When the user attaches a document or PDF where the extractable text is minimal, corrupted, or scanned (e.g. mostly repeated watermarks, photocopy images, or fragmentary lines), politely explain that the uploaded PDF contains scanned page images with limited selectable digital text.\n"
@@ -1593,9 +1593,11 @@ def estimate_response_tokens(
 
     # 4. Detailed answer / code implementation / technical explanation (32K):
     detailed_keywords = [
-        "explain", "detail", "detailed", "code", "python", "script",
-        "algorithm", "function", "class", "how to", "architecture",
-        "compare", "difference between", "tutorial", "solve", "debug"
+        "explain", "detail", "detailed", "code", "python", "script", "javascript", "typescript",
+        "algorithm", "function", "class", "how to", "how do", "architecture", "framework",
+        "compare", "difference between", "tutorial", "solve", "debug", "guide", "learn", "learning",
+        "teach me", "overview", "introduction", "deep dive", "walkthrough", "best practices",
+        "build", "create", "implement", "setup", "configure", "roadmap"
     ]
     if any(k in lower for k in detailed_keywords) or mode_str == "thinking":
         return min(model_max, 32768)
@@ -3541,7 +3543,7 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             usage_info = database.get_daily_usage(current_user["id"])
             current_used = usage_info.get("tokens_used", 0)
             current_reserved = usage_info.get("reserved_tokens", 0)
-            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", 25000 if current_user.get("is_guest") else database.DAILY_TOKEN_LIMIT))
+            tok_limit = usage_info.get("tokens_limit", usage_info.get("token_limit", database.GUEST_DAILY_TOKEN_LIMIT if current_user.get("is_guest") else database.DAILY_TOKEN_LIMIT))
             remaining_allowance = max(0, tok_limit - (current_used + current_reserved))
 
             # Determine whether tools should be executed early to account for tool rounds in quota reservation
@@ -3565,12 +3567,15 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             image_token_cost = 800 if has_image_b64 else 0
             # 3) Minimum viable turn threshold (input context + image + minimum response tokens)
             # Dynamic response budget based on selected model and query intent
+            is_free_model = effective_model in ("z-ai/glm-5.3", "z-ai/glm-5.3-flash", "nvidia/nemotron-3.5-lightning-30b-a3b")
             user_requested_output = getattr(request, "max_output_tokens", None) or getattr(request, "max_tokens", None)
             raw_requested_budget = estimate_response_tokens(
                 effective_model, raw_content, mode=mode, user_requested_output=user_requested_output
             )
-            if current_user.get("is_guest"):
-                budget_tokens = min(raw_requested_budget, remaining_allowance, 25000)
+            if is_free_model:
+                budget_tokens = raw_requested_budget
+            elif current_user.get("is_guest"):
+                budget_tokens = min(raw_requested_budget, remaining_allowance, 25000) if remaining_allowance > 0 else min(raw_requested_budget, 25000)
             else:
                 budget_tokens = min(raw_requested_budget, remaining_allowance) if remaining_allowance > 0 else raw_requested_budget
             reservation_estimate = min(budget_tokens, 8000)
@@ -3692,18 +3697,54 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
                     "Write the complete final response in Markdown now.]"
                 )
                 synthesis_messages.append(SystemMessage(content=directive_content))
+            elif mode != "fast":
+                # For direct reasoning/coding/educational queries without tools, guide models for deep, comprehensive synthesis
+                depth_directive = (
+                    "[RESPONSE DIRECTIVE: Deliver an in-depth, authoritative, and complete response in clean Markdown. "
+                    "Explain concepts thoroughly with clear mental models, comparison tables, and practical nuances. "
+                    "When writing code, provide complete, self-contained, working implementations with all necessary imports, "
+                    "type hints, error handling, and usage examples. Never abbreviate or truncate functions mid-definition. "
+                    "DO NOT output any tool calls, function tags, or JSON objects.]"
+                )
+                synthesis_messages.append(SystemMessage(content=depth_directive))
 
             # Calculate synthesis budget: ensure synthesis has sufficient allowance to deliver
-            # a full, high-quality response bounded by:
+            # a full, high-quality Claude-grade response bounded by:
             # 1) Model's provider max output tokens
             # 2) Context window headroom (context_window - prompt_tokens_including_tool_results)
-            # 3) User's actual remaining daily quota
+            # 3) User's actual daily quota (with solid completion floor so replies never cut off)
             total_prompt_chars = sum(len(str(getattr(m, "content", ""))) for m in synthesis_messages)
             estimated_prompt_tokens = max(1, total_prompt_chars // 4)
             model_ctx = get_model_context_window(effective_model)
-            context_headroom = max(500, model_ctx - estimated_prompt_tokens - 1000)
-            available_for_synthesis = max(200, remaining_allowance - (estimated_input_tokens + image_token_cost))
-            synthesis_budget = max(200, min(budget_tokens, available_for_synthesis, context_headroom))
+            provider_max_out = get_model_provider_max_tokens(effective_model)
+            context_headroom = max(4096, model_ctx - estimated_prompt_tokens - 1000)
+
+            # Never artificially subtract prompt context tokens from output generation capacity!
+            if is_free_model or remaining_allowance >= budget_tokens:
+                generation_allowance = budget_tokens
+            elif remaining_allowance > 0:
+                generation_allowance = max(4096, min(budget_tokens, remaining_allowance))
+            else:
+                generation_allowance = budget_tokens
+
+            candidate_budget = min(generation_allowance, context_headroom, provider_max_out)
+
+            # For reasoning models (e.g. gpt-oss-20b, glm-5.3, nano-omni-reasoning),
+            # reasoning traces count directly against max_tokens. Allocate dedicated reasoning headroom
+            # so reasoning thoughts never steal from the final Markdown response!
+            is_reasoning_model = effective_model in (
+                "openai/gpt-oss-20b",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+                "z-ai/glm-5.3",
+                "z-ai/glm-5.3-flash",
+            )
+            if is_reasoning_model:
+                reasoning_headroom = 8192
+                synthesis_budget = min(candidate_budget + reasoning_headroom, provider_max_out)
+            else:
+                synthesis_budget = min(candidate_budget, provider_max_out)
+
+            synthesis_budget = max(4096, min(synthesis_budget, provider_max_out))
             accumulated_reasoning = ""
             active_stream_model = effective_model
             max_attempts = 3
