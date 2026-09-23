@@ -156,8 +156,11 @@ SYSTEM_PROMPT = os.getenv(
     "- DIAGRAMS: NEVER draw wide, raw ASCII box-and-whisker or pipe trees (| BROWSER PROCESS |) in plain text; they wrap awkwardly and break on responsive screens. For architecture, component hierarchies, and workflows, use clean structured bullet trees with arrows (e.g. Browser UI ➔ IPC ➔ Renderer Process), structured Markdown comparison tables, or compact code blocks.\n"
     "- STRICT CHART POLICY (CRITICAL): NEVER generate an interactive chart (```chart) or visual widget UNLESS the user EXPLICITLY requests one in their prompt (e.g. 'chart banao', 'plot chart', 'create a bar chart', 'visualize in graph', 'generate chart'). For general questions, explanations, comparisons, roadmaps, or tutorials, DO NOT generate any unsolicited charts or visual widgets. Use clean markdown tables, bullet points, or code blocks instead.\n"
     "- ACCURATE CHARTS WHEN REQUESTED: When the user EXPLICITLY asks for a chart, the chart must be strictly accurate, quantitatively factual, and professionally labeled. Never output fake, random, or low-effort placeholder data. Format as ```chart with strictly valid JSON (balanced brackets, double quotes, no trailing commas) matching the Chart.js config structure (type, data: { labels: [...], datasets: [{ label: '...', data: [...] }] }, options).\n"
-    "- CODE BLOCKS & ARTIFACTS: Programming code examples (HTML, CSS, JS, Python, SQL) MUST use standard markdown code blocks (e.g. ```html, ```css, ```python). Only format code as a dedicated downloadable artifact (e.g. ```html:app or ```python:filename=script.py) when the user explicitly requests to build an interactive web app or generate a standalone file. For standard code explanations, use regular code fences.\n"
-    "- CLAUDE-GRADE EXHAUSTIVE DEPTH & CODE COMPLETENESS: Deliver deeply thorough, comprehensive, and authoritative explanations like Claude 3.5 Sonnet / Opus and GPT-4o. For concepts, architecture, and technology explanations (e.g. FastAPI, ML, Distributed Systems, Python, Frameworks, APIs), do NOT give shallow or brief 2-paragraph summaries. Dive deep into the mental model, internal architecture, lifecycle, core mechanics, comparison tables, and best practices. When providing code, always write COMPLETE, self-contained, working, and fully commented code examples with all necessary imports, type annotations, schemas, route handlers, error handling, and test cases. Never truncate functions, omit critical logic, or stop mid-definition.\n"
+    "- CLAUDE-GRADE EXHAUSTIVE DEPTH, UNRESTRICTED LENGTH & CODE COMPLETENESS:\n"
+    "  * You have a massive 64K–128K token output capacity. Deliver deeply thorough, long-form, comprehensive, and authoritative responses like Claude 3.5 Sonnet / Opus and GPT-4o. NEVER summarize, compress, or truncate.\n"
+    "  * STRICT ANTI-BREVITY DIRECTIVE: NEVER output ONLY a single comparison table, a quick bullet list, or a brief 2-paragraph summary unless the user explicitly asks for brevity. A comparison table must ALWAYS be preceded by architectural mental models and followed by detailed feature-by-feature prose, practical guidance, and complete code.\n"
+    "  * For concepts, architecture, framework, and technology explanations (e.g. FastAPI, ML, PyTorch, Distributed Systems, Python, APIs), write an all-encompassing, multi-chapter masterclass: (1) Architecture & Request Lifecycle with workflow arrows (A ➔ B ➔ C), (2) Comprehensive comparison table and deep prose breakdown, (3) COMPLETE, RUNNABLE PRODUCTION CODE with all imports, schemas, route handlers, error handling, and test cases, (4) Production Deployment & Scalability (Docker, Uvicorn/Gunicorn, monitoring), and (5) Common Pitfalls & Best Practices.\n"
+    "  * When providing code, ALWAYS write complete, self-contained, and working files. Never skip functions, never use '# ... rest of code' placeholders, and never truncate mid-definition.\n"
     "- MATHEMATICS & CHEMICAL EQUATIONS: Format display math and chemical reactions on their own lines using $$...$$ (outside blockquotes, never prefix with >) and inline math with $...$ (never \\( or \\[). For chemical reactions and formulas, use KaTeX mhchem syntax like $$\\ce{N2(g) + 3H2(g) <=> 2NH3(g)}$$ or standard reaction arrows (\\rightarrow, \\rightleftharpoons).\n\n"
     "4. ATTACHED DOCUMENTS & SCANNED PDF POLICY:\n"
     "- When the user attaches a document or PDF where the extractable text is minimal, corrupted, or scanned (e.g. mostly repeated watermarks, photocopy images, or fragmentary lines), politely explain that the uploaded PDF contains scanned page images with limited selectable digital text.\n"
@@ -1391,12 +1394,12 @@ AVAILABLE_MODELS = [
         "provider": "nvidia",
         "native_context_window": 1000000,      # 1M architectural context
         "context_window": 1000000,             # 1M context window
-        "provider_max_output_tokens": 32768,   # 32K verified hosted endpoint limit
-        "max_output_tokens": 32768,            # 32K output tokens
+        "provider_max_output_tokens": 65536,   # 64K verified hosted endpoint limit
+        "max_output_tokens": 65536,            # 64K output tokens
         "supports_streaming": True,
         "supports_tools": True,
-        "description": "Flagship 120B MoE reasoning agent with 1M context window and 32K output ceiling.",
-        "badge": "1M Context • 32K Output",
+        "description": "Flagship 120B MoE reasoning agent with 1M context window and massive 64K output ceiling.",
+        "badge": "1M Context • 64K Output",
     },
     {
         "id": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -1404,12 +1407,12 @@ AVAILABLE_MODELS = [
         "provider": "nvidia",
         "native_context_window": 1000000,      # 1M architectural context
         "context_window": 1000000,             # 1M context window
-        "provider_max_output_tokens": 32768,   # 32K verified hosted endpoint limit
-        "max_output_tokens": 32768,            # 32K output tokens
+        "provider_max_output_tokens": 65536,   # 64K verified hosted endpoint limit
+        "max_output_tokens": 65536,            # 64K output tokens
         "supports_streaming": True,
         "supports_tools": True,
         "description": "Massive 550B frontier model with 1M context for complex synthesis & enterprise code.",
-        "badge": "1M Context • 32K Output",
+        "badge": "1M Context • 64K Output",
     },
     {
         "id": "openai/gpt-oss-20b",
@@ -1443,12 +1446,12 @@ AVAILABLE_MODELS = [
         "provider": "nvidia",
         "native_context_window": 1000000,      # 1M architectural context
         "context_window": 262144,              # 262K hosted NIM serving context
-        "provider_max_output_tokens": 16384,   # 16K output tokens
-        "max_output_tokens": 16384,            # 16K output tokens
+        "provider_max_output_tokens": 32768,   # 32K output tokens
+        "max_output_tokens": 32768,            # 32K output tokens
         "supports_streaming": True,
         "supports_tools": True,
         "description": "Sub-second TTFT lightning model with 262K context for rapid prototyping & instant Q&A.",
-        "badge": "262K Context • 16K Output",
+        "badge": "262K Context • 32K Output",
     },
     {
         "id": "z-ai/glm-5.3",
@@ -3700,10 +3703,11 @@ async def chat_stream(request: ChatRequest, current_user: dict = Depends(get_cur
             elif mode != "fast":
                 # For direct reasoning/coding/educational queries without tools, guide models for deep, comprehensive synthesis
                 depth_directive = (
-                    "[RESPONSE DIRECTIVE: Deliver an in-depth, authoritative, and complete response in clean Markdown. "
-                    "Explain concepts thoroughly with clear mental models, comparison tables, and practical nuances. "
-                    "When writing code, provide complete, self-contained, working implementations with all necessary imports, "
-                    "type hints, error handling, and usage examples. Never abbreviate or truncate functions mid-definition. "
+                    "[RESPONSE DIRECTIVE: Deliver a deeply exhaustive, authoritative, long-form masterclass response in clean Markdown. "
+                    "You have massive output headroom (up to 64K–128K tokens). Do NOT compress, do NOT summarize, and do NOT truncate. "
+                    "Never output only a single table or brief snippet. Always provide comprehensive conceptual depth, detailed prose, "
+                    "workflow diagrams, and COMPLETE, self-contained, working implementations with all necessary imports, type hints, "
+                    "error handling, and production examples. Never abbreviate or truncate code mid-definition. "
                     "DO NOT output any tool calls, function tags, or JSON objects.]"
                 )
                 synthesis_messages.append(SystemMessage(content=depth_directive))

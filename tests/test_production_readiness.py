@@ -319,8 +319,8 @@ class TestProductionReadiness(unittest.TestCase):
         super_profile = main.get_model_profile("nvidia/nemotron-3-super-120b-a12b")
         self.assertEqual(super_profile["native_context_window"], 1000000)
         self.assertEqual(super_profile["context_window"], 1000000)
-        self.assertEqual(super_profile["provider_max_output_tokens"], 32768)
-        self.assertEqual(super_profile["max_output_tokens"], 32768)
+        self.assertEqual(super_profile["provider_max_output_tokens"], 65536)
+        self.assertEqual(super_profile["max_output_tokens"], 65536)
 
         gpt_profile = main.get_model_profile("openai/gpt-oss-20b")
         self.assertEqual(gpt_profile["context_window"], 131072)
@@ -335,14 +335,14 @@ class TestProductionReadiness(unittest.TestCase):
         code_budget = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Write a python script to implement quicksort")
         self.assertEqual(code_budget, 32768)
 
-        # Long report / complete implementation -> 64K on GPT-OSS, clamped to 32K on Nemotron Super
+        # Long report / complete implementation -> 64K on GPT-OSS, and 64K on Nemotron Super
         report_budget_gpt = main.estimate_response_tokens("openai/gpt-oss-20b", "Write a comprehensive report and full implementation for an ML system")
         self.assertEqual(report_budget_gpt, 65536)
 
         report_budget_super = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Write a comprehensive report and full implementation for an ML system")
-        self.assertEqual(report_budget_super, 32768)
+        self.assertEqual(report_budget_super, 65536)
 
-        # Maximum output request -> 128K (on GLM and GPT-OSS) or clamped to 32K (on Nemotron Super)
+        # Maximum output request -> 128K (on GLM and GPT-OSS) or 64K (on Nemotron Super)
         max_budget_glm = main.estimate_response_tokens("z-ai/glm-5.3", "Write the entire codebase with maximum output tokens 128k")
         self.assertEqual(max_budget_glm, 128000)
 
@@ -350,11 +350,11 @@ class TestProductionReadiness(unittest.TestCase):
         self.assertEqual(max_budget_gpt, 128000)
 
         max_budget_nemotron = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Write the entire codebase with maximum output tokens 128k")
-        self.assertEqual(max_budget_nemotron, 32768)
+        self.assertEqual(max_budget_nemotron, 65536)
 
         # 4. Explicit user_requested_output enforcement: min(user_requested, model_max)
         clamped_user = main.estimate_response_tokens("nvidia/nemotron-3-super-120b-a12b", "Hello", user_requested_output=100000)
-        self.assertEqual(clamped_user, 32768)
+        self.assertEqual(clamped_user, 65536)
 
         clamped_gpt = main.estimate_response_tokens("openai/gpt-oss-20b", "Hello", user_requested_output=100000)
         self.assertEqual(clamped_gpt, 100000)
