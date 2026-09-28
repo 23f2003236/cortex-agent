@@ -11,12 +11,19 @@ __pycache__/
 
 # Secrets & Environment Variables (CRITICAL: Never commit to Git)
 .env
+.env.*
+*.env
 .env*.local
 .env.production
 .env.staging
 *.key
 *.pem
+*.cert
+*.pfx
+credentials.json
+token.json
 secret.txt
+secrets.txt
 
 # Database Files (Contains user hashes, sessions, conversations)
 *.db

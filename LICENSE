@@ -1,14 +1,54 @@
-﻿PROPRIETARY AND CONFIDENTIAL LICENSE
+SOURCE-AVAILABLE STRICT ATTRIBUTION & PROPRIETARY LICENSE
 
 Copyright (c) 2026 Rohan. All Rights Reserved.
 
-NOTICE: All information, source code, design systems, algorithms, and technical architecture 
-contained herein are, and remain the intellectual property of Rohan. 
-The intellectual and technical concepts contained herein are proprietary to Rohan and are 
-protected by trade secret and copyright law.
+===============================================================================
+IMPORTANT NOTICE & INTELLECTUAL PROPERTY DECLARATION:
+===============================================================================
+Cortex Agent, including its source code, architecture, design systems, prompts,
+terminal simulators, sync protocols, and documentation, is the exclusive 
+intellectual property of Rohan ("Author").
 
-DISSEMINATION, DUPLICATION, OR REPRODUCTION OF THIS MATERIAL, IN WHOLE OR IN PART, 
-VIA ANY MEDIUM, WITHOUT THE PRIOR WRITTEN PERMISSION OF ROHAN IS STRICTLY PROHIBITED.
+By viewing, downloading, cloning, or accessing this repository, you agree to 
+the following legally binding terms:
 
-Unauthorized commercial use, reverse engineering, redistribution, scraping, or deployment 
-is strictly prohibited and subject to legal prosecution.
+1. SOLE AUTHORSHIP & ANTI-PLAGIARISM:
+   Under NO circumstances may any individual, company, or entity claim authorship,
+   inventorship, creation, or ownership of this project, or any substantial 
+   portion thereof. You may NOT present this codebase as your own work in 
+   portfolios, resumes, public repositories, competitions, or presentations.
+
+2. MANDATORY ATTRIBUTION:
+   Any permitted public fork, demonstration, reference, academic citation, or 
+   derivative study MUST prominently and permanently display:
+   - The original copyright notice: "Copyright (c) 2026 Rohan"
+   - Clear and prominent credit: "Original Creator: Rohan (Cortex Agent)"
+   - A direct, clickable link to the official GitHub repository.
+
+3. PERMITTED PERSONAL & EDUCATIONAL USAGE:
+   You are granted permission to:
+   - Clone and run this project locally on your machine for personal, educational, 
+     and evaluation purposes.
+   - Inspect, audit, and experiment with the code for learning and research.
+   - Submit issues and pull requests to the official upstream repository.
+
+4. COMMERCIAL PROHIBITION:
+   Commercial use, commercial redistribution, hosting as a paid or public SaaS,
+   sublicensing, or monetizing any portion of this software without express prior 
+   written consent from Rohan is strictly PROHIBITED.
+
+5. NO RE-BRANDING OR REDISTRIBUTION:
+   You may NOT repackage, re-license, re-brand, or upload copies of this repository
+   under a different project name or author identity to GitHub, GitLab, Bitbucket,
+   or any other distribution channel.
+
+6. DISCLAIMER OF WARRANTY:
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+   AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM 
+   THE USE OF THIS SOFTWARE.
+
+===============================================================================
+For commercial inquiries, licensing permissions, or partnerships, contact Rohan.
+===============================================================================
